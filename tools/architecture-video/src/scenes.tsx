@@ -10,7 +10,7 @@ const Fade: React.FC<{ dur: number; children: React.ReactNode }> = ({ dur, child
   return <div style={{ position: 'absolute', inset: 0, opacity: o, background: C.bg }}>{children}</div>;
 };
 
-const Big: React.FC<{ sub: string; sub2?: string; dur: number; ding?: number }> = ({ sub, sub2, dur, ding = 26 }) => {
+export const Big: React.FC<{ sub: string; sub2?: string; dur: number; ding?: number }> = ({ sub, sub2, dur, ding = 26 }) => {
   const f = useCurrentFrame();
   const { fps } = useVideoConfig();
   const s = spring({ frame: f - 6, fps, config: { damping: 14, stiffness: 90 } });

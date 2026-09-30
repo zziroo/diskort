@@ -5,7 +5,8 @@
   "scripts": {
     "sfx": "node scripts/make-sfx.mjs",
     "studio": "remotion studio src/index.ts",
-    "render": "node scripts/make-sfx.mjs && remotion render src/index.ts Mimari out/diskort-mimari.mp4"
+    "render": "node scripts/make-sfx.mjs && remotion render src/index.ts Mimari out/diskort-mimari.mp4",
+    "render:sade": "node scripts/make-sfx.mjs && remotion render src/index.ts NasilCalisir out/diskort-nasil-calisir.mp4"
   },
   "dependencies": {
     "@remotion/cli": "4.0.290",
