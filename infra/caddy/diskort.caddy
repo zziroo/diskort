@@ -9,7 +9,10 @@
 	# API, gerçek zamanlı gateway, indirme ve uygulama güncelleme yönlendirmeleri (/download/windows, /updates/latest.yml)
 	@api path /api/* /gateway /download/* /updates/*
 	handle @api {
-		reverse_proxy 127.0.0.1:3000
+		# Yeniden yüklemede açık gateway WebSocket'lerini hemen kesme (yoksa herkes aynı anda kopar)
+		reverse_proxy 127.0.0.1:3000 {
+			stream_close_delay 5m
+		}
 	}
 
 	# Sunucuya özel ek yollar: /opt/ziroo-sites/<ad>.caddy (handle blokları), bu repo değişmeden `caddy reload`
@@ -33,7 +36,10 @@
 }
 
 {$LIVEKIT_DOMAIN} {
-	reverse_proxy 127.0.0.1:7880
+	# Yeniden yüklemede LiveKit sinyal WebSocket'lerini hemen kesme (sesli kanaldakiler kopmasın)
+	reverse_proxy 127.0.0.1:7880 {
+		stream_close_delay 5m
+	}
 }
 
 # TURN alan adının sertifikasını almak için. Bu alan adına gelen 443 trafiği yukarıdaki
