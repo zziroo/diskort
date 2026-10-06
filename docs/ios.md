@@ -179,7 +179,7 @@ başarılı biter, yani "Eklendi" gerçekten kurulabilir demektir.
 Elle çalıştırma: UDID'leri **açık yazma** (herkese açık depoda görünür). Yollar:
 
 - Panelin gösterdiği komut: sunucuda `IOS_DEVICES_KEY` varsa cihaz listesi komutta şifreli hazırdır.
-- Cihazsız: `gh workflow run ios.yml --repo yusufholat/diskort -f simulator=false -f signed=true -f attach-latest=true`.
+- Cihazsız: `gh workflow run ios.yml --repo zziroo/diskort -f simulator=false -f signed=true -f attach-latest=true`.
   ASC yalnızca verilen cihazları kaydeder; cihaz verilmezse profil Apple'da zaten kayıtlı ve açık olan tüm
   cihazlarla yenilenir. Yani önce cihazı Apple Developer → Devices'ta elle ekle.
 - Şifreli değeri kendin üretmek (anahtar dosyası bilgisayardaysa):
@@ -201,12 +201,12 @@ Elle çalıştırma: UDID'leri **açık yazma** (herkese açık depoda görünü
 yönlendirmesini desteklemez ve Türkçe karakterleri bozabilir; bu yüzden `cmd /c` ile:
 
 ```powershell
-cmd /c 'gh secret set ASC_KEY_P8 --repo yusufholat/diskort < AuthKey_XXXXXXXXXX.p8'
-gh secret set ASC_KEY_ID --repo yusufholat/diskort --body XXXXXXXXXX
-gh secret set ASC_ISSUER_ID --repo yusufholat/diskort --body 00000000-0000-0000-0000-000000000000
+cmd /c 'gh secret set ASC_KEY_P8 --repo zziroo/diskort < AuthKey_XXXXXXXXXX.p8'
+gh secret set ASC_KEY_ID --repo zziroo/diskort --body XXXXXXXXXX
+gh secret set ASC_ISSUER_ID --repo zziroo/diskort --body 00000000-0000-0000-0000-000000000000
 ```
 
-(Git Bash'te ilk satır doğrudan `gh secret set ASC_KEY_P8 --repo yusufholat/diskort < AuthKey_XXXXXXXXXX.p8`.)
+(Git Bash'te ilk satır doğrudan `gh secret set ASC_KEY_P8 --repo zziroo/diskort < AuthKey_XXXXXXXXXX.p8`.)
 Diğer gizli değişkenler (`IOS_CERT_P12_BASE64`, `IOS_CERT_PASSWORD`, `APPLE_TEAM_ID`) aynen kalır;
 `IOS_PROVISIONING_PROFILE_BASE64` artık kullanılmaz ama silmek gerekmez (ASC anahtarı kaldırılırsa yedek).
 
@@ -224,7 +224,7 @@ yazar (kayıt, profil oluşturma, silme yok).
 **3. GitHub belirteci (sunucunun iş akışını başlatması için)**
 
 1. <https://github.com/settings/personal-access-tokens/new> → **Fine-grained token** → ad: `diskort-ios-dispatch`,
-   süre: 1 yıl, **Repository access: Only select repositories → yusufholat/diskort**.
+   süre: 1 yıl, **Repository access: Only select repositories → zziroo/diskort**.
 2. **Permissions → Repository permissions → Actions: Read and write** (Metadata: Read kendiliğinden gelir).
    Başka izin verme.
 3. **Generate token** → değeri bilgisayarda bir dosyaya kaydet (ör. `gh-dispatch-token.txt`), sonra Git Bash'te:
@@ -245,7 +245,7 @@ PowerShell'de:
 ```powershell
 cd C:\Users\yusuf\diskort-ios
 node -e "require('fs').writeFileSync('ios-devices.key', require('crypto').randomBytes(32).toString('base64'))"
-cmd /c 'gh secret set IOS_DEVICES_KEY --repo yusufholat/diskort < "C:\Users\yusuf\diskort-ios\ios-devices.key"'
+cmd /c 'gh secret set IOS_DEVICES_KEY --repo zziroo/diskort < "C:\Users\yusuf\diskort-ios\ios-devices.key"'
 ```
 
 Sonra sunucuya, Git Bash'te (`/c/Users/yusuf/diskort-ios` klasöründe):

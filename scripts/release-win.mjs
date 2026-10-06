@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REPO = 'yusufholat/diskort';
+const REPO = 'zziroo/diskort';
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop');
 const { version } = JSON.parse(readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
 const tag = `v${version}`;

@@ -160,7 +160,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     livekitApiKey: required('LIVEKIT_API_KEY', DEV_LIVEKIT_KEY),
     livekitApiSecret: required('LIVEKIT_API_SECRET', DEV_LIVEKIT_SECRET),
     guildName: env.GUILD_NAME ?? 'Diskort',
-    githubRepo: env.GITHUB_REPO ?? 'yusufholat/diskort',
+    githubRepo: env.GITHUB_REPO ?? 'zziroo/diskort',
     enforceClientVersion: env.CLIENT_UPDATE_ENFORCE ? env.CLIENT_UPDATE_ENFORCE !== '0' : !isDev,
     minMobileVersions: { android: env.MIN_ANDROID_VERSION || null, ios: env.MIN_IOS_VERSION || null },
     fcmServiceAccountFile: env.FCM_SERVICE_ACCOUNT_FILE || null,

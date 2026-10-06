@@ -108,7 +108,7 @@ describe('iPhone cihazları (yönetim)', () => {
     const body = (await t!.req(t!.owner.token, 'GET', '/api/admin/ios-devices')).json();
     // Anahtar yok: komut cihazsız, UDID açık yazılmaz
     expect(body.manualCommand).toEqual({
-      command: 'gh workflow run ios.yml --repo yusufholat/diskort -f simulator=false -f signed=true -f attach-latest=true',
+      command: 'gh workflow run ios.yml --repo zziroo/diskort -f simulator=false -f signed=true -f attach-latest=true',
       encrypted: false,
     });
     expect(JSON.stringify(body.manualCommand)).not.toContain(U1);
@@ -134,7 +134,7 @@ describe('iPhone cihazları (yönetim)', () => {
     const dispatches = github.dispatches();
     expect(dispatches).toHaveLength(1);
     const d = dispatches[0]!;
-    expect(d.url).toBe('https://api.github.com/repos/yusufholat/diskort/actions/workflows/ios.yml/dispatches');
+    expect(d.url).toBe('https://api.github.com/repos/zziroo/diskort/actions/workflows/ios.yml/dispatches');
     expect(d.auth).toBe('Bearer gizli-belirtec');
     expect(d.body.ref).toBe('main');
     expect(d.body.inputs).toMatchObject({ simulator: 'false', signed: 'true', 'attach-latest': 'true' });
@@ -152,7 +152,7 @@ describe('iPhone cihazları (yönetim)', () => {
     expect(requestId).toMatch(/^[0-9a-f]{8}$/);
 
     // Çalıştırma görünür, sürer, sonra başarıyla biter
-    github.runs.push({ id: 7, html_url: 'https://github.com/yusufholat/diskort/actions/runs/7', status: 'in_progress', conclusion: null, display_title: `iOS · cihaz ekleme ${requestId}` });
+    github.runs.push({ id: 7, html_url: 'https://github.com/zziroo/diskort/actions/runs/7', status: 'in_progress', conclusion: null, display_title: `iOS · cihaz ekleme ${requestId}` });
     const get = async () => (await t!.req(t!.owner.token, 'GET', '/api/admin/ios-devices')).json();
     await waitFor(async () => (await get()).ci?.runId === 7);
     let body = await get();
@@ -163,7 +163,7 @@ describe('iPhone cihazları (yönetim)', () => {
     github.runs[0]!.conclusion = 'success';
     await waitFor(async () => (await get()).ci?.status === 'completed');
     body = await get();
-    expect(body.ci).toMatchObject({ status: 'completed', conclusion: 'success', url: 'https://github.com/yusufholat/diskort/actions/runs/7' });
+    expect(body.ci).toMatchObject({ status: 'completed', conclusion: 'success', url: 'https://github.com/zziroo/diskort/actions/runs/7' });
     const status = Object.fromEntries(body.devices.map((x: { udid: string; status: string }) => [x.udid, x.status]));
     expect(status).toEqual({ [U1]: 'eklendi', [U2]: 'reddedildi', [U3]: 'eklendi' });
     // Yeni onay yoksa yeni derleme de yok
@@ -176,7 +176,7 @@ describe('iPhone cihazları (yönetim)', () => {
     await t!.req(t!.owner.token, 'PATCH', `/api/admin/ios-devices/${U1}`, { status: 'onaylandi' });
     await waitFor(() => github.dispatches().length > 0);
     const requestId = github.dispatches()[0]!.body.inputs['request-id'] as string;
-    const run = { id: 9, html_url: 'https://github.com/yusufholat/diskort/actions/runs/9', status: 'completed', conclusion: 'failure', display_title: `iOS · cihaz ekleme ${requestId}` };
+    const run = { id: 9, html_url: 'https://github.com/zziroo/diskort/actions/runs/9', status: 'completed', conclusion: 'failure', display_title: `iOS · cihaz ekleme ${requestId}` };
     github.runs.push(run);
     const get = async () => (await t!.req(t!.owner.token, 'GET', '/api/admin/ios-devices')).json();
     await waitFor(async () => (await get()).ci?.conclusion === 'failure');

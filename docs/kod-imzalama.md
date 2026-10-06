@@ -38,7 +38,7 @@ dosyanın kendisinin yeni olup olmadığına da bakar, ilk günlerde az sayıda 
 | Yalnızca kendi kaynak kodundan derlenen dosyalar imzalanır | ✔ yalnızca `Diskort.exe` ve kurulum dosyası; Electron DLL'leri, `elevate.exe`, yerel modüller imzalanmaz |
 | İmzalanan dosyalarda ürün adı/sürüm kısıtı | ✔ `.signpath/artifact-configurations/*.xml` (`product-name`, `product-version`) |
 | Web sitesinde “code signing policy” bölümü (SignPath atfı, roller, gizlilik) | ✔ `apps/web/code-signing.html` → https://diskort.ziroo.net/code-signing (sunucuya dağıtılınca) |
-| Roller: yazar, gözden geçiren, onaylayıcı | Hepsi depo sahibi (@yusufholat) |
+| Roller: yazar, gözden geçiren, onaylayıcı | Hepsi depo sahibi (@zziroo) |
 | Tüm ekip üyelerinde GitHub ve SignPath için MFA | **Senin yapman gerek** (aşağıda) |
 | Her sürüm elle onaylanır | ✔ iş akışı SignPath onayını bekler |
 | Kaldırma talimatı, gizlilik politikası | ✔ politika sayfasında + /privacy |
@@ -104,11 +104,11 @@ https://signpath.org/apply adresindeki formu doldur. Taslak yanıtlar (İngilizc
 
 > **Project name:** Diskort
 >
-> **Repository:** https://github.com/yusufholat/diskort
+> **Repository:** https://github.com/zziroo/diskort
 >
 > **License:** MIT (OSI approved, no dual licensing)
 >
-> **Homepage / download page:** https://diskort.ziroo.net (releases: https://github.com/yusufholat/diskort/releases)
+> **Homepage / download page:** https://diskort.ziroo.net (releases: https://github.com/zziroo/diskort/releases)
 >
 > **Code signing policy:** https://diskort.ziroo.net/code-signing
 >
@@ -123,7 +123,7 @@ https://signpath.org/apply adresindeki formu doldur. Taslak yanıtlar (İngilizc
 > `signpath/github-action-submit-signing-request` integration and artifact configurations
 > (`.signpath/artifact-configurations/`). Third-party binaries (Electron/Chromium DLLs, native modules) will not be signed.
 >
-> **Team:** Single maintainer: @yusufholat (author, reviewer and approver). MFA is enabled on GitHub and will be
+> **Team:** Single maintainer: @zziroo (author, reviewer and approver). MFA is enabled on GitHub and will be
 > enabled on SignPath.
 >
 > **Contact:** diskort@ziroo.net
@@ -142,7 +142,7 @@ adımları Certum/SimplySign'a göre değiştirilmelidir).
 2. Organizasyon kimliğini (Organization ID) not et (Settings / URL'de görünür).
 3. **Trusted build system:** GitHub.com bağlayıcısının projeye bağlı olduğundan emin ol (Foundation genelde
    hazırlar). Depo herkese açık olduğu için ayrıca GitHub App gerekmez.
-4. **Proje:** slug'ı not et (ör. `diskort`); depo adresi `https://github.com/yusufholat/diskort`.
+4. **Proje:** slug'ı not et (ör. `diskort`); depo adresi `https://github.com/zziroo/diskort`.
 5. **Artifact configurations:** iki yapılandırma oluştur ve içeriklerini depodan yapıştır:
    - slug `app` ← `.signpath/artifact-configurations/app.xml`
    - slug `installer` ← `.signpath/artifact-configurations/installer.xml`

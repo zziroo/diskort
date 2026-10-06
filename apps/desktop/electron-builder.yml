@@ -93,5 +93,5 @@ mac:
 # yönlendirir. Böylece dağıtım yeri değişse bile kurulu uygulamalar etkilenmez.
 publish:
   provider: github
-  owner: yusufholat
+  owner: zziroo
   repo: diskort

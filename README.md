@@ -6,7 +6,7 @@
 
 Discord kalitesinde ses ve yayın · 10–20 kişilik kapalı topluluklar için · Reklamsız, izlemesiz, verin sende
 
-[![Son sürüm](https://img.shields.io/github/v/release/yusufholat/diskort?label=s%C3%BCr%C3%BCm)](https://github.com/yusufholat/diskort/releases/latest)
+[![Son sürüm](https://img.shields.io/github/v/release/zziroo/diskort?label=s%C3%BCr%C3%BCm)](https://github.com/zziroo/diskort/releases/latest)
 [![Lisans: MIT](https://img.shields.io/badge/lisans-MIT-blue)](LICENSE)
 ![Platformlar](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android%20%7C%20iOS-555)
 
