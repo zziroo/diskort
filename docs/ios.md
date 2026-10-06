@@ -227,17 +227,17 @@ yazar (kayıt, profil oluşturma, silme yok).
    süre: 1 yıl, **Repository access: Only select repositories → zziroo/diskort**.
 2. **Permissions → Repository permissions → Actions: Read and write** (Metadata: Read kendiliğinden gelir).
    Başka izin verme.
-3. **Generate token** → değeri bilgisayarda bir dosyaya kaydet (ör. `gh-dispatch-token.txt`), sonra Git Bash'te:
+3. **Generate token** → değeri bilgisayarda bir dosyaya kaydet (ör. `~/Downloads/gh-dispatch-token.txt`), sonra
+   terminalde (macOS/Linux; değer ekrana yazılmaz, `.env`'deki eski satır varsa yenisiyle değişir):
 
 ```sh
-scp gh-dispatch-token.txt diskort-vps:/tmp/gh-dispatch-token
-ssh diskort-vps 'printf "\nGITHUB_DISPATCH_TOKEN=%s\n" "$(tr -d "\r\n" < /tmp/gh-dispatch-token)" >> /opt/diskort/infra/.env && rm /tmp/gh-dispatch-token && chmod 600 /opt/diskort/infra/.env && cd /opt/diskort/infra && docker compose up -d api'
-rm gh-dispatch-token.txt
+tr -d '\r\n ' < ~/Downloads/gh-dispatch-token.txt | ssh -i ~/.ssh/diskort_vps root@38.60.208.88 'set -e; umask 077; E=/opt/diskort/infra/.env; T=$(cat); { grep -v "^GITHUB_DISPATCH_TOKEN=" $E; printf "GITHUB_DISPATCH_TOKEN=%s\n" "$T"; } > /tmp/newenv; cat /tmp/newenv > $E; rm /tmp/newenv; chmod 600 $E; cd /opt/diskort/infra && docker compose up -d api'
+rm -P ~/Downloads/gh-dispatch-token.txt
 ```
 
-(PowerShell 5.1 iç içe tırnakları bozduğu için ikinci satırı Git Bash'te çalıştır.) `docker-compose.yml` bu
-değişkeni api kapsayıcısına geçirir; sunucu bu sürümle güncellenmiş olmalı. Belirteç süresi dolunca
-yenisini aynı şekilde yaz (önce `.env`'deki eski satırı sil).
+`docker-compose.yml` bu değişkeni api kapsayıcısına geçirir. Denetim (iş başlatmaz): var olmayan bir dalla
+`POST /repos/zziroo/diskort/actions/workflows/ios.yml/dispatches` → `422 No ref found` izin var demektir,
+`403` izin yok. Belirteç süresi dolunca (ilki 2026-10-07'de `zziroo` ile oluşturuldu, 1 yıl) aynı komutla yenile.
 
 **4. Cihaz listesi şifre anahtarı (`IOS_DEVICES_KEY`)** — aynı anahtar hem GitHub'a hem sunucuya.
 PowerShell'de:
