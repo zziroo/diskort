@@ -68,7 +68,7 @@ import {
   type NoiseFallbackState,
 } from './noiseFallback';
 import { prepareHardwareEncoder, releaseHardwareEncoder, type HwEncoderChoice } from './hardwareEncoder';
-import { SCREEN_PRESETS } from './screenPresets';
+import { SCREEN_PRESETS, screenShareLowLayer } from './screenPresets';
 import { MicTest } from './micTest';
 import { RemoteSpeakingMeter } from './remoteSpeaking';
 import { StreamPreviewUploader } from './streamPreviewUploader';
@@ -313,7 +313,11 @@ class VoiceClient {
 
       const s = getSettings();
       const room = new Room({
-        adaptiveStream: true,
+        // İzlenen yayının katmanı izleme öğesinin boyutuna göre seçilir (görünmeyen yayın sunucuda durur). Piksel
+        // yoğunluğu 2: öğe boyutunun iki katı istenir, böylece sahnede/tam ekranda (ızgarada da çoğunlukla) üst
+        // katman gelir; alt katmana yalnızca çok küçük öğeler (kısa kenarı ~360 pikselden küçük) düşer. Varsayılan
+        // yoğunluk (1) 1080p ekranda pencere içi sahnede bile 720p30 alt katmanını seçtirip 60 FPS'i yarıya indirirdi.
+        adaptiveStream: { pixelDensity: 2 },
         dynacast: true,
         webAudioMix: true,
         audioOutput: { deviceId: s.outputDeviceId },
@@ -1263,6 +1267,8 @@ class VoiceClient {
       return null;
     }
     const video = new LocalVideoTrack(videoTrack, undefined, true);
+    // Simulcast alt katmanı yalnızca ekran kartının H.264 kodlayıcısında (gerekçe aşağıda, publishTrack'te)
+    const lowLayer = hardware === 'h264-high' ? screenShareLowLayer(videoTrack.getSettings(), preset) : null;
     let audio: LocalAudioTrack | null = null;
     // Yayın başlatılamazsa (ör. bağlantı koptu) yakalama açık kalmasın: yayınlanan geri alınır, izler durur
     const abandon = async (): Promise<void> => {
@@ -1283,10 +1289,15 @@ class VoiceClient {
         // değişince yayını izleyicilere iletmeyi keser. Yedek VP8 tanımlıyken sunucu izleyicileri kesintisiz ona
         // aktarır (yedek yalnızca gerektiğinde kodlanır, normalde ek yük yok).
         backupCodec: hardware ? { codec: 'vp8' } : false,
-        // Simulcast kapalı: ekran kartı kodlayıcısı olmayan sistemlerde H.264 yazılımla (OpenH264) kodlanıyor;
-        // 720p alt katman toplam kodlama süresini ~2 katına çıkarıp çözünürlüğü CPU yüzünden düşürtüyor.
-        // 10–20 kişide sunucu trafiği kazancı bu bedele değmiyor.
-        simulcast: false,
+        // Simulcast yalnızca ekran kartının H.264 kodlayıcısında: telefondan ya da zayıf hattan izleyenler tek
+        // 1080p60 · 12 Mbps katmanı çözemiyor/taşıyamıyor; alt katman varken LiveKit onlara (ve küçük izleme
+        // öğelerine) alt katmanı gönderir, diğerleri üst katmanı almaya devam eder. Bedeli ekran kartında ikinci bir
+        // kodlama oturumu (küçük ve 30 FPS, işlemciye yük yok) ve yayıncının yüklemesinde alt katman kadar fazlası.
+        // Yazılım kodlayıcıda (OpenH264, VP8/VP9) kapalı: alt katman toplam kodlama süresini ~2 katına çıkarıp
+        // çözünürlüğü CPU yüzünden düşürtüyor. AV1'de de kapalı: LiveKit simulcast açıkken AV1'i katman başına
+        // L1T3 ile kodlatıyor; donanım kodlayıcısının istediği L1T1 tek kodlamada uygulanabiliyor (hardwareEncoder.ts).
+        simulcast: lowLayer !== null,
+        ...(lowLayer ? { screenShareSimulcastLayers: [lowLayer] } : {}),
         screenShareEncoding: { maxBitrate: preset.bitrate, maxFramerate: preset.fps, priority: 'high' },
         degradationPreference: opts.content === 'motion' ? 'maintain-framerate' : 'maintain-resolution',
       });

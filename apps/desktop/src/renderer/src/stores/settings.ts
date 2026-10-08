@@ -15,7 +15,7 @@ export type NoiseStrengthDb = (typeof NOISE_STRENGTHS_DB)[number];
 export const SIDEBAR_WIDTH = { min: 200, default: 240, max: 480 } as const;
 export const clampSidebarWidth = (w: number): number =>
   Number.isFinite(w) ? Math.round(Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, w))) : SIDEBAR_WIDTH.default;
-const SCREEN_PRESET_IDS = ['720p60', '1080p30', '1080p60'] as const;
+const SCREEN_PRESET_IDS = ['720p30', '720p60', '1080p30', '1080p60'] as const;
 export type ScreenPresetId = (typeof SCREEN_PRESET_IDS)[number];
 const SCREEN_CODEC_IDS = ['h264', 'vp9', 'vp8', 'av1'] as const;
 export type ScreenCodec = (typeof SCREEN_CODEC_IDS)[number];

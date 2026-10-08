@@ -37,6 +37,10 @@ let getWindow: () => BrowserWindow | null = () => null;
 let isQuitting: () => boolean = () => false;
 let mainErrors = 0;
 const seenMainErrors = new Set<string>();
+/** Bu süre içinde birden çok 'killed' olayı = uygulama dışarıdan kapatılıyor, bildirilmez */
+const KILLED_BURST_MS = 2_000;
+let lastKilledAt = 0;
+let killedTimer: NodeJS.Timeout | null = null;
 
 const dumpDir = (): string | null => {
   try {
@@ -120,6 +124,32 @@ function attachDumpLater(id: string | null, since: number): void {
   }, DUMP_LOOKUP_DELAY_MS);
 }
 
+/**
+ * 'killed' olayları: süreç dışarıdan sonlandırıldı. Aynı anda birden çok süreç gidiyorsa uygulama kapatılıyordur
+ * (oturum kapatma, SIGTERM, görev yöneticisi; `isQuitting` henüz true olmadan gelir): canlıda 0.9.6'da bütün
+ * çocuk süreçler aynı anda "killed" bildiriyordu, gürültüydü. Tek başına gelen 'killed' ise bellek baskısı
+ * (macOS jetsam, Linux OOM) ya da yanıt vermeyen sürecin öldürülmesi olabilir: bildirilir. Bunun için olay
+ * kısa süre bekletilir; o sürede başka 'killed' gelirse hepsi atılır. Diğer nedenler hemen bildirilir.
+ */
+function maybeKilled(reason: string, emit: () => void): void {
+  if (reason !== 'killed') {
+    emit();
+    return;
+  }
+  const now = Date.now();
+  const burst = now - lastKilledAt < KILLED_BURST_MS;
+  lastKilledAt = now;
+  if (killedTimer) {
+    clearTimeout(killedTimer);
+    killedTimer = null;
+  }
+  if (burst) return;
+  killedTimer = setTimeout(() => {
+    killedTimer = null;
+    if (!isQuitting()) emit();
+  }, KILLED_BURST_MS);
+}
+
 function reportMainError(kind: 'hata' | 'reddedilen söz', error: unknown): void {
   const err = error instanceof Error ? error : new Error(String(error));
   const key = `${kind}:${err.message}`;
@@ -180,14 +210,16 @@ export function registerCrashReporting(opts: { getWindow: () => BrowserWindow | 
     } catch {
       // pencere kapanmış olabilir
     }
-    const id = report(
-      'masaustu-surec',
-      `Arayüz süreci sonlandı (${frame}): ${details.reason} (çıkış kodu ${details.exitCode})`,
-      { type: 'render-process-gone', reason: details.reason, exitCode: details.exitCode },
-      undefined,
-      false,
-    );
-    attachDumpLater(id, at);
+    maybeKilled(details.reason, () => {
+      const id = report(
+        'masaustu-surec',
+        `Arayüz süreci sonlandı (${frame}): ${details.reason} (çıkış kodu ${details.exitCode})`,
+        { type: 'render-process-gone', reason: details.reason, exitCode: details.exitCode },
+        undefined,
+        false,
+      );
+      attachDumpLater(id, at);
+    });
   });
 
   app.on('child-process-gone', (_e, details) => {
@@ -195,14 +227,16 @@ export function registerCrashReporting(opts: { getWindow: () => BrowserWindow | 
     const at = Date.now();
     const named = details.serviceName ?? details.name;
     const name = named && named !== details.type ? named : undefined;
-    const id = report(
-      'masaustu-surec',
-      `${details.type}${name ? ` (${name})` : ''} süreci sonlandı: ${details.reason} (çıkış kodu ${details.exitCode})`,
-      { type: 'child-process-gone', process: details.type, name: name ?? null, reason: details.reason, exitCode: details.exitCode },
-      undefined,
-      false,
-    );
-    attachDumpLater(id, at);
+    maybeKilled(details.reason, () => {
+      const id = report(
+        'masaustu-surec',
+        `${details.type}${name ? ` (${name})` : ''} süreci sonlandı: ${details.reason} (çıkış kodu ${details.exitCode})`,
+        { type: 'child-process-gone', process: details.type, name: name ?? null, reason: details.reason, exitCode: details.exitCode },
+        undefined,
+        false,
+      );
+      attachDumpLater(id, at);
+    });
   });
 
   ipcMain.on('crash:context', (_e, value: unknown) => {

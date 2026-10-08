@@ -10,6 +10,9 @@ import { createLogger } from './log';
 
 const BACKGROUND_CHECK_MS = 30 * 60_000;
 const DOWNLOAD_ATTEMPTS = 3;
+/** Kanal dosyası (latest-mac.yml) indirme sınırları */
+const FETCH_TIMEOUT_MS = 20_000;
+const FETCH_MAX_BYTES = 1_000_000;
 
 export const updateLog = createLogger('updater');
 
@@ -124,9 +127,9 @@ export class UpdateManager {
 
   /** macOS: kanal dosyasındaki sürümü okuyup karşılaştırır (indirme kullanıcıya bırakılır). */
   private async checkManual(): Promise<string | null> {
-    const res = await net.fetch(`${this.feedUrl}/latest-mac.yml`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Sürüm bilgisi alınamadı (${res.status}).`);
-    const version = /^version:\s*['"]?([^\s'"]+)/m.exec(await res.text())?.[1];
+    const res = await fetchText(`${this.feedUrl}/latest-mac.yml`);
+    if (res.status < 200 || res.status >= 300) throw new Error(`Sürüm bilgisi alınamadı (${res.status}).`);
+    const version = /^version:\s*['"]?([^\s'"]+)/m.exec(res.body)?.[1];
     return version && compareVersions(version, app.getVersion()) > 0 ? version : null;
   }
 
@@ -155,6 +158,49 @@ export class UpdateManager {
     if (state.kind !== 'downloading') updateLog.info(`durum: ${JSON.stringify(state)}`);
     for (const listener of this.listeners) listener(state);
   }
+}
+
+/**
+ * Küçük bir metin dosyasını Chromium ağ yığınıyla indirir. `net.fetch` kullanılmıyor: Electron'un fetch sarmalayıcısı
+ * 200–599 dışı bir durum kodu (ör. kesilen bağlantıda 0) gelince `new Response` içinde RangeError fırlatıyor ve bu
+ * hata promise'e değil ana sürecin yakalanmamış hata penceresine düşüyordu (0.9.6'da canlıda görüldü).
+ */
+function fetchText(url: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = net.request({ url, method: 'GET', cache: 'no-store' });
+    // Chromium'da genel okuma zaman aşımı yok: yanıt vermeyen sunucuda istek sonsuza dek beklemesin
+    let failure: Error | null = null;
+    const timer = setTimeout(() => {
+      failure = new Error('Sürüm bilgisi zaman aşımına uğradı (ETIMEDOUT).');
+      req.abort();
+    }, FETCH_TIMEOUT_MS);
+    const fail = (err: Error): void => {
+      clearTimeout(timer);
+      reject(failure ?? err);
+    };
+    req.on('response', (res) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > FETCH_MAX_BYTES) {
+          failure = new Error('Sürüm bilgisi beklenenden büyük.');
+          req.abort();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on('end', () => {
+        clearTimeout(timer);
+        resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') });
+      });
+      res.on('error', (err: Error) => fail(err));
+      res.on('aborted', () => fail(new Error('Bağlantı kesildi.')));
+    });
+    req.on('error', fail);
+    req.on('abort', () => fail(new Error('İstek iptal edildi.')));
+    req.end();
+  });
 }
 
 function describe(err: unknown): string {

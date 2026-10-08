@@ -259,6 +259,11 @@ function createWindow(launch: LaunchMode = 'normal'): void {
     }
   });
   watchWindowForHangs(mainWindow);
+  // Windows oturum kapatma / yeniden başlatma: sistem süreçleri öldürmeden önce haber verir; o andan sonra
+  // giden süreçler çökme olarak bildirilmesin
+  mainWindow.on('session-end', () => {
+    quitting = true;
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
     inviteListenerReady = false;
