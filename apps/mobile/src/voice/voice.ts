@@ -355,6 +355,10 @@ class MobileVoiceClient {
         dynacast: true,
         publishDefaults: { dtx: true, red: true },
         audioCaptureDefaults: captureOptions(),
+        // İki bağlantı (yayın + abonelik). Tek bağlantı kipinde (2.22 varsayılanı) kanala her yeni katılan
+        // için yayın bağlantısı yeniden müzakere edilir; Android WebRTC bunda takılıp ("negotiation timed out",
+        // "Local fingerprint does not match identity") tam yeniden bağlanıyor ve odadaki herkesin sesi kopuyordu.
+        singlePeerConnection: false,
       });
       this.room = room;
       this.bind(room);
