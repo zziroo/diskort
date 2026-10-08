@@ -11,10 +11,12 @@ export type ResolvedView =
   | { kind: 'text'; channelId: string }
   | { kind: 'home' }
   | { kind: 'dm'; channelId: string }
-  | { kind: 'dms' };
+  | { kind: 'dms' }
+  | { kind: 'friends'; tab?: 'all' | 'pending' | 'add' };
 
 /** Direkt mesajlar bölümünde mi (sol çubukta konuşma listesi gösterilir) */
-export const isDmSection = (view: ResolvedView): boolean => view.kind === 'dm' || view.kind === 'dms';
+export const isDmSection = (view: ResolvedView): boolean =>
+  view.kind === 'dm' || view.kind === 'dms' || view.kind === 'friends';
 
 export function resolveView(
   view: View,
@@ -28,7 +30,7 @@ export function resolveView(
   if (view.kind === 'voice' && inVoice) return voiceViewTarget(view.channelId ?? voiceChannelId, dms);
   // Kapatılan ya da ayrılınan konuşma: konuşma listesi açık kalır
   if (view.kind === 'dm') return dms[view.channelId] ? view : { kind: 'dms' };
-  if (view.kind === 'dms') return view;
+  if (view.kind === 'dms' || view.kind === 'friends') return view;
   const text = channels.filter((c) => c.type === 'text');
   const wanted = view.kind === 'text' ? view.channelId : lastTextChannelId;
   const channel = text.find((c) => c.id === wanted) ?? text[0];

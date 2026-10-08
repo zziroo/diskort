@@ -198,8 +198,8 @@ export const DM_PERMISSIONS =
 /**
  * Direkt mesaj konuşmasındaki yetkiler. Roller, kanal izinleri, sahiplik ve ADMINISTRATOR uygulanmaz:
  * katılımcı olmayan (yönetici de olsa) hiçbir şey göremez. Üye olmayan (atılan/yasaklanan) katılımcının
- * yetkisi yoktur. Bire bir konuşma salt okunur olur (geçmiş okunur; mesaj, tepki, arama yok): karşı taraf
- * artık üye değilse (ya da hesabı silindiyse), iki taraftan biri diğerini engellediyse (`isBlocked`: iki
+ * yetkisi yoktur. Bire bir konuşma salt okunur olur (geçmiş okunur; mesaj, tepki, arama yok): karşı tarafa
+ * artık ulaşılamıyorsa (`isMember`: ortak sunucu ya da arkadaşlık kalmadı, ya da hesabı silindi), iki taraftan biri diğerini engellediyse (`isBlocked`: iki
  * yönden biri) ya da sunucu konuşmayı salt okunur bildirdiyse (`readOnly`; engelin yönü söylenmez). Engel
  * grup konuşmalarını etkilemez.
  */

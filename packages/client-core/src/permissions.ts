@@ -73,7 +73,7 @@ export function permissionsOf(s: PermissionState, userId: string | undefined, ch
   if (!userId) return 0;
   if (channelId !== undefined) {
     const dm = s.dms?.[channelId];
-    // Bire bir konuşmada karşı tarafla ortak sunucu kalmadıysa ya da engel varsa (kendi engelin ya da sunucunun
+    // Bire bir konuşmada karşı tarafla ortak sunucu ve arkadaşlık kalmadıysa ya da engel varsa (kendi engelin ya da sunucunun
     // bildirdiği salt okunur durum) yazılamaz, aranamaz. Arama yetkisi (CONNECT/SPEAK/STREAM) buradan okunur.
     if (dm) {
       return dmPermissions(

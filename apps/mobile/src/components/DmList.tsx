@@ -15,6 +15,7 @@ import {
   useDmList,
   useDmUnreadCount,
   useGuild,
+  useIncomingFriendRequestCount,
   useMessages,
   useSession,
 } from '@diskort/client-core';
@@ -82,6 +83,7 @@ export function DmList({ onOpen, selectedId }: { onOpen: (dm: DmChannel) => void
 
   return (
     <View style={styles.page}>
+      <FriendsRow onPress={() => router.navigate('/friends')} />
       {dms.length > 0 && (
         <View style={styles.search}>
           <Ionicons name="search" size={17} color={colors.muted} />
@@ -130,6 +132,28 @@ export function DmList({ onOpen, selectedId }: { onOpen: (dm: DmChannel) => void
         />
       )}
       <DmMenu dm={menuFor} onClose={() => setMenuFor(null)} />
+    </View>
+  );
+}
+
+/** Listenin üstündeki "Arkadaşlar" satırı: arkadaşlar ekranını açar; yanıt bekleyen gelen istek sayısıyla */
+function FriendsRow({ onPress }: { onPress: () => void }) {
+  const incoming = useIncomingFriendRequestCount();
+  return (
+    <View style={styles.friendsWrap}>
+      <Pressable
+        onPress={onPress}
+        android_ripple={ripple.row}
+        style={styles.friends}
+        accessibilityRole="button"
+        accessibilityLabel={incoming > 0 ? `Arkadaşlar, ${incoming} bekleyen istek` : 'Arkadaşlar'}
+      >
+        <Ionicons name="people" size={22} color={colors.muted} />
+        <Text style={[styles.friendsText, incoming > 0 && { color: colors.head }]} numberOfLines={1}>
+          Arkadaşlar
+        </Text>
+        <CountBadge count={incoming} />
+      </Pressable>
     </View>
   );
 }
@@ -326,6 +350,17 @@ const styles = createStyles(() => ({
     backgroundColor: colors.rail,
   },
   searchInput: { flex: 1, color: colors.text, fontSize: font.body, paddingVertical: 0 },
+  friendsWrap: { paddingHorizontal: space.sm, paddingTop: space.sm },
+  friends: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    height: 44,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  friendsText: { flex: 1, color: colors.muted, fontSize: font.row + 0.5, fontWeight: '600' },
   rowWrap: { height: ROW_HEIGHT, paddingVertical: 1, paddingHorizontal: space.sm },
   row: {
     flex: 1,

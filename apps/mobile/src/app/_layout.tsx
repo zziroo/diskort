@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { AppState, Text, View } from 'react-native';
-import { Stack, useGlobalSearchParams, useSegments, type ErrorBoundaryProps } from 'expo-router';
+import { router, Stack, useGlobalSearchParams, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -17,7 +17,7 @@ import { Toast } from '../components/Toast';
 import { Button } from '../components/ui';
 import { UpdateScreen } from '../components/UpdateScreen';
 import { describeRoute, noteCrashContext, reportPendingNativeCrashes } from '../crashReports';
-import { channelFromResponse, registerForPush } from '../notifications';
+import { channelFromResponse, isFriendRequestResponse, registerForPush } from '../notifications';
 import { clientReady } from '../setup';
 import { checkForUpdate, cleanupDownloads, updateOnLaunch, useAppUpdate } from '../update/updater';
 import { showChat } from '../stores/nav';
@@ -144,6 +144,11 @@ export default function RootLayout() {
       } catch {
         // eski yerel modülde yok: yukarıdaki kayıt yeter
       }
+      // Arkadaşlık isteği: arkadaşlar ekranının Bekleyen sekmesi
+      if (isFriendRequestResponse(response)) {
+        router.navigate({ pathname: '/friends', params: { tab: 'pending', t: String(Date.now()) } });
+        return;
+      }
       const channelId = channelFromResponse(response);
       if (channelId) showChat(channelId);
     };
@@ -231,6 +236,7 @@ export default function RootLayout() {
                 <Stack.Screen name="search" options={{ headerShown: false, animation: 'fade_from_bottom' }} />
                 <Stack.Screen name="dms" options={{ title: 'Direkt Mesajlar' }} />
                 <Stack.Screen name="dm-new" options={{ title: 'Yeni mesaj', animation: 'fade_from_bottom' }} />
+                <Stack.Screen name="friends" options={{ title: 'Arkadaşlar' }} />
                 <Stack.Screen name="dm-rename" options={{ title: 'Grubun adı', animation: 'fade_from_bottom' }} />
                 <Stack.Screen name="settings" options={{ title: 'Ayarlar' }} />
                 <Stack.Screen name="ayarlar/[bolum]" options={{ title: 'Ayarlar' }} />

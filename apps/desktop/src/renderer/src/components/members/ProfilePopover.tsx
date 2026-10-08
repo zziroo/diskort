@@ -29,6 +29,7 @@ import {
   themedCardStyle,
 } from '../profile/ProfileLook';
 import { ActivityCards } from '../status/ActivityCard';
+import { FriendButton } from '../friends/FriendButton';
 
 const MARGIN = 8;
 const GAP = 8;
@@ -243,6 +244,12 @@ export function ProfilePopover() {
               )}
             </div>
           )
+        )}
+        {/* Arkadaşlık hesap düzeyidir: her bağlamda (kendin ve engellediğin kişi için yok) */}
+        {user.id !== selfId && !blocked && (
+          <div className="mt-2">
+            <FriendButton userId={user.id} variant="card" onAction={closeProfile} />
+          </div>
         )}
         {user.id !== selfId && (
           <div className="mt-3 flex justify-end">

@@ -119,7 +119,7 @@ export async function addDmParticipant(id: string, userId: string): Promise<bool
 
 /**
  * Konuşmaya mesaj yazılabiliyor mu değilse neden (arayüzde yazma kutusu yerine gösterilir). Bire bir
- * konuşmada karşı tarafla en az bir ortak sunucu olmalı (`reachable`: ortak sunucusu olanlar) ve engel
+ * konuşmada karşı tarafla en az bir ortak sunucu ya da arkadaşlık olmalı (`reachable`) ve engel
  * olmamalı. Karşı tarafı sen engellediysen (`blockedIds`) bu söylenir; seni engellediyse yalnızca genel
  * "artık mesaj gönderemezsin" (sunucu yönünü söylemez, bkz. DmChannel.readOnly). Aynı koşulda arama da
  * yapılamaz (bkz. dmCallBlockedReason).
@@ -135,7 +135,9 @@ export function dmBlockedReason(
   const partner = dmPartner(dm, users, selfId);
   if (!partner) return 'Bu kullanıcının hesabı silindi; artık mesaj gönderemezsin.';
   if (blockedIds[partner.id]) return `${partner.displayName} kişisini engelledin; mesaj göndermek için engeli kaldır.`;
-  if (!reachable[partner.id]) return `${partner.displayName} ile artık ortak bir sunucunuz yok; mesaj gönderemezsin.`;
+  if (!reachable[partner.id]) {
+    return `${partner.displayName} ile artık ortak bir sunucunuz yok ve arkadaş değilsiniz; mesaj gönderemezsin.`;
+  }
   if (dm.readOnly) return 'Bu konuşmaya artık mesaj gönderemezsin.';
   return null;
 }

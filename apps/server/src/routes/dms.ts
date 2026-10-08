@@ -30,7 +30,8 @@ const ringSchema = z.object({ userId: z.string().min(1).max(64).optional() });
  * Direkt mesajlar: bire bir ve küçük grup konuşmaları. Mesajlar metin kanallarıyla aynı uçlardan
  * gider (/api/channels/:id/messages); burada konuşmaların kendisi yönetilir. Yalnızca katılımcılar
  * erişir; yönetici ya da sahip de başkasının konuşmasını göremez (yokmuş gibi 404). Konuşma yalnızca
- * ortak bir sunucusu olan kişilerle başlatılır, gruba da yalnızca onlar eklenir; başkası yokmuş gibi 404.
+ * ortak bir sunucusu olan kişilerle ya da arkadaşlarla başlatılır, gruba da yalnızca onlar eklenir; başkası
+ * yokmuş gibi 404.
  */
 export function registerDmRoutes(app: FastifyInstance, ctx: AppContext): void {
   const { store, auth, gateway, permissions, attachments, calls, voice, moderation } = ctx;
@@ -62,7 +63,7 @@ export function registerDmRoutes(app: FastifyInstance, ctx: AppContext): void {
     const others = [...new Set(body.userIds)].filter((id) => id !== req.user.id);
     if (others.length === 0) return sendError(reply, 400, 'invalid_body', 'Kendine mesaj gönderemezsin.');
     for (const id of others) {
-      if (!permissions.sharesGuild(req.user.id, id) || !store.getUser(id)) {
+      if (!permissions.canReach(req.user.id, id) || !store.getUser(id)) {
         return sendError(reply, 404, 'not_found', 'Kullanıcı bulunamadı.');
       }
     }
@@ -141,7 +142,7 @@ export function registerDmRoutes(app: FastifyInstance, ctx: AppContext): void {
       }
       if (!hasPermission(permissions.inChannel(req.user.id, dm.id), Permission.SEND_MESSAGES)) return forbidden(reply);
       const target = store.getUser(req.params.userId);
-      if (!target || !permissions.sharesGuild(req.user.id, target.id)) {
+      if (!target || !permissions.canReach(req.user.id, target.id)) {
         return sendError(reply, 404, 'not_found', 'Kullanıcı bulunamadı.');
       }
       if (dm.participantIds.includes(target.id)) return dm;
@@ -206,7 +207,8 @@ export function registerDmRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   // ---------- Engellemeler ----------
   // Engelleyen kendi listesini görür; engellenen hiçbir yanıttan engellendiğini öğrenmez (yalnızca bire bir
-  // konuşma salt okunur olur, bkz. DmChannel.readOnly). Sunucu kanallarında hiçbir şeyi değiştirmez.
+  // konuşma salt okunur olur, bkz. DmChannel.readOnly). Sunucu kanallarında hiçbir şeyi değiştirmez. Engellemek
+  // arkadaşlığı ve iki yöndeki bekleyen arkadaşlık isteklerini kaldırır.
 
   app.get('/api/me/blocks', { preHandler: auth.requireUser }, async (req) => store.listBlocks(req.user.id));
 
@@ -230,10 +232,15 @@ export function registerDmRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (!store.getUser(targetId)) return sendError(reply, 404, 'not_found', 'Kullanıcı bulunamadı.');
     if (!allowBlock(req.user.id)) return sendError(reply, 429, 'rate_limited', 'Çok sık değişiklik yapıyorsun, biraz bekle.');
     const before = permissions.blockedEither(req.user.id, targetId);
+    // Engel arkadaşlığı ve bekleyen istekleri de kaldırır (store.block)
+    const wasFriend = store.areFriends(req.user.id, targetId);
+    const hadRequest = store.hasFriendRequest(req.user.id, targetId) || store.hasFriendRequest(targetId, req.user.id);
     if (store.block(req.user.id, targetId)) {
       calls.onBlocked(req.user.id, targetId);
       await blocksChanged(req.user.id, targetId, before);
     }
+    if (wasFriend) gateway.friendshipChanged(req.user.id, targetId);
+    else if (hadRequest) gateway.sendFriends([req.user.id, targetId]);
     return reply.code(204).send();
   });
 

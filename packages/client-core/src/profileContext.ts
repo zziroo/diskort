@@ -74,7 +74,7 @@ export function useGuildVoiceState(userId: string | null | undefined): VoiceStat
   return useGuild((s) => guildVoiceStateOf(s, userId));
 }
 
-/** Bağlamda bir kişiye (kendisi değilse, ortak sunucusu varsa) "Mesaj gönder" gösterilir mi */
+/** Bağlamda bir kişiye (kendisi değilse, ortak sunucusu varsa ya da arkadaşsa) "Mesaj gönder" gösterilir mi */
 export function canMessageIn(
   s: Pick<GuildStore, 'dms' | 'reachable'>,
   context: ProfileContext,

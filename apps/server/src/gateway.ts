@@ -385,6 +385,32 @@ export class Gateway {
     this.sendToUsers([userId], { t: 'USER_BLOCKS_UPDATE', d: { userIds: this.store.blockedUserIds(userId) } });
   }
 
+  /** Arkadaş listesi ya da istekler değişti: verilen kullanıcıların her birine kendi güncel listesi (tam liste) */
+  sendFriends(userIds: Iterable<string>): void {
+    for (const userId of new Set(userIds)) {
+      if (!this.byUser.has(userId)) continue;
+      this.sendToUsers([userId], { t: 'FRIENDS_UPDATE', d: this.store.listFriends(userId) });
+    }
+  }
+
+  /**
+   * İki kişinin arkadaşlığı kuruldu ya da kalktı: ikisine güncel listeleri; birbirini hâlâ görüyorlarsa (ortak
+   * sunucu ya da arkadaşlık) çevrimiçi durumları, artık görmüyorlarsa "çevrimdışı" (bkz. announceLeave).
+   * Görünmez olanın durumu hiç gönderilmez (zaten çevrimdışı görünür).
+   */
+  friendshipChanged(a: string, b: string): void {
+    this.sendFriends([a, b]);
+    const linked = this.permissions.canReach(a, b);
+    for (const [from, to] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      if (!this.isVisible(from)) continue;
+      const presence = linked ? this.presenceOf(from) : OFFLINE_PRESENCE;
+      this.sendToUsers([to], { t: 'PRESENCE_UPDATE', d: { userId: from, online: linked, ...presence } });
+    }
+  }
+
   /**
    * Olay kaydı isteği (bkz. traceRequests.ts): verilen kullanıcıların yalnızca isteği tanıyan oturumlarına
    * gider. Seste olmayan cihaz (ör. aynı hesabın telefonu) isteği yok sayar. Dönen: gönderilen oturum sayısı.
@@ -509,8 +535,9 @@ export class Gateway {
   announceLeave(guildId: string, userId: string, reason?: string): void {
     this.sendToUsers([userId], { t: 'GUILD_DELETE', d: { id: guildId, ...(reason ? { reason } : {}) } });
     this.sendToGuild(guildId, { t: 'GUILD_MEMBER_REMOVE', d: { guildId, userId } }, userId);
-    // Artık ortak sunucusu kalmayanlar birbirinin çevrimiçi durumunu görmez: son bilinen durum "çevrimdışı"
-    const still = this.permissions.coMembers(userId);
+    // Artık ortak sunucusu (ya da arkadaşlığı) kalmayanlar birbirinin çevrimiçi durumunu görmez: son bilinen
+    // durum "çevrimdışı"
+    const still = this.permissions.contacts(userId);
     const parted = this.store.guildMemberIds(guildId).filter((id) => !still.has(id));
     const offline = { online: false, ...OFFLINE_PRESENCE };
     if (this.isVisible(userId)) this.sendToUsers(parted, { t: 'PRESENCE_UPDATE', d: { userId, ...offline } });
@@ -688,7 +715,7 @@ export class Gateway {
   }
 
   /**
-   * Görünen durum değiştiyse ortak sunucusu olanlara (ve kişinin kendisine) duyurur. Görünmez kullanıcı
+   * Görünen durum değiştiyse ortak sunucusu olanlara, arkadaşlarına (ve kişinin kendisine) duyurur. Görünmez kullanıcı
    * hep çevrimdışı görünür: bağlanması, boşta olması, özel durumu ya da etkinlikleri hiçbir olay üretmez.
    */
   private announcePresence(userId: string, except?: Session): void {
@@ -702,7 +729,7 @@ export class Gateway {
       t: 'PRESENCE_UPDATE',
       d: { userId, online: presence.status !== 'offline', ...presence },
     } satisfies GatewayServerMessage);
-    for (const id of this.permissions.coMembers(userId)) {
+    for (const id of this.permissions.contacts(userId)) {
       for (const s of this.byUser.get(id) ?? []) {
         if (s !== except && s.socket.readyState === s.socket.OPEN) this.out(s, data);
       }
@@ -826,8 +853,8 @@ export class Gateway {
     ]);
     const onlyVisible = <T>(byChannel: Record<string, T>): Record<string, T> =>
       Object.fromEntries(Object.entries(byChannel).filter(([channelId]) => visible.has(channelId)));
-    const coMembers = this.permissions.coMembers(user.id);
-    const presences = this.presences([...this.byUser.keys()].filter((id) => coMembers.has(id)));
+    const contacts = this.permissions.contacts(user.id);
+    const presences = this.presences([...this.byUser.keys()].filter((id) => contacts.has(id)));
     this.send(s, {
       t: 'READY',
       d: {
@@ -846,6 +873,7 @@ export class Gateway {
         features: this.features,
         ...(dms ? { dms, dmCalls: this.callsFor?.(user.id) ?? [] } : {}),
         blockedUserIds: this.store.blockedUserIds(user.id),
+        friends: this.store.listFriends(user.id),
       },
     });
     // Yeni oturum kendi durumunu READY'de aldı

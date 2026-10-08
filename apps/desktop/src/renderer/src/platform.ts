@@ -18,9 +18,9 @@ function preview(message: Message): string {
   return files > 1 ? `📎 ${files} dosya gönderdi` : files === 1 ? '📎 Bir dosya gönderdi' : '';
 }
 
-function showNotification(title: string, message: Message, open: () => void): void {
+function showNotification(title: string, body: string, open: () => void): void {
   try {
-    const notification = new Notification(title, { body: preview(message), silent: true });
+    const notification = new Notification(title, { body, silent: true });
     notification.onclick = () => {
       bridge?.showWindow();
       open();
@@ -39,7 +39,7 @@ function showMentionNotification(message: Message): void {
   const channel = found ? `${found.name}${guildName}` : undefined;
   const replied = message.replyMentionUserId != null && message.replyMentionUserId === useSession.getState().user?.id;
   const action = replied ? 'sana yanıt verdi' : 'senden bahsetti';
-  showNotification(`${author ?? 'Biri'} ${action} · #${channel ?? ''}`, message, () =>
+  showNotification(`${author ?? 'Biri'} ${action} · #${channel ?? ''}`, preview(message), () =>
     useUi.getState().setView({ kind: 'text', channelId: message.channelId }),
   );
 }
@@ -48,10 +48,44 @@ function showDirectMessageNotification(message: Message, dm: DmChannel): void {
   const guild = useGuild.getState();
   const author = (message.authorId ? guild.users[message.authorId]?.displayName : undefined) ?? 'Biri';
   const title = dm.group ? `${author} · ${dmTitle(dm, guild.users, useSession.getState().user?.id)}` : author;
-  showNotification(title, message, () => useUi.getState().setView({ kind: 'dm', channelId: dm.id }));
+  showNotification(title, preview(message), () => useUi.getState().setView({ kind: 'dm', channelId: dm.id }));
 }
 
 const doNotDisturb = (): boolean => useGuild.getState().selfStatus?.status === 'dnd';
+
+/**
+ * Yeni gelen arkadaşlık isteği (FRIENDS_UPDATE ile gelen listeye yeni giren kişi): pencere odakta değilken
+ * bildirim. READY'deki liste (ilk bağlantı, yeniden bağlanma) bildirim çıkarmaz.
+ */
+/**
+ * Gönderen başına son bildirim zamanı. Gönder / geri çek / yeniden gönder döngüsüyle art arda bildirim
+ * üretilmesin diye aynı gönderenden 10 dakika içinde tekrar ses/bildirim yok (sunucudaki
+ * FRIEND_PUSH_COOLDOWN_MS ile aynı süre).
+ */
+const FRIEND_NOTIFY_COOLDOWN_MS = 10 * 60_000;
+const friendNotifiedAt = new Map<string, number>();
+
+useGuild.subscribe((s, prev) => {
+  if (s.friends.incoming === prev.friends.incoming) return;
+  if (prev.status !== 'ready' || s.status !== 'ready') return;
+  if (document.hasFocus() || doNotDisturb()) return;
+  const known = new Set(prev.friends.incoming.map((e) => e.userId));
+  const now = Date.now();
+  for (const [id, t] of friendNotifiedAt) if (t <= now - FRIEND_NOTIFY_COOLDOWN_MS) friendNotifiedAt.delete(id);
+  const added = s.friends.incoming.filter(
+    (e) => !known.has(e.userId) && (friendNotifiedAt.get(e.userId) ?? 0) <= now - FRIEND_NOTIFY_COOLDOWN_MS,
+  );
+  if (added.length === 0) return;
+  playSound('mention');
+  bridge?.requestAttention();
+  for (const e of added) {
+    friendNotifiedAt.set(e.userId, now);
+    const name = s.users[e.userId]?.displayName ?? e.user.displayName;
+    showNotification(`${name} sana arkadaşlık isteği gönderdi`, 'İsteği görmek için tıkla.', () =>
+      useUi.getState().setView({ kind: 'friends', tab: 'pending' }),
+    );
+  }
+});
 
 void configureClient({
   platform: 'desktop',

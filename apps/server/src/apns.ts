@@ -42,8 +42,9 @@ export interface ApnsAlert {
    */
   threadId?: string;
   /**
-   * Aynı kimlikli yeni bildirim öncekinin yerini alır (apns-collapse-id, en çok 64 bayt). Yalnızca aramalarda:
-   * "cevapsız arama" gelen arama bildiriminin yerine geçer.
+   * Aynı kimlikli yeni bildirim öncekinin yerini alır (apns-collapse-id, en çok 64 bayt). Aramalarda
+   * "cevapsız arama" gelen arama bildiriminin yerine geçer; arkadaşlık isteğinde aynı kişinin yeni isteği
+   * eskisinin yerine.
    */
   collapseId?: string;
 }

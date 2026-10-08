@@ -718,7 +718,7 @@ describe('göç 23: eski kozmetikler kaldırıldı', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(25);
+      expect(MIGRATIONS.length).toBe(26);
       expect(
         store.db.prepare('SELECT id, profile_effect, avatar_decoration, profile_frame, nameplate FROM users ORDER BY id').all(),
       ).toEqual(
@@ -794,7 +794,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(25);
+      expect(MIGRATIONS.length).toBe(26);
       // Var olan mesajlar olduğu gibi; türleri yok (sıradan mesaj biçimi değişmez)
       expect(store.db.prepare('SELECT id, channel_id, author_id, content, created_at FROM messages ORDER BY id').all()).toEqual(before);
       const old = store.getMessage(Number((before[0] as { id: number }).id))!;
@@ -826,7 +826,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
       // Göç tekrar çalıştırılamaz (sütun ekler) ama açılışta tekrar çalışmaz
       store.close();
       const again = new Store(file);
-      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 25 });
+      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 26 });
       again.close();
     } finally {
       try {
@@ -834,6 +834,48 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
       } catch {
         // zaten kapalı
       }
+    }
+  });
+});
+
+describe('göç 26: arkadaşlar', () => {
+  it('şema 25 veritabanına yalnızca ekleme yapar: istek, kabul, engel ve hesap silme tabloları tutarlı bırakır', () => {
+    const file = schema19Database();
+    const db = new DatabaseSync(file);
+    for (let v = 19; v < 25; v++) db.exec(MIGRATIONS[v]!);
+    db.exec('PRAGMA user_version = 25');
+    const userIds = (db.prepare('SELECT id FROM users ORDER BY id').all() as { id: string }[]).map((u) => u.id);
+    db.close();
+    expect(userIds.length).toBeGreaterThanOrEqual(2);
+
+    const store = new Store(file);
+    try {
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 26 });
+      const [a, b] = userIds as [string, string];
+      const permissions = new PermissionService(store);
+      expect(store.listFriends(a)).toEqual({ friends: [], incoming: [], outgoing: [] });
+      expect(store.sendFriendRequest(a, b, 1)).toBe('requested');
+      expect(store.sendFriendRequest(a, b, 2)).toBe('pending');
+      expect(store.listFriends(b).incoming).toMatchObject([{ userId: a, createdAt: 1 }]);
+      // Karşı yönden istek kabul sayılır; iki yönde de istek kalmaz
+      expect(store.sendFriendRequest(b, a, 3)).toBe('accepted');
+      expect(store.areFriends(a, b) && store.areFriends(b, a)).toBe(true);
+      expect(permissions.areFriends(a, b)).toBe(true);
+      expect(store.listFriends(a)).toMatchObject({ friends: [{ userId: b, createdAt: 3 }], incoming: [], outgoing: [] });
+      expect(store.sendFriendRequest(a, b, 4)).toBe('friends');
+      // Kendine istek veritabanında da reddedilir
+      expect(() => store.db.prepare('INSERT INTO friend_requests VALUES (?, ?, 1)').run(a, a)).toThrow();
+      // Engel arkadaşlığı kaldırır
+      store.block(b, a);
+      expect(store.areFriends(a, b)).toBe(false);
+      expect(permissions.areFriends(a, b)).toBe(false);
+      store.unblock(b, a);
+      expect(store.sendFriendRequest(a, b, 5)).toBe('requested');
+      store.deleteUser(b);
+      expect(store.listFriends(a)).toEqual({ friends: [], incoming: [], outgoing: [] });
+      expect(store.db.prepare('SELECT COUNT(*) AS n FROM friend_requests').get()).toEqual({ n: 0 });
+    } finally {
+      store.close();
     }
   });
 });

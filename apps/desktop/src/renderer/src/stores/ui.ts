@@ -79,8 +79,8 @@ export interface Toast {
 
 /**
  * Ana alanda gösterilen: bir metin kanalı, bağlı olunan ses kanalının sahnesi ya da direkt mesajlar
- * (`dm`: bir konuşma, `dms`: konuşma seçilmemiş liste). İlk üçü seçili sunucu, son ikisi "ana sayfa"
- * bölümüdür. Başka sunucunun kanalı açılınca (bildirim, ses) o sunucu seçilir.
+ * (`dm`: bir konuşma, `dms`: konuşma seçilmemiş liste, `friends`: arkadaşlar). İlk üçü seçili sunucu, son
+ * üçü "ana sayfa" bölümüdür. Başka sunucunun kanalı açılınca (bildirim, ses) o sunucu seçilir.
  */
 export type View =
   | { kind: 'text'; channelId: string }
@@ -91,7 +91,9 @@ export type View =
   | { kind: 'voice'; channelId?: string }
   | { kind: 'home' }
   | { kind: 'dm'; channelId: string }
-  | { kind: 'dms' };
+  | { kind: 'dms' }
+  /** `tab`: açılışta seçilecek sekme (ör. bildirimden "pending") */
+  | { kind: 'friends'; tab?: 'all' | 'pending' | 'add' };
 
 interface UiStore {
   /** Metin kanalının sağındaki üye listesi açık mı */

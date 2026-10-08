@@ -1,5 +1,5 @@
 import { api, useGuild } from '@diskort/client-core';
-import { parsePushTag, PUSH_CHANNEL_CALL } from '@diskort/shared';
+import { parsePushTag, PUSH_CHANNEL_CALL, PUSH_TYPE_FRIEND_REQUEST } from '@diskort/shared';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
@@ -193,6 +193,25 @@ export function channelFromResponse(response: Notifications.NotificationResponse
   const data = response.notification.request.content.data as { channelId?: unknown } | undefined;
   if (typeof data?.channelId === 'string') return data.channelId;
   return notificationTarget(response.notification)?.channelId ?? null;
+}
+
+/**
+ * Arkadaşlık isteği bildirimine mi dokunuldu (veride tür 'friend-request'; Android'de uygulama kapalıyken
+ * veri okunamaz: sunucunun verdiği "friend-request:<gönderen>" etiketinden anlaşılır). Dokununca arkadaşlar
+ * ekranının Bekleyen sekmesi açılır.
+ */
+export function isFriendRequestResponse(response: Notifications.NotificationResponse | null): boolean {
+  if (!response) return false;
+  const n = response.notification;
+  const data = n.request.content.data as { type?: unknown } | undefined;
+  if (data?.type === PUSH_TYPE_FRIEND_REQUEST) return true;
+  const raw = /[?&]tag=([^&]*)/.exec(n.request.identifier)?.[1];
+  if (!raw) return false;
+  try {
+    return decodeURIComponent(raw.replace(/\+/g, ' ')).startsWith(`${PUSH_TYPE_FRIEND_REQUEST}:`);
+  } catch {
+    return false;
+  }
 }
 
 /**

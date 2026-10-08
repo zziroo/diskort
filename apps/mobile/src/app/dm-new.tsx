@@ -23,7 +23,7 @@ export default function NewDmScreen() {
   const router = useRouter();
   const selfId = useSession((s) => s.user?.id);
   const users = useGuild((s) => s.users);
-  // DM yalnızca ortak sunucusu olanlarla
+  // DM yalnızca ortak sunucusu olanlarla ve arkadaşlarla
   const reachable = useGuild((s) => s.reachable);
   const online = useGuild((s) => s.online);
   const group = useGuild((s) => (addTo ? s.dms[addTo] : undefined));

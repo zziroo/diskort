@@ -17,6 +17,8 @@ function describeView(): string {
       return 'direkt mesaj';
     case 'dms':
       return 'direkt mesajlar';
+    case 'friends':
+      return 'arkadaşlar';
     case 'text':
       return useGuild.getState().channels.some((c) => c.id === view.channelId) ? 'metin kanalı' : 'ana ekran';
     default:

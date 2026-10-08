@@ -5,6 +5,7 @@ import {
   type Channel,
   type DmCall,
   type DmChannel,
+  type FriendsList,
   type GatewayServerMessage,
   type Guild,
   type GuildCreatePayload,
@@ -48,7 +49,7 @@ export interface GuildStore {
   channelGuild: Record<string, string>;
   /** Tanınan hesapların profilleri (ortak sunucular, eski üyeler, DM'ler) */
   profiles: Record<string, User>;
-  /** Ortak sunucusu olan kişiler (bire bir DM'e yalnızca onlara yazılabilir) */
+  /** Ortak sunucusu olan kişiler ve arkadaşlar (bire bir DM'e yalnızca onlara yazılabilir, gruba onlar eklenir) */
   reachable: Record<string, true>;
   /** Ana sunucu (ilk kurulan; silinemez) */
   primaryGuildId: string | null;
@@ -69,6 +70,10 @@ export interface GuildStore {
   dmCalls: Record<string, DmCall>;
   /** Engellediğin kişiler (yalnızca kendi listen; seni engelleyenler bilinmez) */
   blockedIds: Record<string, true>;
+  /** Arkadaşlar ve bekleyen istekler (READY, FRIENDS_UPDATE, REST yanıtları); arkadaşları tanımayan sunucuda boş */
+  friends: FriendsList;
+  /** Arkadaşların kimlikleri (friends.friends'ten) */
+  friendIds: Record<string, true>;
   /**
    * Tanınan tüm hesaplar, seçili sunucudaki rolleriyle (mesajlarda adları görünsün diye eski üyeler ve
    * başka sunuculardakiler de); üye listesinde `removed` olanlar gösterilmez
@@ -101,6 +106,8 @@ export interface GuildStore {
   removeDm: (id: string) => void;
   /** Engel listesini hemen günceller (REST yanıtından; USER_BLOCKS_UPDATE da gelir) */
   setBlocked: (userId: string, blocked: boolean) => void;
+  /** Arkadaş listesini hemen günceller (REST yanıtından; FRIENDS_UPDATE da gelir, tekrar zararsız) */
+  setFriends: (list: FriendsList) => void;
   /** Çalan aramayı bu cihazda hemen susturur (reddet; sunucu DM_CALL_UPDATE ile de bildirir) */
   stopRingingLocally: (channelId: string, userId: string) => void;
   setStatus: (status: GatewayStatus) => void;
@@ -170,9 +177,9 @@ function channelIndex(guilds: Record<string, GuildState>): Record<string, string
   return index;
 }
 
-/** Ortak sunucusu olanlar */
-function reachableOf(guilds: Record<string, GuildState>): Record<string, true> {
-  const result: Record<string, true> = {};
+/** Ortak sunucusu olanlar ve arkadaşlar */
+function reachableOf(guilds: Record<string, GuildState>, friendIds: Record<string, true>): Record<string, true> {
+  const result: Record<string, true> = { ...friendIds };
   for (const g of Object.values(guilds)) {
     for (const m of Object.values(g.members)) if (!m.removed) result[m.userId] = true;
   }
@@ -197,6 +204,7 @@ function derive(
   prev: GuildStore,
   next: Core,
   touched: { members?: boolean; channels?: boolean; profiles?: boolean } = {},
+  friendIds: Record<string, true> = prev.friendIds,
 ): Core & Derived {
   const active = next.activeGuildId ? next.guilds[next.activeGuildId] : undefined;
   const prevActive = prev.activeGuildId ? prev.guilds[prev.activeGuildId] : undefined;
@@ -208,7 +216,7 @@ function derive(
     channels: active?.channels ?? NO_CHANNELS,
     roles: active?.roles ?? NO_ROLES,
     users: usersStale ? usersOf(next.profiles, active) : prev.users,
-    reachable: touched.members ? reachableOf(next.guilds) : prev.reachable,
+    reachable: touched.members || friendIds !== prev.friendIds ? reachableOf(next.guilds, friendIds) : prev.reachable,
     channelGuild: touched.channels ? channelIndex(next.guilds) : prev.channelGuild,
   };
 }
@@ -217,6 +225,37 @@ function derive(
 function validActive(guilds: Record<string, GuildState>, order: string[], wanted: string | null): string | null {
   if (wanted && guilds[wanted]) return wanted;
   return order[0] ?? null;
+}
+
+const EMPTY_FRIENDS: FriendsList = { friends: [], incoming: [], outgoing: [] };
+
+/** Arkadaşların kimlikleri */
+const friendIdsOf = (list: FriendsList): Record<string, true> =>
+  Object.fromEntries(list.friends.map((f) => [f.userId, true as const]));
+
+/** Arkadaş listesinin değişmesi: kimlikler, ulaşılabilenler ve listedeki profiller (tanınan hesaplara eklenir) */
+function applyFriends(s: GuildStore, friends: FriendsList): Partial<GuildStore> {
+  const friendIds = friendIdsOf(friends);
+  const profiles = { ...s.profiles };
+  for (const e of [...friends.friends, ...friends.incoming, ...friends.outgoing]) profiles[e.userId] = e.user;
+  return {
+    ...derive(
+      s,
+      { guilds: s.guilds, guildOrder: s.guildOrder, profiles, activeGuildId: s.activeGuildId },
+      { profiles: true },
+      friendIds,
+    ),
+    friends,
+    friendIds,
+  };
+}
+
+/** Listeden bir kişiyi (hesabı silindi) çıkarır; listede yoksa aynı nesne */
+function withoutFriend(list: FriendsList, userId: string): FriendsList {
+  const has = (l: FriendsList['friends']) => l.some((e) => e.userId === userId);
+  if (!has(list.friends) && !has(list.incoming) && !has(list.outgoing)) return list;
+  const drop = (l: FriendsList['friends']) => l.filter((e) => e.userId !== userId);
+  return { friends: drop(list.friends), incoming: drop(list.incoming), outgoing: drop(list.outgoing) };
 }
 
 const initial = {
@@ -233,6 +272,8 @@ const initial = {
   dms: {},
   dmCalls: {},
   blockedIds: {},
+  friends: EMPTY_FRIENDS,
+  friendIds: {},
   users: {},
   roles: {},
   voiceStates: {},
@@ -285,9 +326,16 @@ export const useGuild = create<GuildStore>()((set) => ({
       const guilds = Object.fromEntries(p.guilds.map((g) => [g.guild.id, toGuildState(g)]));
       const guildOrder = p.guilds.map((g) => g.guild.id);
       const activeGuildId = validActive(guilds, guildOrder, s.activeGuildId ?? remembered);
-      const core: Core = { guilds, guildOrder, profiles: byId(p.users), activeGuildId };
+      const friends = p.friends ?? EMPTY_FRIENDS;
+      const friendIds = friendIdsOf(friends);
+      const profiles = byId(p.users);
+      // Listedeki profiller (bekleyen istekler READY'nin users'ında olmayabilir)
+      for (const e of [...friends.friends, ...friends.incoming, ...friends.outgoing]) profiles[e.userId] ??= e.user;
+      const core: Core = { guilds, guildOrder, profiles, activeGuildId };
       return {
-        ...derive({ ...s, activeGuildId: null }, core, { members: true, channels: true, profiles: true }),
+        ...derive({ ...s, activeGuildId: null }, core, { members: true, channels: true, profiles: true }, friendIds),
+        friends,
+        friendIds,
         status: 'ready',
         primaryGuildId: p.primaryGuildId ?? null,
         dms: byId(p.dms ?? []),
@@ -328,6 +376,7 @@ export const useGuild = create<GuildStore>()((set) => ({
       const { [userId]: _removed, ...rest } = s.blockedIds;
       return { blockedIds: blocked ? { ...rest, [userId]: true } : rest };
     }),
+  setFriends: (list) => set((s) => applyFriends(s, list)),
   stopRingingLocally: (channelId, userId) =>
     set((s) => {
       const call = s.dmCalls[channelId];
@@ -460,12 +509,22 @@ function applyEvent(s: GuildStore, msg: GatewayServerMessage): Partial<GuildStor
             ]),
           )
         : s.dms;
+      // Arkadaş listesinden ve isteklerden de düşer (sunucu FRIENDS_UPDATE da gönderir)
+      const friends = withoutFriend(s.friends, id);
+      const friendIds = friends === s.friends ? s.friendIds : friendIdsOf(friends);
       return {
-        ...derive(s, { guilds, guildOrder: s.guildOrder, profiles, activeGuildId: s.activeGuildId }, { members: true, profiles: true }),
+        ...derive(
+          s,
+          { guilds, guildOrder: s.guildOrder, profiles, activeGuildId: s.activeGuildId },
+          { members: true, profiles: true },
+          friendIds,
+        ),
         voiceStates,
         online,
         presences,
         dms,
+        friends,
+        friendIds,
       };
     }
     case 'PRESENCE_UPDATE':
@@ -575,6 +634,8 @@ function applyEvent(s: GuildStore, msg: GatewayServerMessage): Partial<GuildStor
     }
     case 'USER_BLOCKS_UPDATE':
       return { blockedIds: Object.fromEntries(msg.d.userIds.map((id) => [id, true as const])) };
+    case 'FRIENDS_UPDATE':
+      return applyFriends(s, msg.d);
     default:
       return {};
   }

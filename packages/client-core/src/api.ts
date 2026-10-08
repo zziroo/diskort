@@ -11,6 +11,8 @@ import type {
   CreateRoleRequest,
   DeleteAccountRequest,
   DmChannel,
+  FriendRequestResponse,
+  FriendsList,
   Guild,
   PushTokenRequest,
   Message,
@@ -275,6 +277,15 @@ export const api = {
   listBlocks: () => request<UserBlock[]>('GET', '/api/me/blocks'),
   blockUser: (userId: string) => request<void>('PUT', `/api/me/blocks/${userId}`),
   unblockUser: (userId: string) => request<void>('DELETE', `/api/me/blocks/${userId}`),
+
+  // Arkadaşlar: her değişiklik isteği yapanın güncel listesini döner (FRIENDS_UPDATE da gelir)
+  listFriends: () => request<FriendsList>('GET', '/api/friends'),
+  /** Kullanıcı adıyla istek; karşı tarafın bekleyen isteği varsa kabul sayılır (status 'friends') */
+  sendFriendRequest: (username: string) => request<FriendRequestResponse>('POST', '/api/friends/requests', { username }),
+  acceptFriendRequest: (userId: string) => request<FriendsList>('POST', `/api/friends/requests/${userId}/accept`),
+  /** Gelen isteği reddet ya da gönderdiğini geri çek */
+  deleteFriendRequest: (userId: string) => request<FriendsList>('DELETE', `/api/friends/requests/${userId}`),
+  removeFriend: (userId: string) => request<FriendsList>('DELETE', `/api/friends/${userId}`),
 };
 
 export function errorMessage(err: unknown): string {

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { MessagesSquare, Plus, Volume2, X } from 'lucide-react';
+import { MessagesSquare, Plus, Users, Volume2, X } from 'lucide-react';
 import type { DmChannel } from '@diskort/shared';
 import {
   dmTitle,
@@ -7,6 +7,7 @@ import {
   useDmList,
   useDmUnreadCount,
   useGuild,
+  useIncomingFriendRequestCount,
   useSession,
 } from '@diskort/client-core';
 import { closeOrLeaveDm, dmMenuItems } from '../../lib/dm';
@@ -18,7 +19,7 @@ import { formatAgo, formatFull } from '../text/format';
 import { PresenceSubline } from '../status/ActivityCard';
 import { DmAvatar } from './DmAvatar';
 
-/** Direkt mesajlar bölümünün sol çubuğu: konuşmalar, son etkinliğe göre. */
+/** Direkt mesajlar bölümünün sol çubuğu: en üstte arkadaşlar, sonra konuşmalar (son etkinliğe göre). */
 export function DmSidebar() {
   const dms = useDmList();
   const view = useMainView();
@@ -49,7 +50,8 @@ export function DmSidebar() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pt-3 pb-[calc(var(--footer-h,0px)+8px)]">
-        <div className="mb-1 px-2 text-xs font-bold tracking-wide text-text-muted uppercase">Konuşmalar</div>
+        <FriendsRow selected={view.kind === 'friends'} />
+        <div className="mt-3 mb-1 px-2 text-xs font-bold tracking-wide text-text-muted uppercase">Konuşmalar</div>
         {dms.length === 0 ? (
           <p className="anim-fade-in px-2 pt-2 text-sm leading-snug text-text-muted">
             Henüz bir konuşman yok. Üye listesinde birine sağ tıklayıp <strong className="text-text-normal">Mesaj Gönder</strong>
@@ -61,6 +63,35 @@ export function DmSidebar() {
       </div>
 
     </aside>
+  );
+}
+
+/** "Arkadaşlar" satırı: arkadaşlar görünümünü açar; gelen istek sayısı kırmızı rozette */
+function FriendsRow({ selected }: { selected: boolean }) {
+  const incoming = useIncomingFriendRequestCount();
+  const setView = useUi((s) => s.setView);
+  return (
+    <button
+      className={cn(
+        'flex h-[42px] w-full items-center gap-3 rounded px-2 text-left font-medium transition-colors duration-150',
+        selected ? 'bg-bg-active text-text-head' : 'text-text-muted hover:bg-bg-hover hover:text-text-normal',
+      )}
+      aria-label={incoming > 0 ? `Arkadaşlar, ${incoming} bekleyen istek` : 'Arkadaşlar'}
+      onClick={() => setView({ kind: 'friends' })}
+    >
+      <span className="flex w-8 shrink-0 justify-center">
+        <Users size={22} className="ico-spread" />
+      </span>
+      <span className="min-w-0 flex-1 truncate">Arkadaşlar</span>
+      {incoming > 0 && (
+        <span
+          key={incoming}
+          className="anim-pill-in flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-bold text-white"
+        >
+          {incoming > 99 ? '99+' : incoming}
+        </span>
+      )}
+    </button>
   );
 }
 

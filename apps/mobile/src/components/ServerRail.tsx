@@ -13,6 +13,7 @@ import {
   useMessages,
   useDmUnreadCount,
   useDmUnreadTotal,
+  useIncomingFriendRequestCount,
   useSession,
   useUnreadDms,
   type GuildVoiceActivity,
@@ -161,13 +162,24 @@ function RailItem({
   );
 }
 
-/** Direkt mesajlar (ana sayfa) düğmesi: tüm konuşmalardaki okunmamış mesaj sayısıyla */
+/**
+ * Direkt mesajlar (ana sayfa) düğmesi: tüm konuşmalardaki okunmamış mesaj sayısı ile yanıt bekleyen gelen
+ * arkadaşlık isteklerinin toplamıyla
+ */
 function HomeButton({ selected }: { selected: boolean }) {
   const unread = useDmUnreadTotal();
+  const requests = useIncomingFriendRequestCount();
+  const label = [
+    'Direkt mesajlar',
+    unread > 0 ? `${unread} okunmamış` : null,
+    requests > 0 ? `${requests} arkadaşlık isteği` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
   return (
     <RailItem
       selected={selected}
-      label={unread > 0 ? `Direkt mesajlar, ${unread} okunmamış` : 'Direkt mesajlar'}
+      label={label}
       onPress={() => {
         if (!selected) feedback('tick');
         selectHome();
@@ -177,7 +189,7 @@ function HomeButton({ selected }: { selected: boolean }) {
         <Ionicons name="chatbubbles" size={24} color={selected ? colors.white : colors.text} />
       </View>
       <View style={styles.badge}>
-        <CountBadge count={unread} ring={colors.rail} />
+        <CountBadge count={unread + requests} ring={colors.rail} />
       </View>
     </RailItem>
   );

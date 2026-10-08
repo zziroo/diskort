@@ -3,20 +3,26 @@ import { Image, ScrollView, Text, View } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import {
+  acceptFriendRequest,
   blockUser,
   canMessageIn,
+  cancelFriendRequest,
+  declineFriendRequest,
   guildVoiceStateOf,
   memberActions,
   memberColorOf,
   moderation,
   moveTargets,
   openDirectMessage,
+  removeFriend,
+  sendFriendRequest,
   showsGuildInfo,
   showsStreamInfo,
   streamPreviewHeaders,
   streamPreviewUrl,
   unblockUser,
   useCustomStatus,
+  useFriendStatus,
   useGuild,
   useSession,
   useStatus,
@@ -89,6 +95,9 @@ export function MemberSheet({
   // DM bağlamında başkası: engelle / engeli kaldır (yalnızca DM'leri etkiler; sunucuda bir şey değişmez)
   const canBlock = shownContext.kind === 'dm' && Boolean(user && userId && userId !== selfId);
   const blockedThis = useGuild((s) => Boolean(userId && s.blockedIds[userId]));
+  // Arkadaşlık durumu düğmesi: kendinde ve engellediğin kişide yok (her bağlamda, hesap düzeyi)
+  const friendStatus = useFriendStatus(userId);
+  const showFriend = Boolean(user && userId) && friendStatus !== 'self' && !blockedThis;
   const router = useRouter();
   const pathname = usePathname();
 
@@ -158,7 +167,7 @@ export function MemberSheet({
   const extra = userId ? renderExtra?.(userId) : null;
   const voiceActions = Boolean(voice && actions && (actions.mute || actions.deafen || actions.move));
   const nothing =
-    !extra && !canMessage && !streaming && actions && !voiceActions && !actions.kick && !actions.ban && actions.roles.length === 0;
+    !extra && !showFriend && !canMessage && !streaming && actions && !voiceActions && !actions.kick && !actions.ban && actions.roles.length === 0;
   // Rolleri, en üstteki önce (masaüstündeki profil kartı gibi renk noktasıyla); DM'de yok
   const roles = (guildInfo ? (user?.roles ?? []) : [])
     .map((id) => guildRoles[id])
@@ -179,6 +188,42 @@ export function MemberSheet({
       () => toast('Kullanıcı adı kopyalandı'),
       () => undefined,
     );
+  };
+
+  /** Arkadaşlık durumuna göre: ekle, isteği geri çek, kabul et / reddet, arkadaşlıktan çıkar (onaylı) */
+  const friendAction = async (action: 'add' | 'cancel' | 'accept' | 'decline' | 'remove'): Promise<void> => {
+    const id = userId!;
+    const username = user?.username ?? '';
+    close();
+    switch (action) {
+      case 'add': {
+        const res = await sendFriendRequest(username);
+        if ('error' in res) toast(res.error, 'error');
+        else toast(res.status === 'friends' ? `${name} ile artık arkadaşsınız.` : 'İstek gönderildi');
+        return;
+      }
+      case 'cancel':
+        if (await cancelFriendRequest(id)) toast('İstek geri çekildi.');
+        return;
+      case 'accept':
+        if (await acceptFriendRequest(id)) toast(`${name} ile artık arkadaşsınız.`);
+        return;
+      case 'decline':
+        await declineFriendRequest(id);
+        return;
+      case 'remove': {
+        const ok = await confirmDialog({
+          title: `${name} arkadaşlıktan çıkarılsın mı?`,
+          message:
+            'Ortak sunucunuz yoksa bire bir konuşmanız salt okunur olur (geçmiş kalır). Gruplar etkilenmez; ona bildirim gitmez.',
+          icon: 'person-remove-outline',
+          confirmLabel: 'Arkadaşlıktan çıkar',
+          danger: true,
+        });
+        if (ok && (await removeFriend(id))) toast(`${name} arkadaşlıktan çıkarıldı.`);
+        return;
+      }
+    }
   };
 
   const toggleBlock = async (): Promise<void> => {
@@ -331,6 +376,43 @@ export function MemberSheet({
                 )}
                 {/* DM'de hesap düzeyi işlem */}
                 {!guildInfo && <SheetItem key="copy" icon="at" label="Kullanıcı adını kopyala" onPress={copyUsername} />}
+              </SheetGroup>
+            )}
+            {showFriend && (
+              <SheetGroup>
+                {friendStatus === 'none' && (
+                  <SheetItem key="f-add" icon="person-add-outline" label="Arkadaş ekle" onPress={() => void friendAction('add')} />
+                )}
+                {friendStatus === 'outgoing' && (
+                  <SheetItem
+                    key="f-cancel"
+                    icon="time-outline"
+                    label="İstek gönderildi"
+                    hint="Geri çekmek için dokun"
+                    onPress={() => void friendAction('cancel')}
+                  />
+                )}
+                {friendStatus === 'incoming' && (
+                  <SheetItem
+                    key="f-accept"
+                    icon="person-add-outline"
+                    label="Kabul et"
+                    hint="Sana arkadaşlık isteği gönderdi"
+                    onPress={() => void friendAction('accept')}
+                  />
+                )}
+                {friendStatus === 'incoming' && (
+                  <SheetItem key="f-decline" icon="close-circle-outline" label="Reddet" onPress={() => void friendAction('decline')} />
+                )}
+                {friendStatus === 'friend' && (
+                  <SheetItem
+                    key="f-remove"
+                    icon="people-outline"
+                    label="Arkadaş"
+                    hint="Arkadaşlıktan çıkarmak için dokun"
+                    onPress={() => void friendAction('remove')}
+                  />
+                )}
               </SheetGroup>
             )}
             {canBlock && (

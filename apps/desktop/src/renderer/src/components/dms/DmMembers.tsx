@@ -36,7 +36,7 @@ const Participant = memo(function Participant({
 }) {
   const user = useGuild((s) => s.users[userId]);
   const online = useGuild((s) => Boolean(s.online[userId]));
-  // Ortak sunucusu kalmayan (ya da seçili olmayan sunucudan tanınan) kişi
+  // Ortak sunucusu kalmayan ve arkadaş olmayan (ya da seçili olmayan sunucudan tanınan) kişi
   const reachable = useGuild((s) => Boolean(s.reachable[userId]));
   const selfId = useSession((s) => s.user?.id);
   const openContextMenu = useUi((s) => s.openContextMenu);
@@ -105,7 +105,7 @@ const Participant = memo(function Participant({
             // Hesap düzeyi bilgi (sunucu bilgisi değil; ses simgesi yok): oyun simgesi; özel durum, yoksa oynadığı oyun
             <PresenceSubline userId={userId} className={cn('text-xs', plate ? 'nameplate-sub' : 'text-text-muted')} />
           ) : (
-            <div className="truncate text-xs text-text-muted">Ortak sunucunuz yok</div>
+            <div className="truncate text-xs text-text-muted">Ortak sunucunuz yok, arkadaş değilsiniz</div>
           )}
         </div>
       </div>

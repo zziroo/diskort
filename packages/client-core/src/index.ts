@@ -315,6 +315,20 @@ export {
   useUnreadDms,
 } from './dms';
 export {
+  acceptFriendRequest,
+  cancelFriendRequest,
+  declineFriendRequest,
+  friendStatusOf,
+  isFriend,
+  loadFriends,
+  removeFriend,
+  sendFriendRequest,
+  useFriendStatus,
+  useFriends,
+  useIncomingFriendRequestCount,
+  type FriendStatus,
+} from './friends';
+export {
   blockUser,
   callMembers,
   canCallDm,

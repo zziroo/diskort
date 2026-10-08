@@ -238,7 +238,8 @@ describe('dakikalık özet ve 15 sn\'lik geçmiş (tek örnekleyiciden)', () => 
       s.tick(T0 + i * 1000, files({ dev: devText(rx, rx, i >= 100 ? 40 : 0, 0) }));
       s.addProbe('udp 1.1.1.1', T0 + i * 1000 - 500, 9);
     }
-    await s.flush();
+    // Test verisi sabit tarihli: flush'a "şimdi" olarak o günü ver, yoksa 7 günlük saklama netsec dosyasını hemen siler
+    await s.flush(T0 + 201_000);
     const names = fs.readdirSync(dir).sort();
     expect(names).toEqual(['netmin-2026-10-01.jsonl', 'netsec-2026-10-01.jsonl']);
     const secs = fs.readFileSync(path.join(dir, 'netsec-2026-10-01.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as SecondRow);

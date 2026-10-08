@@ -66,6 +66,7 @@ import { registerAvatarRoutes } from './routes/avatars.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerDmRoutes } from './routes/dms.js';
 import { registerDownloadRoutes } from './routes/download.js';
+import { registerFriendRoutes } from './routes/friends.js';
 import { registerEmbedRoutes } from './routes/embeds.js';
 import { registerFeedbackRoutes } from './routes/feedback.js';
 import { registerGifRoutes } from './routes/gifs.js';
@@ -503,6 +504,7 @@ export async function buildApp(
   registerDownloadRoutes(app, ctx);
   registerMessageRoutes(app, ctx);
   registerDmRoutes(app, ctx);
+  registerFriendRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerGuildRoutes(app, ctx);
   registerRoleRoutes(app, ctx);

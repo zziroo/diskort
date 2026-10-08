@@ -31,6 +31,8 @@ import {
   type MessageCall,
   callMessageText,
   type UserBlock,
+  type FriendEntry,
+  type FriendsList,
   type PermissionContext,
   type PermissionOverwrite,
   type PinnedMessage,
@@ -463,6 +465,28 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE messages ADD COLUMN call_data TEXT;
   CREATE INDEX IF NOT EXISTS messages_calls ON messages(channel_id, id) WHERE type = 'call';
   `,
+  // 26: arkadaşlar. friend_requests: from_id, to_id'ye istek gönderdi (aynı yönde tek istek; karşı yönde
+  // bekleyen istek varken gönderilen istek kabul sayılır, iki yönde aynı anda istek kalmaz). friendships: iki
+  // yönlü arkadaşlık, çift başına tek satır (user_a < user_b). Hesap silinince satırlar da gider. Yalnızca
+  // ekleme yapar; eski sürüme dönülürse tablolar yok sayılır.
+  `
+  CREATE TABLE IF NOT EXISTS friend_requests (
+    from_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    to_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (from_id, to_id),
+    CHECK (from_id != to_id)
+  ) WITHOUT ROWID;
+  CREATE INDEX IF NOT EXISTS friend_requests_by_to ON friend_requests(to_id);
+  CREATE TABLE IF NOT EXISTS friendships (
+    user_a     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_b     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_a, user_b),
+    CHECK (user_a < user_b)
+  ) WITHOUT ROWID;
+  CREATE INDEX IF NOT EXISTS friendships_by_b ON friendships(user_b);
+  `,
 ];
 
 type Param = string | number | null;
@@ -580,6 +604,8 @@ export interface PermissionData {
   dms: ReadonlyMap<string, DmAccess>;
   /** Engeller: blockKey(engelleyen, engellenen) */
   blocks: ReadonlySet<string>;
+  /** Arkadaşlıklar: kullanıcı → arkadaşları (iki yönlü) */
+  friends: ReadonlyMap<string, ReadonlySet<string>>;
   /** Ana sunucu: ilk kurulan (hesap açtıran ilk kişi ve yönetici davetleri buraya katılır) */
   primaryGuildId: string | null;
 }
@@ -898,7 +924,7 @@ export class Store {
 
   /**
    * Kullanıcının görebildiği hesapların kimlikleri: kendisi, üye olduğu sunucuların üyeleri ve eski üyeleri
-   * (mesajlarında adları görünsün diye) ve direkt mesaj konuşmalarındaki kişiler.
+   * (mesajlarında adları görünsün diye), direkt mesaj konuşmalarındaki kişiler ve arkadaşları.
    */
   visibleUserIds(userId: string): Set<string> {
     const ids = new Set<string>([userId]);
@@ -916,12 +942,13 @@ export class Store {
     )) {
       ids.add(r.id);
     }
+    for (const id of this.friendIds(userId)) ids.add(id);
     return ids;
   }
 
   /**
    * Kullanıcıyı görebilenler (profil değişikliğini alacaklar): kendisi, kaydı (eski üyelik dahil) olan
-   * sunucuların şu anki üyeleri ve direkt mesaj konuşmalarındaki kişiler.
+   * sunucuların şu anki üyeleri, direkt mesaj konuşmalarındaki kişiler ve arkadaşları.
    */
   observerIds(userId: string): Set<string> {
     const ids = new Set<string>([userId]);
@@ -939,6 +966,7 @@ export class Store {
     )) {
       ids.add(r.id);
     }
+    for (const id of this.friendIds(userId)) ids.add(id);
     return ids;
   }
 
@@ -1423,12 +1451,23 @@ export class Store {
     for (const r of this.all<{ blocker_id: string; blocked_id: string }>('SELECT blocker_id, blocked_id FROM user_blocks')) {
       blocks.add(blockKey(r.blocker_id, r.blocked_id));
     }
+    const friends = new Map<string, Set<string>>();
+    const befriend = (a: string, b: string): void => {
+      let set = friends.get(a);
+      if (!set) friends.set(a, (set = new Set()));
+      set.add(b);
+    };
+    for (const r of this.all<{ user_a: string; user_b: string }>('SELECT user_a, user_b FROM friendships')) {
+      befriend(r.user_a, r.user_b);
+      befriend(r.user_b, r.user_a);
+    }
     const data: PermissionData = {
       guilds,
       channelGuild,
       userGuilds,
       dms,
       blocks,
+      friends,
       primaryGuildId: guilds.keys().next().value ?? null,
     };
     this.permissionCache = data;
@@ -2082,21 +2121,160 @@ export class Store {
     ).map((r) => r.id);
   }
 
-  /** Engeller; zaten engelliyse false (tekrarlanabilir) */
+  /**
+   * Engeller; zaten engelliyse false (tekrarlanabilir). İkisinin arkadaşlığı ve iki yöndeki bekleyen
+   * istekleri de kaldırılır (bkz. clearFriendship).
+   */
   block(blocker: string, blocked: string, now = Date.now()): boolean {
-    return (
-      this.run(
-        'INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)',
-        blocker,
-        blocked,
-        now,
-      ) > 0
-    );
+    return this.tx(() => {
+      const added =
+        this.run(
+          'INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)',
+          blocker,
+          blocked,
+          now,
+        ) > 0;
+      this.clearFriendship(blocker, blocked);
+      return added;
+    });
   }
 
   /** Engeli kaldırır; engelli değilse false */
   unblock(blocker: string, blocked: string): boolean {
     return this.run('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?', blocker, blocked) > 0;
+  }
+
+  // ---------- Arkadaşlar ----------
+  // Arkadaşlık iki yönlüdür (çift başına tek satır, user_a < user_b). İstek yönlüdür; iki yönde aynı anda
+  // bekleyen istek olmaz: karşı yönde istek varken gönderilen istek kabul sayılır. Engel kontrolü burada
+  // değil, çağıranda (routes/friends.ts); engellemek ise arkadaşlığı ve istekleri kaldırır (bkz. block).
+
+  /** İki kişi arkadaş mı */
+  areFriends(a: string, b: string): boolean {
+    if (a === b) return false;
+    const [x, y] = a < b ? [a, b] : [b, a];
+    return this.one('SELECT 1 FROM friendships WHERE user_a = ? AND user_b = ?', x, y) !== undefined;
+  }
+
+  /** `from`, `to`'ya istek gönderdi ve istek bekliyor mu */
+  hasFriendRequest(from: string, to: string): boolean {
+    return this.one('SELECT 1 FROM friend_requests WHERE from_id = ? AND to_id = ?', from, to) !== undefined;
+  }
+
+  /** Kullanıcının arkadaşlarının kimlikleri */
+  friendIds(userId: string): string[] {
+    return this.all<{ id: string }>(
+      `SELECT user_b AS id FROM friendships WHERE user_a = ?1
+       UNION SELECT user_a AS id FROM friendships WHERE user_b = ?1`,
+      userId,
+    ).map((r) => r.id);
+  }
+
+  /** Arkadaşları ve bekleyen isteklerdeki (gelen ya da giden) kişiler */
+  friendCounterpartIds(userId: string): string[] {
+    return this.all<{ id: string }>(
+      `SELECT to_id AS id FROM friend_requests WHERE from_id = ?1
+       UNION SELECT from_id AS id FROM friend_requests WHERE to_id = ?1`,
+      userId,
+    )
+      .map((r) => r.id)
+      .concat(this.friendIds(userId));
+  }
+
+  /** Yanıt bekleyen giden isteklerin sayısı */
+  outgoingFriendRequestCount(userId: string): number {
+    return this.one<{ n: number }>('SELECT COUNT(*) AS n FROM friend_requests WHERE from_id = ?', userId)!.n;
+  }
+
+  /** Arkadaşlar (görünen ada göre) ve bekleyen istekler (en yeni önce), profilleriyle */
+  listFriends(userId: string): FriendsList {
+    const friends = this.all<{ id: string; created_at: number }>(
+      `SELECT user_b AS id, created_at FROM friendships WHERE user_a = ?1
+       UNION ALL SELECT user_a AS id, created_at FROM friendships WHERE user_b = ?1`,
+      userId,
+    );
+    const incoming = this.all<{ id: string; created_at: number }>(
+      'SELECT from_id AS id, created_at FROM friend_requests WHERE to_id = ? ORDER BY created_at DESC, from_id',
+      userId,
+    );
+    const outgoing = this.all<{ id: string; created_at: number }>(
+      'SELECT to_id AS id, created_at FROM friend_requests WHERE from_id = ? ORDER BY created_at DESC, to_id',
+      userId,
+    );
+    const users = new Map(this.usersByIds([...friends, ...incoming, ...outgoing].map((r) => r.id)).map((u) => [u.id, u]));
+    const entries = (rows: { id: string; created_at: number }[]): FriendEntry[] =>
+      rows.flatMap((r) => {
+        const user = users.get(r.id);
+        return user ? [{ userId: r.id, createdAt: r.created_at, user }] : [];
+      });
+    return {
+      friends: entries(friends).sort(
+        (a, b) => a.user.displayName.localeCompare(b.user.displayName, 'tr') || a.userId.localeCompare(b.userId),
+      ),
+      incoming: entries(incoming),
+      outgoing: entries(outgoing),
+    };
+  }
+
+  /**
+   * `from`, `to`'ya arkadaşlık isteği gönderir. Zaten arkadaşlarsa 'friends' (değişiklik yok); `to`'nun
+   * `from`'a bekleyen isteği varsa kabul edilir: 'accepted'; yoksa istek eklenir: 'requested' (zaten
+   * bekliyorsa 'pending', değişiklik yok).
+   */
+  sendFriendRequest(from: string, to: string, now = Date.now()): 'friends' | 'accepted' | 'requested' | 'pending' {
+    return this.tx(() => {
+      if (this.areFriends(from, to)) return 'friends';
+      if (this.hasFriendRequest(to, from)) {
+        this.acceptFriendRequest(from, to, now);
+        return 'accepted';
+      }
+      return this.run(
+        'INSERT OR IGNORE INTO friend_requests (from_id, to_id, created_at) VALUES (?, ?, ?)',
+        from,
+        to,
+        now,
+      ) > 0
+        ? 'requested'
+        : 'pending';
+    });
+  }
+
+  /** `userId`, `fromId`'nin isteğini kabul eder; bekleyen istek yoksa false */
+  acceptFriendRequest(userId: string, fromId: string, now = Date.now()): boolean {
+    return this.tx(() => {
+      if (this.run('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?', fromId, userId) === 0) return false;
+      // Karşı yönde istek kalmasın (olmamalı; tutarlılık için)
+      this.run('DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?', userId, fromId);
+      const [a, b] = userId < fromId ? [userId, fromId] : [fromId, userId];
+      this.run('INSERT OR IGNORE INTO friendships (user_a, user_b, created_at) VALUES (?, ?, ?)', a, b, now);
+      return true;
+    });
+  }
+
+  /** İki kişi arasındaki bekleyen isteği (hangi yönde olursa olsun) siler: reddet ya da geri çek */
+  deleteFriendRequest(a: string, b: string): boolean {
+    return (
+      this.run(
+        'DELETE FROM friend_requests WHERE (from_id = ?1 AND to_id = ?2) OR (from_id = ?2 AND to_id = ?1)',
+        a,
+        b,
+      ) > 0
+    );
+  }
+
+  /** Arkadaşlığı kaldırır; arkadaş değillerse false */
+  removeFriend(a: string, b: string): boolean {
+    if (a === b) return false;
+    const [x, y] = a < b ? [a, b] : [b, a];
+    return this.run('DELETE FROM friendships WHERE user_a = ? AND user_b = ?', x, y) > 0;
+  }
+
+  /** Arkadaşlığı ve iki yöndeki bekleyen istekleri kaldırır (engellenince); bir şey değiştiyse true */
+  clearFriendship(a: string, b: string): boolean {
+    return this.tx(() => {
+      const removed = this.removeFriend(a, b);
+      return this.deleteFriendRequest(a, b) || removed;
+    });
   }
 
   // ---------- Kullanıcı durumu ----------

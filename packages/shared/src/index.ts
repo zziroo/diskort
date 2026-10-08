@@ -168,7 +168,8 @@ export interface DmChannel {
    * Bire bir konuşma salt okunur: iki taraftan biri diğerini engelledi. Geçmiş okunur; mesaj, tepki ve arama
    * yok. Yalnızca true iken gelir (eski sunucularda hiç gelmez). Engelin yönü bilerek söylenmez: engellenen
    * kişi yalnızca konuşmanın salt okunur olduğunu görür (engelleyen kendi listesinden bilir, bkz.
-   * ReadyPayload.blockedUserIds). Ortak sunucu kalmaması bu alanı değiştirmez (istemci onu kendisi bilir).
+   * ReadyPayload.blockedUserIds). Ortak sunucu ya da arkadaşlık kalmaması bu alanı değiştirmez (istemci onu
+   * kendisi bilir).
    */
   readOnly?: boolean;
 }
@@ -214,6 +215,51 @@ export interface UserBlock {
   /** Profili (hesap silindiyse ya da artık tanınmıyorsa null) */
   user: User | null;
 }
+
+// ---------- Arkadaşlar ----------
+// Arkadaşlar, ortak sunucuları olmasa da birbirine bire bir DM açabilir, birbirini gruba ekleyebilir,
+// birbirinin profilini ve çevrimiçi durumunu görür (ortak sunucudakiler gibi). Arkadaşlık kullanıcı adıyla
+// istek gönderip karşı tarafın kabul etmesiyle kurulur; iki yönlüdür. Engelleme arkadaşlığı ve bekleyen
+// istekleri kaldırır; seni engellemiş birine istek gönderilemez (kullanıcı yokmuş gibi 404).
+
+/** Arkadaş ya da bekleyen istek (gelen/giden) */
+export interface FriendEntry {
+  userId: string;
+  /** Arkadaşlıkta arkadaş olunduğu an; istekte isteğin gönderildiği an */
+  createdAt: number;
+  /** Profili */
+  user: User;
+}
+
+/** GET /api/friends ve FRIENDS_UPDATE: kullanıcının arkadaşları ve bekleyen istekleri (tam liste) */
+export interface FriendsList {
+  /** Arkadaşlar, görünen ada göre sıralı */
+  friends: FriendEntry[];
+  /** Sana gelen, yanıt bekleyen istekler (en yeni önce) */
+  incoming: FriendEntry[];
+  /** Gönderdiğin, yanıt bekleyen istekler (en yeni önce) */
+  outgoing: FriendEntry[];
+}
+
+/** POST /api/friends/requests: kullanıcı adıyla arkadaşlık isteği ("@" ile başlayabilir) */
+export interface FriendRequestBody {
+  username: string;
+}
+
+/**
+ * POST /api/friends/requests yanıtı: güncel liste ve sonuç. 'pending': istek gönderildi (ya da zaten
+ * bekliyordu); 'friends': artık arkadaşsınız (karşı tarafın sana bekleyen isteği vardı) ya da zaten
+ * arkadaştınız.
+ */
+export interface FriendRequestResponse extends FriendsList {
+  status: 'pending' | 'friends';
+}
+
+/** Aynı anda yanıt bekleyen en fazla giden istek */
+export const FRIEND_REQUESTS_OUTGOING_MAX = 100;
+
+/** Telefon bildirimi verisindeki tür: gelen arkadaşlık isteği (veride `userId`: isteği gönderen) */
+export const PUSH_TYPE_FRIEND_REQUEST = 'friend-request';
 
 export interface VoiceState {
   userId: string;
@@ -889,13 +935,13 @@ export interface ReadyPayload {
   /** Kullanıcının üye olduğu sunucular, katılma sırasıyla (hiç yoksa boş) */
   guilds: GuildData[];
   /**
-   * Kullanıcının görebildiği hesapların profilleri: ortak sunuculardaki (eski üyeler dahil) ve direkt mesaj
-   * konuşmalarındaki kişiler
+   * Kullanıcının görebildiği hesapların profilleri: ortak sunuculardaki (eski üyeler dahil), direkt mesaj
+   * konuşmalarındaki kişiler ve arkadaşlar
    */
   users: User[];
   /** Yalnızca görülebilen ses kanallarındakiler */
   voiceStates: VoiceState[];
-  /** Ortak sunucularda çevrimiçi olanlar (görünmez olanlar hariç) */
+  /** Ortak sunucularda ve arkadaşlardan çevrimiçi olanlar (görünmez olanlar hariç) */
   online: string[];
   /**
    * `online` listesindekilerin durumu ve özel durumu (eski sunucularda gelmez: hepsi 'online' sayılır).
@@ -933,6 +979,8 @@ export interface ReadyPayload {
   dmCalls?: DmCall[];
   /** Engellediğin kişiler (yalnızca senin listen; seni engelleyenler hiçbir yerde söylenmez). Eski sunucularda yok. */
   blockedUserIds?: string[];
+  /** Arkadaşların ve bekleyen istekler (profilleriyle). Eski sunucularda yok. */
+  friends?: FriendsList;
 }
 
 export type GatewayServerMessage =
@@ -1006,6 +1054,12 @@ export type GatewayServerMessage =
   | { t: 'DM_CALL_DELETE'; d: { channelId: string } }
   /** Engellediklerin değişti (yalnızca engelleyenin kendi oturumlarına): listenin tamamı */
   | { t: 'USER_BLOCKS_UPDATE'; d: { userIds: string[] } }
+  /**
+   * Arkadaşların ya da bekleyen isteklerin değişti (istek geldi/gitti, kabul edildi, reddedildi, geri
+   * çekildi, arkadaşlıktan çıkıldı, engelleme): listenin tamamı, yalnızca o kullanıcının oturumlarına.
+   * Eski istemciler tanımadığı olayı yok sayar.
+   */
+  | { t: 'FRIENDS_UPDATE'; d: FriendsList }
   | { t: 'INVALID_SESSION'; d: { reason: string } }
   /** İstemci sürümü eski: bağlantı kapatılır, güncellemeden yeniden bağlanılamaz */
   | { t: 'UPDATE_REQUIRED'; d: { version: string } }

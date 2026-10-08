@@ -6,6 +6,7 @@ import {
   PUSH_CHANNEL_CALL,
   PUSH_CHANNEL_DM,
   PUSH_CHANNEL_MENTIONS,
+  PUSH_TYPE_FRIEND_REQUEST,
   pushTag,
   type DmChannel,
   type Message,
@@ -49,7 +50,10 @@ interface Outgoing {
    * uygulamanın bildirimlerini kendisi gruplar. Telefon, okunan kanalın bildirimlerini bununla bulup kaldırır.
    */
   tag?: string;
-  /** iOS: aynı kimlikli bildirim öncekinin yerini alır (yalnızca aramalarda: cevapsız arama gelen aramanın yerine) */
+  /**
+   * iOS: aynı kimlikli bildirim öncekinin yerini alır (aramalarda: cevapsız arama gelen aramanın yerine;
+   * arkadaşlık isteğinde: aynı kişinin yeni isteği eskisinin yerine)
+   */
   collapseId?: string;
 }
 
@@ -184,6 +188,31 @@ export class PushService {
           channelId: PUSH_CHANNEL_CALL,
           thread: dm.id,
           ...(tag ? { tag, collapseId: tag } : {}),
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Gelen arkadaşlık isteği: alıcının telefonlarına (DM bildirim kanalında). Veride tür 'friend-request' ve
+   * isteği gönderenin kimliği (`userId`); dokununca uygulama arkadaşlar listesini açabilir. Aynı kişinin
+   * tekrarlanan isteği aynı etiketle öncekinin yerini alır.
+   */
+  async notifyFriendRequest(fromId: string, recipientIds: string[]): Promise<void> {
+    if (!this.enabled || recipientIds.length === 0) return;
+    const tokens = this.store.pushTokens(recipientIds);
+    if (tokens.length === 0) return;
+    const name = this.store.getUser(fromId)?.displayName ?? 'Biri';
+    const tag = `friend-request:${fromId}`;
+    await Promise.all(
+      tokens.map((t) =>
+        this.deliver(t, {
+          title: 'Arkadaşlık isteği',
+          body: `${name} seni arkadaş olarak ekledi`,
+          data: { type: PUSH_TYPE_FRIEND_REQUEST, userId: fromId },
+          channelId: PUSH_CHANNEL_DM,
+          tag,
+          collapseId: tag,
         }),
       ),
     );

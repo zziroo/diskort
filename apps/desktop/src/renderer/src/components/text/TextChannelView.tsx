@@ -20,6 +20,7 @@ import { toast, useUi } from '../../stores/ui';
 import { DmAvatar } from '../dms/DmAvatar';
 import { DmCallPanel } from '../dms/DmCallPanel';
 import { DmMembers } from '../dms/DmMembers';
+import { FriendButton } from '../friends/FriendButton';
 import { unblock } from '../../lib/blocks';
 import { joinDmCall } from '../../lib/calls';
 import { useVoice } from '../../stores/voice';
@@ -169,6 +170,8 @@ export function TextChannelView({ channel, dm }: { channel: Pick<Channel, 'id' |
         <span className="min-w-0 truncate font-semibold text-text-head">{channel.name}</span>
         {partner && <span className="min-w-0 truncate text-sm text-text-muted">@{partner.username}</span>}
         <span className="flex-1" />
+        {/* Bire bir konuşmada karşı tarafla arkadaşlık (engellediysen gösterilmez) */}
+        {dm && !dm.group && partner && <FriendButton userId={partner.id} variant="header" />}
         {dm && <CallButton dmId={dm.id} />}
         {dm?.group && dm.participantIds.length < DM_GROUP_MAX_PARTICIPANTS && (
           <button

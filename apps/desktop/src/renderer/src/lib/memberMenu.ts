@@ -12,13 +12,14 @@ import {
 import { toast, useUi, type ContextMenuItem } from '../stores/ui';
 import { blockMenuItem } from './blocks';
 import { startDm } from './dm';
+import { friendMenuItems } from './friends';
 import { confirmDialog } from './dialog';
 
 /**
  * Bir üyeye sağ tıklanınca: başkasıysa "Mesaj Gönder", sonra yetkilere ve hiyerarşiye göre yönetim
  * öğeleri: seste sunucuda susturma, sağırlaştırma, taşıma, sesten çıkarma; rol verme/alma; atma ve
  * yasaklama. Kendisi için ve yetki yoksa boş liste. `context`: menünün açıldığı yer; DM'de (ya da seçili
- * olmayan sunucuda) yönetim yok, yalnızca hesap düzeyi işlemler (mesaj, kullanıcı adını kopyala).
+ * olmayan sunucuda) yönetim yok, yalnızca hesap düzeyi işlemler (mesaj, kullanıcı adını kopyala, arkadaşlık).
  */
 export function memberMenuItems(userId: string, context: ProfileContext): ContextMenuItem[] {
   const guild = useGuild.getState();
@@ -42,16 +43,18 @@ export function memberMenuItems(userId: string, context: ProfileContext): Contex
             () => undefined,
           ),
       },
+      ...friendMenuItems(userId),
       ...blockMenuItem(userId, selfId),
     ];
   }
   // Seçili sunucunun üyesi değil: ortak sunucu varsa yalnızca mesaj
-  if (user.removed) return [...message, ...blockMenuItem(userId, selfId)];
+  if (user.removed) return [...message, ...friendMenuItems(userId), ...blockMenuItem(userId, selfId)];
   const name = user.displayName;
   const actions = memberActions(userId);
   // Yalnızca sunucu kanalındaki ses (DM aramasındaki kişi burada seste sayılmaz)
   const voice = guildVoiceStateOf(guild, userId);
-  const items: ContextMenuItem[] = [...message];
+  // Arkadaşlık hesap düzeyidir: mesajın hemen ardından
+  const items: ContextMenuItem[] = [...message, ...friendMenuItems(userId)];
 
   if (voice && (actions.mute || actions.deafen || actions.move)) {
     items.push({ label: 'Sesli sohbet', heading: true });

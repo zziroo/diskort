@@ -54,6 +54,19 @@ export class PermissionService {
     return false;
   }
 
+  /** İki hesap arkadaş mı */
+  areFriends(a: string, b: string): boolean {
+    return a !== b && (this.data.friends.get(a)?.has(b) ?? false);
+  }
+
+  /**
+   * Bire bir DM açılabilir / gruba eklenebilir mi: ortak bir sunucu ya da arkadaşlık var (engel ayrıca
+   * denetlenir, bkz. blockedEither). Bire bir konuşma bu kalmayınca salt okunur olur (bkz. inChannel).
+   */
+  canReach(a: string, b: string): boolean {
+    return this.sharesGuild(a, b) || this.areFriends(a, b);
+  }
+
   /** `blocker`, `blocked`'ı engelledi mi */
   hasBlocked(blocker: string, blocked: string): boolean {
     return this.data.blocks.has(blockKey(blocker, blocked));
@@ -88,6 +101,13 @@ export class PermissionService {
     return result;
   }
 
+  /** Kullanıcıyla ortak sunucusu olan ya da arkadaşı olan herkes (kendisi dahil): çevrimiçi durumunu görenler */
+  contacts(userId: string): Set<string> {
+    const result = this.coMembers(userId);
+    for (const id of this.data.friends.get(userId) ?? []) result.add(id);
+    return result;
+  }
+
   /** Hesap yöneticisi: hesabın kendi bayrağı (users.is_admin), hiçbir sunucunun rollerine bağlı değil */
   isInstanceAdmin(userId: string): boolean {
     return this.store.isAdmin(userId);
@@ -119,7 +139,7 @@ export class PermissionService {
   /**
    * Kanaldaki yetkiler; kanal yoksa ya da kişi kanalın sunucusunun üyesi değilse 0. Kimlikle verilen kanal
    * bir direkt mesaj konuşmasıysa yalnızca katılımcılar yetki alır (roller ve yöneticilik uygulanmaz, bkz.
-   * dmPermissions); bire bir konuşmada ortak sunucusu kalmayan karşı tarafa yazılamaz.
+   * dmPermissions); bire bir konuşmada ortak sunucusu ve arkadaşlığı kalmayan karşı tarafa yazılamaz.
    */
   inChannel(userId: string, channel: Channel | string): number {
     const data = this.data;
@@ -129,7 +149,7 @@ export class PermissionService {
         return dmPermissions(
           dm,
           userId,
-          (id) => id === userId || this.sharesGuild(userId, id),
+          (id) => id === userId || this.canReach(userId, id),
           (id) => this.blockedEither(userId, id),
         );
       }

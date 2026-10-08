@@ -14,6 +14,7 @@ import { ChannelSidebar } from './sidebar/ChannelSidebar';
 import { DmHome } from './dms/DmHome';
 import { NewDmModal, RenameDmModal } from './dms/DmModals';
 import { DmSidebar } from './dms/DmSidebar';
+import { FriendsView } from './friends/FriendsView';
 import { GuildRail } from './GuildRail';
 import { LeftColumn } from './sidebar/LeftColumn';
 import { VoiceStage } from './stage/VoiceStage';
@@ -153,6 +154,8 @@ export function MainLayout() {
             <TextChannelView key={dm.id} channel={{ id: dm.id, name: dmName }} dm={dm} />
           ) : view.kind === 'dms' ? (
             <DmHome key="dms" />
+          ) : view.kind === 'friends' ? (
+            <FriendsView key="friends" />
           ) : textChannel ? (
             <TextChannelView key={textChannel.id} channel={textChannel} />
           ) : (

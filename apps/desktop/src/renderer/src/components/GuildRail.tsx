@@ -10,6 +10,7 @@ import {
   useGuildList,
   useGuildUnread,
   useGuildVoiceActivity,
+  useIncomingFriendRequestCount,
   useMessages,
   useSession,
   useUnreadDms,
@@ -22,7 +23,7 @@ import { DmAvatar } from './dms/DmAvatar';
 import { GuildIcon } from './ui/GuildIcon';
 
 /**
- * Sol dikey çubuk (Discord gibi): en üstte direkt mesajlar (okunmamış sayısıyla, altında okunmamış
+ * Sol dikey çubuk (Discord gibi): en üstte direkt mesajlar (okunmamış ve gelen arkadaşlık isteği sayısıyla, altında okunmamış
  * konuşmalar), sonra üye olunan sunucular, en altta sunucu ekleme ve geri bildirim.
  */
 export function GuildRail() {
@@ -31,6 +32,8 @@ export function GuildRail() {
   const view = useMainView();
   const inDms = isDmSection(view);
   const dmUnread = useDmUnreadTotal();
+  // Ana sayfa rozeti: okunmamış DM'ler ve yanıt bekleyen arkadaşlık istekleri birlikte
+  const friendRequests = useIncomingFriendRequestCount();
   const unreadDms = useUnreadDms(3);
   // Konuşmalardan birinde arama sürüyor
   const dmCall = useGuild((s) => Object.keys(s.dmCalls).length > 0);
@@ -41,7 +44,13 @@ export function GuildRail() {
         selected={inDms}
         unread={false}
         label="Direkt Mesajlar"
-        badge={dmUnread}
+        badge={dmUnread + friendRequests}
+        badgeText={[
+          dmUnread > 0 ? `${dmUnread} okunmamış mesaj` : null,
+          friendRequests > 0 ? `${friendRequests} arkadaşlık isteği` : null,
+        ]
+          .filter(Boolean)
+          .join(', ')}
         activity={dmCall ? 'voice' : null}
         onClick={openDmSection}
       >
@@ -169,6 +178,7 @@ function RailItem({
   unread,
   label,
   badge = 0,
+  badgeText,
   activity = null,
   onClick,
   children,
@@ -177,12 +187,14 @@ function RailItem({
   unread: boolean;
   label: string;
   badge?: number;
+  /** Rozetin ekran okuyucu metni (verilmezse "N okunmamış mesaj") */
+  badgeText?: string;
   activity?: GuildVoiceActivity;
   onClick: () => void;
   children: ReactNode;
 }) {
   const activityText = activity === 'stream' ? 'yayın var' : activity === 'voice' ? 'seste biri var' : null;
-  const ariaLabel = [label, badge > 0 ? `${badge} okunmamış mesaj` : null, activityText].filter(Boolean).join(', ');
+  const ariaLabel = [label, badge > 0 ? (badgeText ?? `${badge} okunmamış mesaj`) : null, activityText].filter(Boolean).join(', ');
   return (
     <div className="group/rail relative flex shrink-0 items-center">
       <span
