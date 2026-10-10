@@ -1,5 +1,7 @@
 # Windows kod imzalama (SignPath Foundation)
 
+> macOS imzası (Apple Developer ID + notarizasyon) için bkz. [7. bölüm](#7-macos-developer-id-ve-notarizasyon).
+
 Amaç: Windows'ta kurulum dosyası açılınca çıkan **“Windows kişisel bilgisayarınızı korudu” (SmartScreen)**
 uyarısını ve “Bilinmeyen yayıncı” yazısını kaldırmak. Açık kaynak projelere ücretsiz sertifika veren
 **SignPath Foundation** kullanılır; imzalama GitHub Actions'taki sürüm derlemesine bağlıdır.
@@ -185,3 +187,31 @@ Sorun olursa geri dönüş: `SIGNPATH_PROJECT_SLUG` değişkenini sil → sonrak
 - Kurulu uygulamalar yeni sürümü her zamanki gibi kendiliğinden alır; kullanıcının bir şey yapmasına gerek yok.
 - Uygulama adı, kurulum klasörü, ayarlar, oturum değişmez.
 - macOS, Linux ve Android bu değişiklikten etkilenmez.
+
+---
+
+## 7. macOS: Developer ID ve notarizasyon
+
+`.github/workflows/release.yml` → `macos` işi. Uygulama **Developer ID Application** sertifikasıyla, sertleştirilmiş
+çalışma ortamı (hardened runtime) ve `apps/desktop/build/entitlements.mac.plist` izinleriyle imzalanır, App Store
+Connect API anahtarıyla Apple'a notarize ettirilir. Hedefler: `.dmg` (indirme sayfası) ve `.zip` (otomatik
+güncelleme; Squirrel.Mac zip'i kurar, `latest-mac.yml` iki mimarinin zip'ini listeler).
+
+| GitHub gizli değeri | İçerik |
+|---|---|
+| `MAC_CERT_P12_BASE64` | Developer ID Application sertifikası + özel anahtarı (`.p12`), base64 (macOS'ta: `base64 -i DeveloperID.p12`) |
+| `MAC_CERT_PASSWORD` | `.p12` dışa aktarılırken verilen parola |
+| `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID` | iOS ile ortak App Store Connect API anahtarı (docs/ios.md); notarizasyon için |
+| `APPLE_TEAM_ID` | (isteğe bağlı) imzanın doğru takımdan olduğunu denetlemek için |
+
+- `MAC_CERT_P12_BASE64` yoksa iş eskisi gibi **ad-hoc** imzayla, notarizasyonsuz yayınlar (sürüm bozulmaz). ASC
+  anahtarı eksikse imzalı ama notarizasyonsuz yayınlar (uyarı yazar).
+- Uygulama otomatik güncellemeyi ancak kendisi Developer ID ile imzalıysa açar (`apps/desktop/src/main/updater.ts`,
+  çalışma anında `codesign` ile bakılır); ad-hoc imzalı kurulumlarda eskisi gibi “yeni sürüm var, indir” uyarısı çıkar.
+- **Geçiş:** ad-hoc imzalı sürümleri (ilk imzalı sürümden öncekiler) kullananlar imzalı sürüme otomatik geçemez
+  (Squirrel.Mac yeni imzayı eski sürümün imza gereksinimine göre reddeder); bir kez indirme sayfasından kurarlar.
+  Sonraki sürümler kendiliğinden gelir.
+- İmzalı sürümler çıkmaya başladıktan sonra sertifikayı **kaldırma**: ad-hoc yedek yolla çıkan bir sürüm imzalı
+  kurulumlara otomatik kurulamaz. Sertifika yenilenirse aynı takımdan (Team ID) olmalı.
+- Sertifikanın süresi dolsa da daha önce imzalanıp notarize edilmiş sürümler açılmaya devam eder; yenisi yalnızca yeni
+  sürümleri imzalamak için gerekir.

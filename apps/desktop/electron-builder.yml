@@ -75,15 +75,21 @@ mac:
   target:
     - target: dmg
       arch: [arm64, x64]
+    # Otomatik güncelleme (Squirrel.Mac) .dmg'yi değil .zip'i kurar; latest-mac.yml iki zip'i de listeler
+    - target: zip
+      arch: [arm64, x64]
   category: public.app-category.social-networking
   icon: resources/icon.png
   artifactName: Diskort-${version}-${arch}.${ext}
-  # Apple Developer ID olmadan: ad-hoc imza (Apple Silicon'da çalışabilmek için şart).
-  # Kullanıcı ilk açılışta Sistem Ayarları → Gizlilik ve Güvenlik → "Yine de Aç" der.
-  # Developer ID + notarizasyon eklenince: identity kaldırılır, hardenedRuntime: true,
-  # entitlements: build/entitlements.mac.plist ve hedeflere zip eklenir (otomatik güncelleme için).
-  identity: '-'
-  hardenedRuntime: false
+  # Developer ID ile imza + Apple notarizasyonu (CI: .github/workflows/release.yml, macos işi; docs/kod-imzalama.md).
+  # Kimlik CSC_LINK'teki sertifikadan bulunur; notarizasyon APPLE_API_KEY/APPLE_API_KEY_ID/APPLE_API_ISSUER
+  # ortam değişkenleri varsa yapılır. Sertifika yoksa CI eski ad-hoc imzaya döner (identity '-', hardenedRuntime kapalı).
+  # Squirrel.Mac yeni sürümün imzasını kurulu sürümün imza gereksinimiyle (Team ID) karşılaştırır: Developer ID
+  # sertifikası yenilense bile aynı takımdan olmalı, yoksa kurulu uygulamalar güncellenemez.
+  hardenedRuntime: true
+  # Ana uygulama ve yardımcı süreçler (renderer, GPU) aynı izinlerle imzalanır
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: Diskort sesli sohbet için mikrofonunu kullanır.
     NSCameraUsageDescription: Diskort ileride görüntülü sohbet için kamerayı kullanabilir.

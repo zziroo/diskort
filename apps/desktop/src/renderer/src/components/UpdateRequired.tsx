@@ -49,9 +49,18 @@ export function UpdateRequired({ version }: { version: string }) {
         </div>
       )}
       {support === 'auto' && error && (
-        <button className="mt-2 rounded bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-hover" onClick={start}>
-          Tekrar dene
-        </button>
+        <>
+          <button className="mt-2 rounded bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-hover" onClick={start}>
+            Tekrar dene
+          </button>
+          {/* Otomatik kurulum üst üste başarısız olursa (ör. macOS'ta imza doğrulaması) elle kurma yolu */}
+          <button
+            className="text-xs text-text-muted underline hover:text-text-normal"
+            onClick={() => void bridge?.openExternal(DOWNLOAD_PAGE_URL)}
+          >
+            Olmuyorsa indirme sayfasından kur
+          </button>
+        </>
       )}
       {support === 'manual' && (
         <button

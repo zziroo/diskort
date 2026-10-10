@@ -72,14 +72,14 @@ yapılmış bir uygulamadır. Discord'a benzer, ama:
 | Yayına sistem sesi | ✅ | ❌ | ❌ | — |
 | Bas-konuş / global kısayollar | ✅ | ✅ X11 · ⚠️ Wayland | ✅ | — |
 | Oynanan oyunu algılama | ✅ | ❌ | ❌ | ❌ |
-| Otomatik güncelleme | ✅ | ✅ | ❌ (indirme sayfasından) | ✅ |
+| Otomatik güncelleme | ✅ | ✅ | ✅ | ✅ |
 | Paket | Kurulum (x64) | AppImage, .deb | .dmg (Apple Silicon, Intel) | APK (Android 8+) |
 
 **iOS:** App Store'da değildir; kayıtlı iPhone'lara Ad Hoc imzayla kurulur ([ayrıntılar](docs/ios.md)).
 
-> **İlk kurulumda uyarı:** Uygulama henüz kod imzalı değildir. Windows'ta SmartScreen uyarısı çıkarsa
-> "Ek bilgi → Yine de çalıştır", macOS'ta ilk açılışta "Yine de Aç" de. Bu yalnızca ilk kurulumda olur
-> ([kod imzalama durumu](docs/kod-imzalama.md)).
+> **İlk kurulumda uyarı:** Windows sürümü henüz kod imzalı değildir; SmartScreen uyarısı çıkarsa
+> "Ek bilgi → Yine de çalıştır" de. Bu yalnızca ilk kurulumda olur. macOS sürümü Apple Developer ID ile
+> imzalı ve notarize edilmiştir ([kod imzalama durumu](docs/kod-imzalama.md)).
 
 ## Nasıl çalışır?
 
@@ -223,7 +223,8 @@ pnpm typecheck
 
 ## Yol haritası
 
-- [ ] Kod imzalama (Windows: SignPath Foundation, macOS: Apple Developer ID)
+- [x] macOS kod imzalama ve notarizasyon (Apple Developer ID)
+- [ ] Windows kod imzalama (SignPath Foundation)
 - [ ] Direkt mesajlarda sesli ve görüntülü arama
 - [ ] Kamera
 - [ ] Linux ve macOS'ta yayına sistem sesi

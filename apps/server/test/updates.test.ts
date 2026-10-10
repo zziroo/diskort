@@ -71,6 +71,13 @@ describe('güncelleme adresleri', () => {
       'https://github.com/sahip/depo/releases/download/v0.2.0/Diskort-0.2.0-x86_64.AppImage',
     );
     expect((await get('Diskort-0.2.0-amd64.deb')).headers.location).toContain('/download/v0.2.0/');
+    // macOS otomatik güncellemesi (Squirrel.Mac) zip'i ve fark indirmesi için eski zip'in blockmap'ini ister
+    expect((await get('Diskort-0.2.0-arm64.zip')).headers.location).toBe(
+      'https://github.com/sahip/depo/releases/download/v0.2.0/Diskort-0.2.0-arm64.zip',
+    );
+    expect((await get('Diskort-0.1.2-x64.zip.blockmap')).headers.location).toBe(
+      'https://github.com/sahip/depo/releases/download/v0.1.2/Diskort-0.1.2-x64.zip.blockmap',
+    );
 
     for (const bad of ['..%2F..%2Fetc%2Fpasswd', 'readme.txt', 'latest.yaml', '.latest.yml']) {
       expect((await get(bad)).statusCode, bad).toBe(404);

@@ -1,7 +1,8 @@
-import { readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { accessSync, constants, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { app, net } from 'electron';
+import { dirname, join, resolve } from 'node:path';
+import { app, autoUpdater as squirrel, net } from 'electron';
 import electronUpdater from 'electron-updater';
 import { compareVersions } from '@diskort/shared';
 import type { UpdateState, UpdateSupport } from '../shared/bridge';
@@ -13,6 +14,8 @@ const DOWNLOAD_ATTEMPTS = 3;
 /** Kanal dosyası (latest-mac.yml) indirme sınırları */
 const FETCH_TIMEOUT_MS = 20_000;
 const FETCH_MAX_BYTES = 1_000_000;
+/** macOS: Squirrel.Mac indirilen zip'i doğrulayıp açana kadar en fazla bu kadar beklenir */
+const SQUIRREL_TIMEOUT_MS = 5 * 60_000;
 
 export const updateLog = createLogger('updater');
 
@@ -35,7 +38,7 @@ export class UpdateManager {
   constructor() {
     const testFeed = Boolean(process.env.DISKORT_UPDATE_URL);
     if (!app.isPackaged && !testFeed) this.support = 'none';
-    else if (process.platform === 'darwin') this.support = 'manual';
+    else if (process.platform === 'darwin') this.support = macAutoUpdateSupport();
     else this.support = 'auto';
 
     if (this.support === 'auto') {
@@ -125,7 +128,7 @@ export class UpdateManager {
     return result?.isUpdateAvailable ? result.updateInfo.version : null;
   }
 
-  /** macOS: kanal dosyasındaki sürümü okuyup karşılaştırır (indirme kullanıcıya bırakılır). */
+  /** Otomatik güncellemesiz macOS: kanal dosyasındaki sürümü okuyup karşılaştırır (indirme kullanıcıya bırakılır). */
   private async checkManual(): Promise<string | null> {
     const res = await fetchText(`${this.feedUrl}/latest-mac.yml`);
     if (res.status < 200 || res.status >= 300) throw new Error(`Sürüm bilgisi alınamadı (${res.status}).`);
@@ -138,7 +141,9 @@ export class UpdateManager {
     for (let attempt = 1; ; attempt++) {
       try {
         this.set({ kind: 'downloading', version, percent: 0, transferred: 0, total: 0 });
-        const files = await electronUpdater.autoUpdater.downloadUpdate();
+        const files = await (process.platform === 'darwin'
+          ? downloadForSquirrel()
+          : electronUpdater.autoUpdater.downloadUpdate());
         updateLog.info(`${version} indirildi: ${files.join(', ')}`);
         this.set({ kind: 'ready', version });
         return;
@@ -212,19 +217,103 @@ function describe(err: unknown): string {
 }
 
 /**
+ * macOS'ta otomatik güncelleme (Squirrel.Mac) yalnızca Developer ID ile imzalı ve yerinde değiştirilebilen bir
+ * kurulumda çalışır; olmazsa eskisi gibi elle güncelleme ('manual': indirme sayfası açılır).
+ * - İmza: Squirrel yeni sürümü kurulu uygulamanın imza gereksinimine göre doğrular. Ad-hoc imzalı sürümlerde
+ *   (ilk imzalı sürümden öncekiler, ya da sertifikasız CI yedek yolu) bu gereksinim yalnızca o derlemeye
+ *   özgü bir özettir; hiçbir yeni sürüm onu karşılamaz, güncelleme kurulumda hata verir. Bu yüzden imza çalışma anında okunur
+ *   (codesign, ~20 ms): derlemeye gömülü bir bayrak yerine gerçek imza esas alınır.
+ * - Yazma izni: Squirrel uygulamayı yerinde değiştirir. DMG'den ya da karantinadaki geçici konumdan
+ *   (App Translocation) çalışan, ya da yönetici olmayan kullanıcının /Applications'taki kopyası güncellenemez.
+ */
+function macAutoUpdateSupport(): UpdateSupport {
+  // Geliştirme sürümünde (DISKORT_UPDATE_URL ile) node_modules'taki Electron.app'in üzerine yazılmasın
+  if (!app.isPackaged) return 'manual';
+  // .../Diskort.app/Contents/MacOS/Diskort → .../Diskort.app
+  const bundle = resolve(process.execPath, '..', '..', '..');
+  if (!bundle.endsWith('.app')) return 'manual';
+  try {
+    accessSync(bundle, constants.W_OK);
+    accessSync(dirname(bundle), constants.W_OK);
+  } catch {
+    updateLog.info(`Uygulama klasörüne yazılamıyor (${bundle}); güncelleme elle yapılacak`);
+    return 'manual';
+  }
+  const res = spawnSync('/usr/bin/codesign', ['--display', '--verbose=2', bundle], {
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  // codesign bilgileri stderr'e yazar. Ad-hoc imzada "Signature=adhoc" ve "TeamIdentifier=not set" olur.
+  const info = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+  const team = /^TeamIdentifier=(.+)$/m.exec(info)?.[1]?.trim();
+  if (res.status !== 0 || /^Signature=adhoc$/m.test(info) || !team || team === 'not set') {
+    const why = res.error?.message ?? (res.status !== 0 ? `codesign çıkış kodu ${res.status}` : 'ad-hoc imza');
+    updateLog.info(`Developer ID imzası yok (${why}); güncelleme elle yapılacak`);
+    return 'manual';
+  }
+  updateLog.info(`Developer ID imzalı (takım ${team}); otomatik güncelleme açık`);
+  return 'auto';
+}
+
+/**
+ * macOS: electron-updater zip'i indirir ve Squirrel.Mac'e verir; Squirrel imzayı doğrulayıp paketi açınca
+ * güncelleme gerçekten hazırdır. electron-updater'ın sözü Squirrel dosyayı aldığında biter, doğrulama hatası
+ * ondan sonra gelir; Squirrel'in sonucu ayrıca beklenir ki hata "Kuruluyor…"da takılmak yerine denemeye dönsün.
+ */
+async function downloadForSquirrel(): Promise<string[]> {
+  let cleanup = (): void => undefined;
+  let startTimer = (): void => undefined;
+  let timer: NodeJS.Timeout | undefined;
+  const squirrelDone = new Promise<void>((done, fail) => {
+    const onReady = (): void => {
+      cleanup();
+      done();
+    };
+    const onError = (err: Error): void => {
+      cleanup();
+      fail(err);
+    };
+    squirrel.once('update-downloaded', onReady);
+    squirrel.once('error', onError);
+    // Süre indirme bitince başlar (yavaş hatta zip indirmesi 5 dakikayı geçebilir)
+    startTimer = () => {
+      timer = setTimeout(() => onError(new Error('Güncelleme hazırlanamadı (zaman aşımı).')), SQUIRREL_TIMEOUT_MS);
+    };
+    cleanup = () => {
+      clearTimeout(timer);
+      squirrel.removeListener('update-downloaded', onReady);
+      squirrel.removeListener('error', onError);
+    };
+  });
+  // İndirme hata verirse Squirrel hiç başlamaz: bekleyen söz boşta kalmasın
+  squirrelDone.catch(() => undefined);
+  try {
+    const files = await electronUpdater.autoUpdater.downloadUpdate();
+    startTimer();
+    await squirrelDone;
+    return files;
+  } finally {
+    cleanup();
+  }
+}
+
+/**
  * Kurulan güncellemenin indirme kopyası ("pending" klasörü, ~100 MB) bir sonraki güncellemeye kadar
- * boşuna yer kaplar; sürümü şu an çalışan sürümden yeni değilse silinir. (Önbellekteki installer.exe
- * kalır: sonraki güncellemede yalnızca değişen blokların indirilmesi için gerekir.)
+ * boşuna yer kaplar; sürümü şu an çalışan sürümden yeni değilse silinir. (Önbellekteki installer.exe ya da
+ * update.zip kalır: sonraki güncellemede yalnızca değişen blokların indirilmesi için gerekir.)
  */
 function removeInstalledPending(): void {
   try {
     const config = readFileSync(join(process.resourcesPath, 'app-update.yml'), 'utf8');
     const cacheName = /^updaterCacheDirName:\s*['"]?([^\s'"]+)/m.exec(config)?.[1];
     if (!cacheName) return;
+    // electron-updater'ın önbellek konumu (getAppCacheDir)
     const base =
       process.platform === 'win32'
         ? (process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'))
-        : (process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'));
+        : process.platform === 'darwin'
+          ? join(homedir(), 'Library', 'Caches')
+          : (process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache'));
     const pending = join(base, cacheName, 'pending');
     const info = JSON.parse(readFileSync(join(pending, 'update-info.json'), 'utf8')) as { fileName?: string };
     const version = /(\d+\.\d+\.\d+)/.exec(info.fileName ?? '')?.[1];

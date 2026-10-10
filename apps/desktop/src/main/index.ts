@@ -348,7 +348,9 @@ function updateTrayMenu(): void {
 }
 
 function createTray(): void {
-  const icon = nativeImage.createFromPath(join(__dirname, '../../resources/tray.png'));
+  // macOS: menü çubuğu için siyah/şeffaf şablon ikon (adındaki "Template" ile sistem açık/koyu temaya boyar)
+  const file = isMac ? 'trayTemplate.png' : 'tray.png';
+  const icon = nativeImage.createFromPath(join(__dirname, '../../resources', file));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.on('click', showWindow);
   updateTrayMenu();

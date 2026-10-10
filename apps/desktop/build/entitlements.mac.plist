@@ -2,15 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
+    <!-- Sertleştirilmiş çalışma ortamı (hardened runtime) izinleri; electron-builder.yml mac bölümü.
+         V8 ve WebAssembly (gürültü engelleme modeli) çalışma anında kod üretir. -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
+    <!-- Mikrofon (sesli sohbet) ve kamera. Ekran kaydı izin gerektirmez (sistem kendi sorar).
+         disable-library-validation bilerek yok: yerel modül (uiohook-napi) uygulamayla aynı kimlikle imzalanır. -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
     <key>com.apple.security.device.camera</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
     <true/>
   </dict>
 </plist>
