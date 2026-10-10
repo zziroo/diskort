@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { animatedDecorationId, STATUS_LABELS, type User } from '@diskort/shared';
-import { avatarInk, avatarUrl, useStatus, type DisplayStatus } from '@diskort/client-core';
+import { avatarInk, avatarUrl, useOnMobile, useStatus, type DisplayStatus } from '@diskort/client-core';
 import { cn, initials } from '../../lib/utils';
 import { AvatarDecoration, useAvatarPlaying } from '../cosmetics/Cosmetics';
-import { StatusIcon } from './StatusIcon';
+import { showsPhone, StatusIcon } from './StatusIcon';
 
 interface Props {
   user: Pick<User, 'displayName' | 'avatarColor' | 'avatarUrl'> | undefined;
@@ -13,6 +13,8 @@ interface Props {
   online?: boolean;
   /** Durum noktası (Discord biçimli); verilmezse ve `online` da yoksa nokta çizilmez */
   status?: DisplayStatus;
+  /** Kişi yalnızca telefondan bağlı: nokta telefon biçiminde (çevrimdışı/görünmezken yok sayılır) */
+  mobile?: boolean;
   /** Noktanın çevresindeki halkanın rengi (avatarın durduğu zemin) */
   ringClassName?: string;
   /** Halkanın rengi sınıfla verilemiyorsa (ör. temalı profil kartı); ringClassName'in önüne geçer */
@@ -37,6 +39,7 @@ export function Avatar({
   speaking,
   online,
   status,
+  mobile,
   ringClassName = 'bg-bg-panel',
   ringColor,
   decoration,
@@ -47,6 +50,7 @@ export function Avatar({
   const dot = size > 40 ? Math.round(size * 0.22) : Math.max(8, Math.round(size * 0.3125));
   const ring = size > 40 ? Math.round(size * 0.075) : Math.max(2, Math.round(size * 0.094));
   const shown: DisplayStatus | undefined = status ?? (online === undefined ? undefined : online ? 'online' : 'offline');
+  const phone = shown !== undefined && showsPhone(shown, mobile);
   const name = user?.displayName ?? '?';
   const src = avatarUrl(user);
   // Yüklenemeyen fotoğrafın yerine baş harfler (adres değişince yeniden denenir)
@@ -88,17 +92,19 @@ export function Avatar({
       {decorationSet && <AvatarDecoration id={decorationSet} size={size} animate={play.playing} />}
       {shown !== undefined && (
         <span
-          className={cn('absolute flex items-center justify-center rounded-full', ringClassName)}
+          className={cn('absolute flex items-center justify-center', !phone && 'rounded-full', ringClassName)}
           style={{
             padding: ring,
             right: -ring + Math.round(size * 0.03),
             bottom: -ring + Math.round(size * 0.03),
             background: ringColor,
+            // Telefonun halkası da köşeleri yuvarlak dikdörtgen (simgenin köşesiyle eş merkezli)
+            borderRadius: phone ? ring + dot * 0.2 : undefined,
           }}
           role="img"
-          aria-label={STATUS_LABELS[shown]}
+          aria-label={phone ? `${STATUS_LABELS[shown]} (telefonda)` : STATUS_LABELS[shown]}
         >
-          <StatusIcon status={shown} size={dot} />
+          <StatusIcon status={shown} size={dot} mobile={phone} />
         </span>
       )}
     </div>
@@ -108,5 +114,6 @@ export function Avatar({
 /** Kişinin güncel durum noktasıyla avatar (kendin için görünmezlik de görünür) */
 export function PresenceAvatar({ userId, ...props }: Omit<Props, 'status' | 'online'> & { userId: string }) {
   const status = useStatus(userId);
-  return <Avatar {...props} status={status} />;
+  const mobile = useOnMobile(userId);
+  return <Avatar {...props} status={status} mobile={mobile} />;
 }

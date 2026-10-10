@@ -1,6 +1,6 @@
 import { Users } from 'lucide-react';
 import type { DmChannel } from '@diskort/shared';
-import { dmPartner, useGuild, useSession, useStatus } from '@diskort/client-core';
+import { dmPartner, useGuild, useOnMobile, useSession, useStatus } from '@diskort/client-core';
 import { cn } from '../../lib/utils';
 import { Avatar } from '../ui/Avatar';
 
@@ -34,6 +34,7 @@ export function DmAvatar({
   const selfId = useSession((s) => s.user?.id);
   const partner = useGuild((s) => dmPartner(dm, s.users, selfId));
   const shown = useStatus(partner?.id);
+  const mobile = useOnMobile(partner?.id);
   const reachable = useGuild((s) => (partner ? Boolean(s.reachable[partner.id]) : false));
   if (!dm.group) {
     return (
@@ -41,6 +42,7 @@ export function DmAvatar({
         user={partner}
         size={size}
         status={status && partner && reachable ? shown : undefined}
+        mobile={mobile}
         ringClassName={ringClassName}
         decoration={decorated ? partner?.avatarDecoration : undefined}
         className={className}

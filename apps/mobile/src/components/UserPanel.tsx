@@ -2,7 +2,7 @@ import { Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { STATUS_LABELS } from '@diskort/shared';
-import { useCustomStatus, useFeedback, useSession, useStatus } from '@diskort/client-core';
+import { useCustomStatus, useFeedback, useOnMobile, useSession, useStatus } from '@diskort/client-core';
 import { useSettings } from '../stores/settings';
 import { colors, createStyles, font, space, tint } from '../theme';
 import { toggleDeafen, toggleMute } from '../voice/actions';
@@ -29,6 +29,7 @@ export function UserPanel({ onSettings }: { onSettings: () => void }) {
   const insets = useSafeAreaInsets();
   const inVoice = useVoice((s) => s.status !== 'idle');
   const status = useStatus(user?.id);
+  const mobile = useOnMobile(user?.id);
   const custom = useCustomStatus(user?.id);
   // Hesap yöneticisine yeni geri bildirim sayısı (Ayarlar > Geri bildirimler (yönetim))
   const newFeedback = useFeedback((s) => (user?.isAdmin ? s.newCount : 0));
@@ -52,7 +53,7 @@ export function UserPanel({ onSettings }: { onSettings: () => void }) {
           accessibilityRole="button"
           accessibilityLabel={`Durumun: ${STATUS_LABELS[status]}. Değiştir`}
         >
-          <Avatar user={user} size={34} status={status} surface={colors.panel} decoration={user.avatarDecoration} />
+          <Avatar user={user} size={34} status={status} mobile={mobile} surface={colors.panel} decoration={user.avatarDecoration} />
         </PressableScale>
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={1}>

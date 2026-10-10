@@ -24,6 +24,11 @@ export interface Presence {
   customStatus: CustomStatus | null;
   /** O an yaptıkları (oynadığı oyunlar), en son başlayan ilk sırada; eski sunucuda alan yok */
   activities?: Activity[];
+  /**
+   * Bağlı oturumlarının hepsi telefonda (Android / iOS): durum noktası telefon biçiminde çizilir. Yalnızca
+   * doğruyken gönderilir; alan yoksa (masaüstünde de bağlı ya da eski sunucu) normal nokta.
+   */
+  mobile?: boolean;
 }
 
 /** Kullanıcının kendi durum ayarları (yalnızca kendi istemcilerine gider) */

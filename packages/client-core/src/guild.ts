@@ -412,13 +412,20 @@ function applyPresence(
   const visible = status !== 'offline';
   const prev = s.presences[d.userId];
   const next: Presence | undefined = visible
-    ? { status, customStatus: d.customStatus ?? null, activities: d.activities ?? [] }
+    ? {
+        status,
+        customStatus: d.customStatus ?? null,
+        activities: d.activities ?? [],
+        // Yalnızca telefondan bağlı (eski sunucuda alan yok: normal nokta)
+        ...(d.mobile === true ? { mobile: true } : {}),
+      }
     : undefined;
   const presenceSame =
     prev && next
       ? prev.status === next.status &&
         sameCustom(prev.customStatus, next.customStatus) &&
-        sameActivities(prev.activities, next.activities)
+        sameActivities(prev.activities, next.activities) &&
+        (prev.mobile === true) === (next.mobile === true)
       : prev === next;
   const onlineSame = Boolean(s.online[d.userId]) === visible;
   if (presenceSame && onlineSame) return {};

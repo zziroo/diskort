@@ -233,7 +233,8 @@ export class Gateway {
    * Kullanıcının başkalarına görünen durumu: bağlı değilse ya da görünmezse çevrimdışı. Seçtiği durum
    * "Çevrim içi" iken tüm oturumları boştaysa "Boşta" (bir cihazda etkin olmak otomatik boştayı yener);
    * elle seçilen Boşta / Rahatsız Etmeyin olduğu gibi kalır. Etkinlikler, oturumlarının bildirdiklerinin
-   * birleşimidir (bkz. combineActivities); görünmez kullanıcınınkiler de görünmez.
+   * birleşimidir (bkz. combineActivities); görünmez kullanıcınınkiler de görünmez. Bütün oturumları telefondaysa
+   * `mobile: true` (masaüstünde de bağlıysa alan hiç yok: eski istemciler ve testler aynı nesneyi görür).
    */
   presenceOf(userId: string): Presence {
     const sessions = this.byUser.get(userId);
@@ -243,7 +244,8 @@ export class Gateway {
     let status: PresenceStatus = self.status;
     if (status === 'online' && [...sessions].every((s) => s.idle)) status = 'idle';
     const activities = combineActivities([...sessions].map((s) => s.activities));
-    return { status, customStatus: self.customStatus, activities };
+    const mobile = [...sessions].every((s) => s.platform !== 'desktop');
+    return { status, customStatus: self.customStatus, activities, ...(mobile ? { mobile: true } : {}) };
   }
 
   /** Başkalarına çevrimiçi görünüyor (bağlı ve görünmez değil) */

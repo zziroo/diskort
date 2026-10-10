@@ -22,7 +22,7 @@ afterEach(async () => {
 
 const connect = async (
   token: string,
-  opts: { platform?: 'desktop' | 'android'; presence?: boolean } = {},
+  opts: { platform?: 'desktop' | 'android' | 'ios'; presence?: boolean } = {},
 ): Promise<GatewayClient> => {
   const features = [CLIENT_FEATURE_DM, ...(opts.presence === false ? [] : [CLIENT_FEATURE_PRESENCE])];
   const client = await connectGateway(s.app, token, features, opts.platform ? { platform: opts.platform } : {});
@@ -192,6 +192,68 @@ describe('durum', () => {
     expect(await last()).toBe('online');
     phone.ws.close();
     expect(await last()).toBe('idle');
+  });
+
+  it('yalnızca telefondan bağlı: mobile yalnızca tüm oturumlar telefondayken; bağlanınca/kopunca yeniden duyurulur', async () => {
+    const ali = await s.member('ali');
+    const veli = await s.member('veli');
+    const cv = await connect(veli.token);
+    const last = async () => {
+      await cv.settle();
+      return cv.of('PRESENCE_UPDATE').filter((p) => p.userId === ali.user.id).at(-1);
+    };
+    const updates = () => cv.of('PRESENCE_UPDATE').filter((p) => p.userId === ali.user.id).length;
+
+    // Yalnızca telefon: mobile
+    const android = await connect(ali.token, { platform: 'android' });
+    expect(await last()).toMatchObject({ online: true, status: 'online', mobile: true });
+    // Yeni katılan READY'de de görür
+    const cv2 = await connect(veli.token);
+    expect(cv2.ready.presences?.[ali.user.id]).toMatchObject({ status: 'online', mobile: true });
+
+    // Masaüstü de açılınca normal nokta (alan hiç gönderilmez: eski biçimle aynı nesne)
+    const desk = await connect(ali.token);
+    expect(await last()).toEqual({ userId: ali.user.id, online: true, status: 'online', customStatus: null, activities: [] });
+    // Bir telefon daha: hâlâ karışık, yeni olay yok
+    const before = updates();
+    const ios = await connect(ali.token, { platform: 'ios' });
+    await cv.settle();
+    expect(updates()).toBe(before);
+
+    // Son masaüstü kapanınca yeniden telefon
+    desk.ws.close();
+    expect(await last()).toMatchObject({ status: 'online', mobile: true });
+    // Telefonlardan biri kapanınca değişen bir şey yok
+    const before2 = updates();
+    android.ws.close();
+    await cv.settle();
+    expect(updates()).toBe(before2);
+
+    // Telefon arka planda (boşta): durum rengi değişir, telefon biçimi kalır
+    idle(ios, true);
+    expect(await last()).toMatchObject({ status: 'idle', mobile: true });
+    await setStatus(ali, { status: 'dnd' });
+    expect(await last()).toMatchObject({ status: 'dnd', mobile: true });
+
+    // Görünmez: çevrimdışı görünür, mobile sızmaz
+    await setStatus(ali, { status: 'invisible' });
+    expect(await last()).toEqual({ userId: ali.user.id, online: false, status: 'offline', customStatus: null });
+    const cv3 = await connect(veli.token);
+    expect(cv3.ready.presences?.[ali.user.id]).toBeUndefined();
+    await setStatus(ali, { status: 'online' });
+    expect(await last()).toMatchObject({ status: 'idle', mobile: true }); // telefon hâlâ arka planda
+
+    // Platform bildirmeyen (eski masaüstü) oturum masaüstü sayılır
+    const old = await connectGateway(s.app, ali.token, [CLIENT_FEATURE_DM]);
+    clients.push(old);
+    expect(await last()).toMatchObject({ status: 'online' });
+    expect((await last())?.mobile).toBeUndefined();
+    old.ws.close();
+    expect(await last()).toMatchObject({ status: 'idle', mobile: true });
+
+    // Son oturum kapanınca çevrimdışı (mobile yok)
+    ios.ws.close();
+    expect(await last()).toEqual({ userId: ali.user.id, online: false, status: 'offline', customStatus: null });
   });
 
   it('telefon bildirimi: Rahatsız Etmeyin ve masaüstünde etkin olana gitmez; boşta ya da görünmezken gider', async () => {

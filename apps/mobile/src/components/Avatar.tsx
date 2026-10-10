@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Image, Text, View } from 'react-native';
 import { animatedDecorationId, type User } from '@diskort/shared';
-import { avatarInk, avatarUrl, useStatus, type DisplayStatus } from '@diskort/client-core';
+import { avatarInk, avatarUrl, useOnMobile, useStatus, type DisplayStatus } from '@diskort/client-core';
 import { colors, createStyles } from '../theme';
 import { AnimatedDecoration } from './cosmetics/Cosmetics';
-import { StatusDot } from './StatusDot';
+import { showsPhone, StatusDot } from './StatusDot';
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -21,6 +21,8 @@ interface Props {
   online?: boolean;
   /** Durum noktası (Discord biçimli: ay, eksi, halka) */
   status?: DisplayStatus;
+  /** Kişi yalnızca telefondan bağlı: nokta telefon biçiminde (çevrimdışı/görünmezken yok sayılır) */
+  mobile?: boolean;
   /** Çevrimiçi noktasının çevresindeki halka: avatarın durduğu yüzeyin rengi */
   surface?: string;
   /** Avatar dekorasyonunun kimliği (user.avatarDecoration): avatarın üstüne, yerleşimi değiştirmeden çizilir */
@@ -40,12 +42,14 @@ export function Avatar({
   speaking,
   online,
   status,
+  mobile,
   surface = colors.side,
   decoration,
   animateDecoration,
   decorationPoster,
 }: Props) {
   const shown: DisplayStatus | undefined = status ?? (online === undefined ? undefined : online ? 'online' : 'offline');
+  const phone = shown !== undefined && showsPhone(shown, mobile);
   const border = size >= 32 ? 3 : 2;
   const dot = Math.round(size * 0.36) - 2 * border;
   const ring = speaking ? 3 : 0;
@@ -82,8 +86,14 @@ export function Avatar({
       </View>
       {animated && <AnimatedDecoration set={animated} size={size} animate={animateDecoration} poster={decorationPoster} />}
       {shown !== undefined && (
-        <View style={[styles.dot, { padding: border, borderRadius: size, backgroundColor: surface }]}>
-          <StatusDot status={shown} size={dot} surface={surface} />
+        <View
+          style={[
+            styles.dot,
+            // Telefonun halkası da köşeleri yuvarlak dikdörtgen (simgenin köşesiyle eş merkezli)
+            { padding: border, borderRadius: phone ? border + dot * 0.2 : size, backgroundColor: surface },
+          ]}
+        >
+          <StatusDot status={shown} size={dot} surface={surface} mobile={phone} />
         </View>
       )}
     </View>
@@ -100,5 +110,6 @@ const styles = createStyles(() => ({
 /** Kişinin güncel durum noktasıyla avatar (kendin için görünmezlik de görünür) */
 export function PresenceAvatar({ userId, ...props }: Omit<Props, 'status' | 'online'> & { userId: string }) {
   const status = useStatus(userId);
-  return <Avatar {...props} status={status} />;
+  const mobile = useOnMobile(userId);
+  return <Avatar {...props} status={status} mobile={mobile} />;
 }

@@ -60,6 +60,7 @@ export function ProfileBanner({
 export function ProfileCardTop({
   user,
   status,
+  mobile,
   aside,
   badge,
   bannerClassName,
@@ -76,6 +77,8 @@ export function ProfileCardTop({
     | 'animatedEffect'
   >;
   status?: DisplayStatus;
+  /** Kişi yalnızca telefondan bağlı (nokta telefon biçiminde) */
+  mobile?: boolean;
   /** Avatarın yanında (ör. özel durum balonu) */
   aside?: ReactNode;
   /** Adın yanında (ör. sunucu sahibinin tacı) */
@@ -100,6 +103,7 @@ export function ProfileCardTop({
               user={user}
               size={80}
               status={status}
+              mobile={mobile}
               ringClassName="bg-bg-float"
               ringColor={ring}
               decoration={user.avatarDecoration}

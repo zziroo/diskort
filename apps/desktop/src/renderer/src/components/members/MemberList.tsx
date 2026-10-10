@@ -8,6 +8,7 @@ import {
   useGuild,
   useMemberColor,
   useSession,
+  useOnMobile,
   useStatus,
   voiceLabel,
 } from '@diskort/client-core';
@@ -53,6 +54,7 @@ const MemberRow = memo(function MemberRow({ user, offline, owner }: { user: User
     return channelId ? voiceLabel(s.channels.find((c) => c.id === channelId)?.name) : null;
   });
   const status = useStatus(user.id);
+  const mobile = useOnMobile(user.id);
   const openContextMenu = useUi((s) => s.openContextMenu);
   const isSelf = user.id === selfId;
   // İsim plakası satırın arkasında oynar; seti tanınmıyorsa (paketi yayında değil) satır plakasızdır
@@ -104,6 +106,7 @@ const MemberRow = memo(function MemberRow({ user, offline, owner }: { user: User
           user={user}
           size={32}
           status={status}
+          mobile={mobile}
           ringClassName="bg-bg-side"
           ringColor={plate ? '#0a0a0a' : undefined}
           decoration={user.avatarDecoration}

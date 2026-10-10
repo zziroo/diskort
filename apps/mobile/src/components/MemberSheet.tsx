@@ -24,6 +24,7 @@ import {
   useCustomStatus,
   useFriendStatus,
   useGuild,
+  useOnMobile,
   useSession,
   useStatus,
   voiceStateIn,
@@ -79,6 +80,7 @@ export function MemberSheet({
   // Seste olduğu ve "Yayını izle": her sunucu bağlamında (seçili olmayan sunucunun ses kanalı da), DM'de değil
   const live = useGuild((s) => (showsStreamInfo(shownContext) ? voiceStateIn(s, shownContext, userId) : undefined));
   const status = useStatus(userId);
+  const mobile = useOnMobile(userId);
   const custom = useCustomStatus(userId);
   const color = useGuild((s) => (guildInfo ? memberColorOf(s, userId) : null));
   const guildRoles = useGuild((s) => s.roles);
@@ -274,6 +276,7 @@ export function MemberSheet({
         <ProfileHeader
           user={user}
           status={user.removed ? undefined : status}
+          mobile={mobile}
           nameColor={color}
           badge={
             owner && (

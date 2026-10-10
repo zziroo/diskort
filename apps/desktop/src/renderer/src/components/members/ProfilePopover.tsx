@@ -11,6 +11,7 @@ import {
   useGuild,
   useSession,
   useIsBlocked,
+  useOnMobile,
   useStatus,
   voiceStateIn,
   type ProfileContext,
@@ -81,6 +82,7 @@ export function ProfilePopover() {
   const { value: shown, closing } = usePresence(target, 100);
   const user = useGuild((s) => (shown ? s.users[shown.userId] : undefined));
   const status = useStatus(shown?.userId);
+  const mobile = useOnMobile(shown?.userId);
   const custom = useCustomStatus(shown?.userId);
   // Sunucu bilgisi (roller, taç, yayın) yalnızca o sunucunun bağlamında
   const guildInfo = useGuild((s) => (shown ? showsGuildInfo(s, shown.context) : false));
@@ -178,6 +180,7 @@ export function ProfilePopover() {
       <ProfileCardTop
         user={user}
         status={status}
+        mobile={mobile}
         aside={custom && <StatusBubble custom={custom} />}
         badge={owner && <Crown size={16} aria-label="Sunucunun sahibi" className="shrink-0 text-warn" />}
       />

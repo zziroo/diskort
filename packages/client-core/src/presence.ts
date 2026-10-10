@@ -35,6 +35,21 @@ export function useStatus(userId: string | null | undefined): DisplayStatus {
   return useGuild((s) => displayStatusOf(s, userId, selfId));
 }
 
+/**
+ * Kişi yalnızca telefondan bağlı mı (durum noktası telefon biçiminde çizilir). Çevrimdışı görünen (görünmez
+ * dahil) kişide ve eski sunucuda hep false.
+ */
+export function onMobileOf(s: Pick<GuildStore, 'presences'>, userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  const p = s.presences[userId];
+  return p !== undefined && p.status !== 'offline' && p.mobile === true;
+}
+
+/** Kişi yalnızca telefondan bağlı mı (değer döner: seçici kararlıdır) */
+export function useOnMobile(userId: string | null | undefined): boolean {
+  return useGuild((s) => onMobileOf(s, userId));
+}
+
 /** Kişinin özel durumu; kendininki görünmezken de gösterilir */
 export function useCustomStatus(userId: string | null | undefined): CustomStatus | null {
   const selfId = useSession((s) => s.user?.id);

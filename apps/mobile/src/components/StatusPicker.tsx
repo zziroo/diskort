@@ -16,6 +16,7 @@ import {
   setUserStatus,
   useCustomStatus,
   useSelfStatus,
+  useOnMobile,
   useSession,
   useStatus,
 } from '@diskort/client-core';
@@ -104,6 +105,7 @@ function MainPage({ onClose, onPage }: { onClose: () => void; onPage: (page: Pag
   const user = useSession((s) => s.user);
   const self = useSelfStatus();
   const status = useStatus(user?.id);
+  const mobile = useOnMobile(user?.id);
   const custom = useCustomStatus(user?.id);
   const current = self?.status ?? 'online';
   const remaining = formatRemaining(self?.expiresAt ?? null);
@@ -111,7 +113,7 @@ function MainPage({ onClose, onPage }: { onClose: () => void; onPage: (page: Pag
   return (
     <View>
       <View style={styles.header}>
-        <Avatar user={user} size={56} status={status} surface={colors.side} />
+        <Avatar user={user} size={56} status={status} mobile={mobile} surface={colors.side} />
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={1}>
             {user.displayName}

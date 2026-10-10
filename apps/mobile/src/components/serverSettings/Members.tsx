@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { guildVoiceStateOf, memberColorOf, useActiveGuildContext, useGuild, useSession, useStatus, type MemberUser } from '@diskort/client-core';
+import { guildVoiceStateOf, memberColorOf, useActiveGuildContext, useGuild, useOnMobile, useSession, useStatus, type MemberUser } from '@diskort/client-core';
 import { colors, createStyles, font, radius, ripple, space } from '../../theme';
 import { Avatar } from '../Avatar';
 import { MemberSheet } from '../MemberSheet';
@@ -77,6 +77,7 @@ const MemberRow = memo(function MemberRow({
   const roles = useGuild((s) => s.roles);
   const ownerId = useGuild((s) => s.guild?.ownerId);
   const status = useStatus(user.id);
+  const mobile = useOnMobile(user.id);
   const voiceChannel = useGuild((s) => {
     const state = guildVoiceStateOf(s, user.id);
     return state ? s.channels.find((c) => c.id === state.channelId)?.name : undefined;
@@ -96,7 +97,7 @@ const MemberRow = memo(function MemberRow({
         accessibilityRole="button"
         accessibilityLabel={`${user.displayName}, üyeyi yönet`}
       >
-        <Avatar user={user} size={40} status={status} surface={colors.side} />
+        <Avatar user={user} size={40} status={status} mobile={mobile} surface={colors.side} />
         <View style={{ flex: 1 }}>
           <View style={styles.nameRow}>
             <Text style={[styles.name, color ? { color } : null]} numberOfLines={1}>

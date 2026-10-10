@@ -43,6 +43,7 @@ const RING = 4;
 export function ProfileHeader({
   user,
   status,
+  mobile,
   nameColor,
   badge,
   lines,
@@ -55,6 +56,8 @@ export function ProfileHeader({
 }: {
   user: ProfileUser;
   status?: DisplayStatus;
+  /** Kişi yalnızca telefondan bağlı (nokta telefon biçiminde) */
+  mobile?: boolean;
   /** Adın rengi (en üstteki rolün rengi) */
   nameColor?: string | null;
   /** Adın yanında (ör. sunucu sahibinin tacı) */
@@ -94,7 +97,7 @@ export function ProfileHeader({
       {avatar ? (
         avatar(ring)
       ) : (
-        <Avatar user={user} size={size} status={status} surface={ring} decoration={user.avatarDecoration} animateDecoration />
+        <Avatar user={user} size={size} status={status} mobile={mobile} surface={ring} decoration={user.avatarDecoration} animateDecoration />
       )}
     </View>
   );

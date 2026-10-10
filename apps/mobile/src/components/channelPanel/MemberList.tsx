@@ -11,6 +11,7 @@ import {
   useGuild,
   useMemberColor,
   useSession,
+  useOnMobile,
   useStatus,
   type ProfileContext,
 } from '@diskort/client-core';
@@ -167,6 +168,7 @@ const MemberRow = memo(function MemberRow({
   const inVoice = useGuild((s) => guildInfo && guildVoiceStateOf(s, user.id) !== undefined);
   const self = useSession((s) => s.user?.id === user.id);
   const status = useStatus(user.id);
+  const mobile = useOnMobile(user.id);
   const custom = useCustomStatus(user.id);
   // Oynadığı oyun hesap düzeyidir: konuşmada da görünür (satırda yalnızca asıl oyun)
   const activity = useActivity(user.id);
@@ -193,6 +195,7 @@ const MemberRow = memo(function MemberRow({
             user={user}
             size={38}
             status={status}
+            mobile={mobile}
             surface={plate ? '#0a0a0a' : colors.side}
             decoration={user.avatarDecoration}
           />
