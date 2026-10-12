@@ -22,7 +22,7 @@ function firstFailure(d: OverloadDetector, reports: LoadReport[]): { at: number;
 
 describe('yük/boşluk denetimi (OverloadDetector)', () => {
   it('telemetrideki durum: yük 0,4 ve 300–700 ms takılmalarla gelen boşluk patlaması modeli bırakmaz', () => {
-    const d = new OverloadDetector(0.6);
+    const d = new OverloadDetector(0.75);
     let underruns = 0;
     const reports: LoadReport[] = [];
     for (let i = 0; i < 30; i++) {
@@ -37,30 +37,40 @@ describe('yük/boşluk denetimi (OverloadDetector)', () => {
   });
 
   it('takılma olmadan kısa bir boşluk patlaması (2 rapor) bırakmaz', () => {
-    const d = new OverloadDetector(0.6);
+    const d = new OverloadDetector(0.75);
     const reports: LoadReport[] = [0, 5, 9, 9, 9, 9, 9, 9, 9, 9].map((u) => ({ load: 0.45, underruns: u, stalled: false }));
     expect(firstFailure(d, reports)).toBeNull();
   });
 
-  it('süren boşluklar (8 raporun 5’i) modeli bırakır', () => {
-    const d = new OverloadDetector(0.6);
+  it('süren boşluklar (8 raporun 6’sı) modeli bırakır', () => {
+    const d = new OverloadDetector(0.75);
     const reports: LoadReport[] = Array.from({ length: 10 }, (_, i) => ({ load: 0.45, underruns: (i + 1) * 3, stalled: false }));
-    expect(firstFailure(d, reports)).toEqual({ at: 5, reason: 'underrun' });
+    expect(firstFailure(d, reports)).toEqual({ at: 6, reason: 'underrun' });
+  });
+
+  it('5 raporluk boşluk patlaması (eski sınır) artık bırakmaz', () => {
+    const d = new OverloadDetector(0.75);
+    const reports: LoadReport[] = [1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5].map((u) => ({ load: 0.45, underruns: u, stalled: false }));
+    expect(firstFailure(d, reports)).toBeNull();
   });
 
   it('süren aşırı yük modeli bırakır; tek tük aşım bırakmaz', () => {
-    const spiky = new OverloadDetector(0.6);
-    const spikes = Array.from({ length: 16 }, (_, i) => ({ load: i % 3 === 0 ? 0.8 : 0.3, underruns: 0, stalled: false }));
+    const spiky = new OverloadDetector(0.75);
+    const spikes = Array.from({ length: 16 }, (_, i) => ({ load: i % 3 === 0 ? 0.9 : 0.3, underruns: 0, stalled: false }));
     expect(firstFailure(spiky, spikes)).toBeNull();
-    const heavy = new OverloadDetector(0.6);
-    const reports = Array.from({ length: 8 }, () => ({ load: 0.75, underruns: 0, stalled: false }));
-    expect(firstFailure(heavy, reports)).toEqual({ at: 5, reason: 'overload' });
+    const heavy = new OverloadDetector(0.75);
+    // Eski sınırı (0,6) aşan ama yenisinin altındaki yük bırakılmaz
+    const moderate = new OverloadDetector(0.75);
+    const busy = Array.from({ length: 16 }, () => ({ load: 0.7, underruns: 0, stalled: false }));
+    expect(firstFailure(moderate, busy)).toBeNull();
+    const reports = Array.from({ length: 8 }, () => ({ load: 0.85, underruns: 0, stalled: false }));
+    expect(firstFailure(heavy, reports)).toEqual({ at: 6, reason: 'overload' });
   });
 
-  it('takılmayla çakışsa da pencerenin neredeyse tamamında boşluk varsa bırakır', () => {
-    const d = new OverloadDetector(0.6);
+  it('takılmayla çakışsa da pencerenin tamamında boşluk varsa bırakır', () => {
+    const d = new OverloadDetector(0.75);
     const reports: LoadReport[] = Array.from({ length: 10 }, (_, i) => ({ load: 0.4, underruns: (i + 1) * 4, stalled: true }));
-    expect(firstFailure(d, reports)).toEqual({ at: 7, reason: 'underrun' });
+    expect(firstFailure(d, reports)).toEqual({ at: 8, reason: 'underrun' });
   });
 });
 
@@ -89,6 +99,18 @@ describe('model sağlığı (bekleme süresi ve yeniden deneme)', () => {
     }
     const last = h.lastFailure('dpdfnet')!;
     expect(last.retryAt! - last.at).toBe(COOLDOWN_MAX_MS);
+  });
+
+  it('bekleme 1 dk’dan başlar, art arda düştükçe 2, 4, 8, en fazla 10 dk', () => {
+    let now = 0;
+    const h = new DenoiserHealth(() => now);
+    const waits: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const f = h.record('dpdfnet', 'underrun', 'boşluk');
+      waits.push((f.retryAt! - f.at) / 60_000);
+      now = f.retryAt! + 30_000;
+    }
+    expect(waits).toEqual([1, 2, 4, 8, 10, 10]);
   });
 
   it('uzun süre sorunsuz geçince bekleme süresi baştan başlar', () => {
@@ -136,7 +158,7 @@ describe('düşüş metinleri', () => {
     const base = { from: 'dpdfnet' as const, reason: 'underrun' as const, transient: true, at: 0, retryAt: 1 };
     expect(fallbackLabel({ ...base, to: 'standard' })).toBe('DPDFNet → Standart (işlemci yoğun)');
     expect(fallbackNoticeText({ ...base, to: 'standard' })).toBe(
-      'Gürültü engelleme geçici olarak standarda düşürüldü (işlemci yoğun). Birkaç dakika sonra DPDFNet yeniden denenecek.',
+      'Gürültü engelleme geçici olarak standarda düşürüldü (işlemci yoğun). 1 dk sonra DPDFNet yeniden denenecek.',
     );
     expect(fallbackNoticeText({ ...base, to: 'standard', reason: 'error', transient: false, retryAt: null })).toContain(
       'bu oturumda çalıştırılamadı',

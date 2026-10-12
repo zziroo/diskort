@@ -227,6 +227,31 @@ describe('gürültü engelleyici köprüsü', () => {
     expect(20 * Math.log10(rms)).toBeLessThan(-50);
   }, 60_000);
 
+  it('üretim ayarı (3 kare pay, en fazla 4): 20 ms takılmayı boşluksuz yutar, pay 4 karede durur', () => {
+    // micProcessor.ts BRIDGE_EXTRA_SAMPLES / BRIDGE_MAX_EXTRA_SAMPLES ile aynı
+    const sab = createRing();
+    const node = new Bridge({ processorOptions: { sab, extraSamples: 3 * HOP, maxExtraSamples: 4 * HOP } });
+    const work = identityWorker(sab);
+    const { ctrl } = ringViews(sab);
+    const out = new Float32Array(128);
+    const input = new Float32Array(128).fill(0.5);
+    for (let b = 0; b < 600; b++) {
+      node.process([[input]], [[out]]);
+      // 300. bloktan sonra işçi ~18,7 ms (7 blok) boyunca hiç çalışmaz: 30 ms'lik pay yutar
+      if (b < 300 || b > 306) work();
+    }
+    expect(Atomics.load(ctrl, UNDERRUNS)).toBe(0);
+    expect(Atomics.load(ctrl, BUFFER_SAMPLES)).toBe(HOP - 32 + 3 * HOP);
+    // Art arda uzun takılmalar (~53 ms): boşluk sayılır, pay büyür ama 4 kareyi aşmaz
+    for (let b = 0; b < 3000; b++) {
+      node.process([[input]], [[out]]);
+      if (b % 500 >= 20) work();
+    }
+    expect(Atomics.load(ctrl, UNDERRUNS)).toBeGreaterThan(0);
+    expect(Atomics.load(ctrl, BUFFER_SAMPLES)).toBeGreaterThan(HOP - 32 + 3 * HOP);
+    expect(Atomics.load(ctrl, BUFFER_SAMPLES)).toBeLessThanOrEqual(HOP - 32 + 4 * HOP);
+  });
+
   it('işçi 1 kareden uzun takılırsa boşluğu sayar ve payı büyütür', () => {
     const sab = createRing();
     const node = new Bridge({ processorOptions: { sab, extraSamples: HOP, maxExtraSamples: 3 * HOP } });

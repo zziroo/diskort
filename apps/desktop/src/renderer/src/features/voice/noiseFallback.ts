@@ -47,5 +47,8 @@ export function fallbackNoticeText(f: NoiseFallbackState): string {
     return `${EFFECTIVE_NOISE_LABELS[f.from]} bu oturumda çalıştırılamadı (${reasonLabel(f.reason)}); gürültü engelleme ${DATIVE[f.to]} düşürüldü.`;
   }
   const retry = f.to === 'standard' ? `${EFFECTIVE_NOISE_LABELS[f.from]} yeniden denenecek` : 'yeniden denenecek';
-  return `Gürültü engelleme geçici olarak ${DATIVE[f.to]} düşürüldü (${reasonLabel(f.reason)}). Birkaç dakika sonra ${retry}.`;
+  // Bekleme 1 dk'dan başlayıp 10 dk'ya kadar uzar (denoiserHealth): süre metne yazılır
+  const minutes = f.retryAt === null ? null : Math.max(1, Math.round((f.retryAt - f.at) / 60_000));
+  const when = minutes === null ? 'Daha sonra' : `${minutes} dk sonra`;
+  return `Gürültü engelleme geçici olarak ${DATIVE[f.to]} düşürüldü (${reasonLabel(f.reason)}). ${when} ${retry}.`;
 }

@@ -36,8 +36,9 @@ class PerfHint private constructor(private val session: Any?) : AutoCloseable {
 
   companion object {
     /**
-     * Kare başına hedef süre: canlı bütçenin (DpdfnetBudget.LIVE_BUDGET_MS, 5 ms) altında pay bırakır. Sistem
-     * ancak süre hedefi aşınca hızlandırır; hedef bütçeye eşit olsaydı kareler sınırda kalırdı.
+     * Kare başına hedef süre: canlı bütçenin (DpdfnetBudget.LIVE_BUDGET_MS, 7,5 ms) epey altında pay bırakır.
+     * Sistem ancak süre hedefi aşınca hızlandırır; hedef bütçeye eşit olsaydı kareler sınırda kalırdı ve
+     * tampon payı (30 ms) ani sıçramalar yerine sürekli gecikmeye harcanırdı.
      */
     const val TARGET_NS = 4_000_000L
 

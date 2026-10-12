@@ -4,9 +4,9 @@
 // bellek ayırmaz, ileti göndermez. Böylece modelin yavaş bir karesi ses bloğunun süresini (2,67 ms)
 // aşsa da çıkan ses cızırdamaz.
 //
-// Tampon: (kare − ebob(128, kare)) = 448 örnek hizalama + ek pay (varsayılan 1 kare = 10 ms). İşçi bir kareyi
-// payından geç bitirirse boşluk (underrun) olur: o blokta sessizlik çalınır, pay bir blok (2,67 ms) artırılıp
-// (en fazla 3 kare) tampon yeniden doldurulur. İşçi takılıp birden çok kare döndürürse gecikme büyümesin diye
+// Tampon: (kare − ebob(128, kare)) = 448 örnek hizalama + ek pay (micProcessor: 3 kare = 30 ms; seçenek
+// verilmezse 1 kare). İşçi bir kareyi payından geç bitirirse boşluk (underrun) olur: o blokta sessizlik çalınır,
+// pay bir blok (2,67 ms) artırılıp (en fazla 4 kare; seçenek verilmezse 3) tampon yeniden doldurulur. İşçi takılıp birden çok kare döndürürse gecikme büyümesin diye
 // fazlası atılır. Sayaçlar paylaşımlı denetim alanına yazılır; işçi bunları istatistiklerle bildirir.
 //
 // Bellek düzeni ring.ts ile aynı olmalı.

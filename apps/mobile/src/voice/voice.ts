@@ -43,8 +43,10 @@ import { voiceRoomName } from './roomName';
 import {
   noteVideoActivity,
   onNoiseFilterBypass,
+  onNoiseFilterRecover,
   prepareNoiseFilter,
   releaseNoiseFilter,
+  suspendNoiseFilterRetry,
   webrtcNoiseSuppression,
 } from './noiseFilter';
 
@@ -234,6 +236,14 @@ class MobileVoiceClient {
     // DPDFNet yetişemedi ya da hata verdi: mikrofon WebRTC'nin standart gürültü engellemesiyle yeniden açılır
     onNoiseFilterBypass(() => {
       toast('DPDFNet gürültü engelleme durdu (telefon yetişemedi, ısındı ya da hata); standart gürültü engellemeye geçildi.');
+      const track = this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack as
+        | LocalAudioTrack
+        | undefined;
+      void track?.restartTrack(captureOptions()).catch((err: unknown) => reportClientError(err, 'dpdfnet-restart'));
+    });
+    // Bekleme süresi dolunca DPDFNet sesli sohbet sırasında yeniden açıldı: mikrofon standart engelleme kapalı açılır
+    onNoiseFilterRecover(() => {
+      toast('DPDFNet gürültü engelleme yeniden açıldı.');
       const track = this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack as
         | LocalAudioTrack
         | undefined;
@@ -765,7 +775,13 @@ class MobileVoiceClient {
         if (participant.isLocal && this.room === room) useVoice.setState({ quality: quality as VoiceQuality });
       })
       .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
-        useVoice.setState({ speaking: Object.fromEntries(speakers.map((p) => [p.identity, true as const])) });
+        // Konuşan kümesi değişmediyse yazma: her olayda yeni nesne, tüm abonelerin yeniden çizilmesine
+        // ve Animated düğümlerinin birikmesine (Android OOM) yol açıyordu. Karşılaştırma sıradan bağımsız.
+        const prev = useVoice.getState().speaking;
+        const ids = new Set(speakers.map((p) => p.identity));
+        const prevKeys = Object.keys(prev);
+        if (prevKeys.length === ids.size && prevKeys.every((id) => ids.has(id))) return;
+        useVoice.setState({ speaking: Object.fromEntries([...ids].map((id) => [id, true as const])) });
       })
       // İzinler değişti (rol, kanal izni, sunucuda susturma): mikrofonu ve yayını ona göre aç/kapat
       .on(RoomEvent.ParticipantPermissionsChanged, (_prev, participant) => {
@@ -860,10 +876,16 @@ class MobileVoiceClient {
     this.channelSounds.cancel();
     this.clearReconnectTimer();
     this.gate.detach();
+    // DPDFNet yeniden denemesi ayrılış sırasında modeli yükleyip mikrofonu yeniden açmasın
+    suspendNoiseFilterRetry();
     const previous = this.tearingDown;
     const next = (async () => {
       await previous;
-      if (room) await room.disconnect(true).catch(() => undefined);
+      if (room) {
+        await room.disconnect(true).catch(() => undefined);
+        // Eski odanın dinleyicileri (kapanışlarda this/store tutuyor) bellekte kalmasın (Android OOM)
+        room.removeAllListeners();
+      }
       await releaseNoiseFilter();
       if (opts.keepSession) return;
       await AudioSession.stopAudioSession().catch(() => undefined);

@@ -29,12 +29,16 @@ export interface NoiseFilterStatus {
   /** Ortalamanın modele düşen kısmı (ms) */
   modelMs?: number | null;
   maxMs: number | null;
-  /** Ses iş parçacığının modelle geçirdiği zaman oranı (0–1) */
+  /** Modelin iş parçacığının modelle geçirdiği zaman oranı (0–1) */
   load: number | null;
   frames: number;
-  /** Son pencerede 10 ms'yi aşan kareler */
+  /** Son pencerede 10 ms'yi aşan kareler (30 ms tamponla sesi bozmaz) */
   overHop: number;
-  /** Ses iş parçacığının son çalıştığı çekirdek, ör. "2 (1800 MHz)" */
+  /** Son pencerede tampon payını da aşıp gürültü engellemesiz geçen kareler; eski APK'larda yoktur */
+  late?: number;
+  /** Çalışmıyorsa yeniden denemeye kalan süre (ms; null: denenmeyecek ya da bilinmiyor); eski APK'larda yoktur */
+  retryInMs?: number | null;
+  /** Modelin iş parçacığının son çalıştığı çekirdek, ör. "2 (1800 MHz)" */
   audioCore?: string | null;
   /** Çekirdek kümeleri, ör. "6×2000 + 2×2600 MHz" */
   cpu?: string | null;
@@ -51,7 +55,8 @@ export interface ThermalInfo {
 }
 
 export type NoiseFilterEvents = {
-  onBypass: (params: { reason: string }) => void;
+  /** retryInMs: yeniden denemeye kalan süre (ms; null ya da eski APK'da yok: denenmez) */
+  onBypass: (params: { reason: string; retryInMs?: number | null }) => void;
 };
 
 declare class NoiseFilterModule extends NativeModule<NoiseFilterEvents> {

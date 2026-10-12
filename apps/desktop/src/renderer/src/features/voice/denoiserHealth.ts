@@ -38,14 +38,15 @@ export interface DenoiserFailure {
 }
 
 /**
- * İlk bekleme 5 dk: telemetride düşüşler oyunun yükleme anlarındaki kısa takılmalarda oluyor; 5 dk bu anların
- * geçmesine yeter, yeniden denemenin bedeli ise yalnızca kısa bir yeniden yayın boşluğu. Aynı model yeniden
- * düşerse bekleme ikiye katlanır (10, 20, en fazla 30 dk): sürekli ağır bir oyunda gidip gelme olmasın.
+ * İlk bekleme 1 dk: telemetride düşüşler oyunun yükleme anlarındaki kısa takılmalarda oluyor ve eski 5 dk'lık
+ * bekleme DPDFNet'i gereğinden uzun kapalı tutuyordu; yeniden denemenin bedeli yalnızca kısa bir yeniden yayın
+ * boşluğu. Aynı model yeniden düşerse bekleme ikiye katlanır (2, 4, 8, en fazla 10 dk): sürekli ağır bir oyunda
+ * dakikada bir gidip gelme olmasın.
  */
-export const COOLDOWN_BASE_MS = 5 * 60_000;
-export const COOLDOWN_MAX_MS = 30 * 60_000;
-/** Son düşüşün üzerinden bu kadar geçtiyse bekleme süresi baştan (5 dk) başlar */
-export const FAILURE_MEMORY_MS = 60 * 60_000;
+export const COOLDOWN_BASE_MS = 60_000;
+export const COOLDOWN_MAX_MS = 10 * 60_000;
+/** Son düşüşün üzerinden bu kadar geçtiyse bekleme süresi baştan (1 dk) başlar */
+export const FAILURE_MEMORY_MS = 30 * 60_000;
 
 export function isTransient(reason: FailureReason): boolean {
   return reason !== 'error';
@@ -134,18 +135,19 @@ export interface LoadReport {
 
 /** Son bu kadar rapora (~16 sn) bakılır */
 export const LOAD_WINDOW_REPORTS = 8;
-/** Pencerede bu kadar kötü rapor (≥10 sn sorun) varsa model bırakılır */
-export const LOAD_BAD_REPORTS = 5;
+/** Pencerede bu kadar kötü rapor (≥12 sn sorun; eskiden 5 rapor, ≥10 sn) varsa model bırakılır */
+export const LOAD_BAD_REPORTS = 6;
 /**
- * Takılmayla çakışan boşluklar sayılmaz (kısa takılma modelin suçu değil); ama pencerenin neredeyse tamamında
- * boşluk varsa takılma olsa da bırakılır (ses sürekli kesiliyor).
+ * Takılmayla çakışan boşluklar sayılmaz (kısa takılma modelin suçu değil); ama pencerenin tamamında (eskiden
+ * 8 raporun 7'si) boşluk varsa takılma olsa da bırakılır (ses sürekli kesiliyor).
  */
-export const LOAD_UNDERRUN_ALWAYS_REPORTS = 7;
+export const LOAD_UNDERRUN_ALWAYS_REPORTS = 8;
 
 /**
- * Telemetri (0.8–0.9.1): düşüşlerden önceki 30 sn'de yük 0,37–0,51 (sınır 0,6), en uzun kare 5–8 ms; boşluklar
- * (8–34) 300–700 ms'lik JS/sistem takılmalarıyla birlikte geliyordu. Eski kural (art arda 3 raporda yeni boşluk)
- * tek bir oyun yükleme anında modeli bırakıyordu. Bu denetim kısa takılmaları affeder, süren sorunda bırakır.
+ * Telemetri (0.8–0.9.1): düşüşlerden önceki 30 sn'de yük 0,37–0,51 (sınır o zaman 0,6), en uzun kare 5–8 ms;
+ * boşluklar (8–34) 300–700 ms'lik JS/sistem takılmalarıyla birlikte geliyordu. Eski kural (art arda 3 raporda yeni
+ * boşluk) tek bir oyun yükleme anında modeli bırakıyordu. Bu denetim kısa takılmaları affeder, süren sorunda
+ * bırakır. 0.10.x'te de düşüşler sürünce sınırlar gevşetildi (yük 0,75, 6/8 rapor) ve köprü tamponu büyütüldü.
  */
 export class OverloadDetector {
   private readonly window: { load: boolean; underrun: boolean; anyUnderrun: boolean }[] = [];

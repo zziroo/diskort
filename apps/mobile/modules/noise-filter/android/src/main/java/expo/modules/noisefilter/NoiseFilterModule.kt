@@ -12,8 +12,10 @@ import java.util.concurrent.Executors
  * DPDFNet gürültü engelleme (JS: modules/noise-filter). Model APK'nın içindedir (assets); ONNX Runtime
  * ile telefonda çalışır. Model sesli sohbete katılırken yüklenir, ayrılırken bellekten atılır.
  *
- * Telefon yetişemezse (canlıda 7 gün içinde iki kez ya da ısınma canlı bütçeyi bile aştıysa) bu telefon ve bu APK
- * için kaydedilir (SlowMemory): sonraki katılışlarda model hiç yüklenmez. Telefonun ısı durumu da buradan okunur (getThermal); sesli sohbetteyken
+ * Telefon yetişemezse bu açılışta bir süre beklenir (2, 4, 8, en fazla 15 dk; DpdfnetBudget.retryDelayMs), JS bu
+ * sürenin sonunda sesli sohbetteyken de yeniden dener (retryInMs). Canlıda 24 saat içinde iki kez yetişemediyse ya
+ * da ısınma canlı bütçeyi bile aştıysa bu telefon ve bu APK için 12 saat kaydedilir (SlowMemory): o süre
+ * boyunca model hiç yüklenmez. Telefonun ısı durumu da buradan okunur (getThermal); sesli sohbetteyken
  * "ciddi" ya da üstüne çıkarsa DPDFNet o oturum için kapatılır.
  */
 class NoiseFilterModule : Module() {
@@ -29,7 +31,7 @@ class NoiseFilterModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("DiskortNoiseFilter")
 
-    /** İşlemci kendini devre dışı bıraktı: { reason } */
+    /** İşlemci kendini devre dışı bıraktı: { reason, retryInMs } (retryInMs null: yeniden denenmez) */
     Events("onBypass")
 
     OnCreate {
@@ -71,6 +73,7 @@ class NoiseFilterModule : Module() {
           DpdfnetProcessor.healthyWindows >= HEALTHY_WINDOWS
         ) {
           appContext.reactContext?.let { memoryOf(it).clearStrikes() }
+          DpdfnetProcessor.clearSlowCount()
         }
         DpdfnetProcessor.setEnabled(false)
         DpdfnetProcessor.install(null)
@@ -86,11 +89,16 @@ class NoiseFilterModule : Module() {
       if (thermal >= Thermal.SEVERE) {
         DpdfnetProcessor.setEnabled(false)
         DpdfnetProcessor.install(null)
-        return@AsyncFunction status(thermalReason(thermal))
+        return@AsyncFunction status(thermalReason(thermal), THERMAL_RETRY_MS)
       }
-      // Bu telefonda ve bu APK'da daha önce yetişemedi (kalıcı kayıt) ya da bu açılışta yetişemedi
-      memoryOf(context).reason()?.let { return@AsyncFunction status("$it (önceki ölçüm)") }
-      DpdfnetProcessor.slowReason?.let { return@AsyncFunction status(it) }
+      // Bu telefonda ve bu APK'da kısa süre önce yetişemedi (süreli kayıt) ya da bu açılışta yetişemedi (bekleme)
+      memoryOf(context).recall()?.let { (reason, left) ->
+        return@AsyncFunction status("$reason (önceki ölçüm)", left)
+      }
+      val slow = DpdfnetProcessor.slowReason
+      DpdfnetProcessor.slowRemainingMs()?.let { left ->
+        return@AsyncFunction status(slow ?: "yavaş", left)
+      }
       try {
         if (!DpdfnetProcessor.hasEngine()) {
           val bytes = context.assets.open(MODEL_ASSET).use { it.readBytes() }
@@ -118,13 +126,15 @@ class NoiseFilterModule : Module() {
           DpdfnetProcessor.warmup = warm
           if (engine == null) {
             val miss = warm.judge() ?: DpdfnetBudget.Miss("yavaş", systematic = false)
-            // Genel yavaşlık bu açılışta akılda tutulur (ani takılma değil: sonraki katılışta yeniden denenir);
-            // canlı bütçeyi bile aşan ısınma kalıcı kaydedilir
-            if (miss.systematic) DpdfnetProcessor.slowReason = miss.reason
+            // Genel yavaşlık bu açılışta bir süre beklemeye alınır. Ani takılma beklemeye alınmaz (sonraki katılışta
+            // hemen denenir) ama sesli sohbetteyken yeniden deneme art arda oldukça seyrekleşir (noteWarmSpike);
+            // canlı bütçeyi bile aşan ısınma kaydedilir
+            var retry = if (miss.systematic) DpdfnetProcessor.noteSlow(miss.reason) else DpdfnetProcessor.noteWarmSpike()
             val remembered = miss.systematic && DpdfnetBudget.rememberWarmUp(warm.avgMs) &&
               memoryOf(context).remember(miss.reason, videoActive)
+            if (remembered) retry = SlowMemory.REMEMBER_TTL_MS
             Log.w(TAG, "DPDFNet ısınmada yetişemedi: ${miss.reason}${if (remembered) " (kaydedildi)" else ""}")
-            return@AsyncFunction status(miss.reason)
+            return@AsyncFunction status(miss.reason, retry)
           }
           DpdfnetProcessor.install(engine)
         } else {
@@ -208,11 +218,19 @@ class NoiseFilterModule : Module() {
       Log.w(TAG, "DPDFNet motoru kapatılamadı", t)
       false
     }
+    // Yeniden deneme: yetişemediyse bekleme süresi (işlemci noteSlow ile başlattı), ısındıysa birkaç dakika,
+    // hatada hiç (null)
+    var retry: Long? = when (b.kind) {
+      DpdfnetProcessor.Kind.SLOW, DpdfnetProcessor.Kind.SPIKE -> DpdfnetProcessor.slowRemainingMs() ?: 0L
+      DpdfnetProcessor.Kind.THERMAL -> THERMAL_RETRY_MS
+      DpdfnetProcessor.Kind.ERROR -> null
+    }
     if (b.kind == DpdfnetProcessor.Kind.SLOW || b.kind == DpdfnetProcessor.Kind.SPIKE) {
       try {
         val context = appContext.reactContext
         if (context != null && memoryOf(context).strike(b.reason, videoActive)) {
-          Log.w(TAG, "DPDFNet bu telefonda kapalı kalacak (yeni APK'ya kadar)")
+          retry = SlowMemory.REMEMBER_TTL_MS
+          Log.w(TAG, "DPDFNet bu telefonda 12 saat kapalı kalacak (yeni APK kurulursa hemen denenir)")
         }
       } catch (t: Throwable) {
         Log.w(TAG, "DPDFNet yavaşlığı kaydedilemedi", t)
@@ -223,7 +241,7 @@ class NoiseFilterModule : Module() {
       return
     }
     try {
-      sendEvent("onBypass", mapOf("reason" to b.reason))
+      sendEvent("onBypass", mapOf("reason" to b.reason, "retryInMs" to retry?.toDouble()))
     } catch (t: Throwable) {
       Log.w(TAG, "onBypass gönderilemedi", t)
     }
@@ -249,7 +267,8 @@ class NoiseFilterModule : Module() {
     )
   }
 
-  private fun status(reason: String?): Map<String, Any?> {
+  /** Durum; retryInMs: çalışmıyorsa yeniden denemeye kalan süre (null: bilinmiyor ya da denenmeyecek) */
+  private fun status(reason: String?, retryInMs: Long? = null): Map<String, Any?> {
     val s = DpdfnetProcessor.stats
     val w = DpdfnetProcessor.warmup
     val tid = DpdfnetProcessor.audioTid
@@ -272,6 +291,8 @@ class NoiseFilterModule : Module() {
       "load" to s?.load,
       "frames" to (s?.frames ?: 0L).toDouble(),
       "overHop" to (s?.overHop ?: 0),
+      "late" to (s?.late ?: 0),
+      "retryInMs" to retryInMs?.toDouble(),
       "audioCore" to (if (tid != 0) CpuInfo.describe(tid) else null),
       "cpu" to CpuInfo.clusters,
       "soc" to (if (Build.VERSION.SDK_INT >= 31) "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}" else Build.HARDWARE),
@@ -284,5 +305,8 @@ class NoiseFilterModule : Module() {
 
     /** Sağlıklı oturum: en az bu kadar 2 sn'lik pencere yetişti (2 dakika) */
     const val HEALTHY_WINDOWS = 60
+
+    /** Telefon çok ısınınca yeniden denemeden önce beklenen süre */
+    const val THERMAL_RETRY_MS = 5L * 60_000
   }
 }

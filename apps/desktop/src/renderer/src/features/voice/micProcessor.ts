@@ -41,7 +41,12 @@ interface DenoiserSpec {
 
 const DENOISERS: Record<Denoiser, DenoiserSpec> = {
   // Ryzen 5 7500F'te kare başına ~3 ms (tek çekirdeğin ~%30'u). Gecikme: pencere + 4 kare model gecikmesi.
-  dpdfnet: { name: 'DPDFNet-2 48 kHz', delaySamples: DPDFNET_DELAY_SAMPLES, maxLoad: 0.6, maxWarmupFrameMs: 6 },
+  // Sınırlar (eskiden 0,6 ve 6 ms): model kendi gerçek zamanlı iş parçacığında, köprü tamponu dalgalanmayı
+  // yutar; canlıda 10 ms'nin %75'i (7,5 ms) gerçek zamana yeterli pay bırakır (telefondaki
+  // DpdfnetBudget.LIVE_BUDGET_MS ile aynı). Isınma ölçümü canlıdan iyimserdir (önbellek sıcak, başka yük yok):
+  // telefondaki gibi canlı sınırın 1,35'e bölümü (7,5 / 1,35 ≈ 5,6 ms; WARMUP_BUDGET_MS), sınırda geçen
+  // makine canlıda hemen yetişemez olmasın.
+  dpdfnet: { name: 'DPDFNet-2 48 kHz', delaySamples: DPDFNET_DELAY_SAMPLES, maxLoad: 0.75, maxWarmupFrameMs: 5.6 },
 };
 
 /** Model kurulumu + ısınma (~0,3–1 sn); takılırsa bir alt seçeneğe dönülür. */
@@ -49,10 +54,12 @@ const DENOISER_READY_TIMEOUT_MS = 15_000;
 /** Barındırıcının raporları 2 sn arayla gelir; bundan geç geldiyse arada ana iş parçacığı takılmıştır */
 const STATS_LATE_MS = 2000 + STALL_GAP_MS;
 /**
- * Köprüdeki ek pay (2 kare = 20 ms): hesap bağlamının kendi ses bloğu takvimi (10 ms'lik çağrılar) ve kare
- * süresi bu payın içinde kalır. Boşluk olursa köprü payı bir blok artırır (en fazla 4 kare).
+ * Köprüdeki ek pay (3 kare = 30 ms; eskiden 2 kare): hesap bağlamının kendi ses bloğu takvimi (10 ms'lik
+ * çağrılar) ve kare süresi bu payın içinde kalır; ani uzun kareler de boşluk yapmadan erir. Boşluk olursa köprü
+ * payı bir blok artırır (en fazla 4 kare). Köprü tamponu toplam: 448 örnek hizalama (9,3 ms) + pay = 39,3 ms
+ * (en fazla 49,3 ms); modelin kendi algoritmik gecikmesi (50 ms) bunun dışındadır.
  */
-const BRIDGE_EXTRA_SAMPLES = 2 * HOP;
+const BRIDGE_EXTRA_SAMPLES = 3 * HOP;
 const BRIDGE_MAX_EXTRA_SAMPLES = 4 * HOP;
 
 export type DenoiseHostKind = 'realtime' | 'worker';

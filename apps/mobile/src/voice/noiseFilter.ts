@@ -29,6 +29,20 @@ export const useNoiseFilter = create<NoiseFilterStore>()(() => ({ status: null }
 /** DPDFNet şu an mikrofonu işliyor mu (standart engelleme kapalı kalmalı mı) */
 let running = false;
 
+/** Sesli sohbette mi (katılıştan ayrılışa): DPDFNet yalnızca o sırada yeniden denenir */
+let inCall = false;
+/** Katılış/ayrılış sayacı: süren bir yeniden deneme eski oturuma aitse sonucu yok sayılır */
+let session = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+/** DPDFNet sesli sohbet sırasında yeniden açıldı: mikrofon standart engelleme kapalı yeniden açılmalı */
+let recoverListener: (() => void) | null = null;
+
+/**
+ * Yerel modülün verdiği bekleme (yetişemedi: 2–15 dk, ısındı: 5 dk) bundan uzunsa sesli sohbet sırasında
+ * yeniden denenmez; süreli kayıt (12 saat) sonraki katılışlarda kendiliğinden biter.
+ */
+const MAX_RETRY_WAIT_MS = 30 * 60_000;
+
 /** Ayardaki tür, bu telefonda geçerli olana çevrilir (DPDFNet yoksa standart) */
 export function effectiveNoiseMode(mode: NoiseMode = getSettings().noiseMode): NoiseMode {
   return mode === 'dpdfnet' && !dpdfnetAvailable ? 'standard' : mode;
@@ -60,7 +74,7 @@ function report(reason: string, status: NoiseFilterStatus | null = null): void {
       `yürütücü: ${s.provider ?? '-'}; başarım ipucu: ${s.hint == null ? '-' : s.hint ? 'açık' : 'yok'}`,
       `ısınma: ${n(s.warmupMs)} ms (model ${n(s.warmupModelMs)}, en uzun ${n(s.warmupMaxMs)}, ilk yarı ${n(s.warmupFirstMs)}, çekirdek ${s.warmupCore ?? '-'})`,
       `ısı durumu: ${t.thermal ?? '-'}; ısınma payı: ${n(t.thermalHeadroom)}`,
-      `canlı: ort ${n(s.avgMs)} ms (model ${n(s.modelMs)}), en uzun ${n(s.maxMs)}, >10 ms: ${s.overHop}, kare: ${s.frames}`,
+      `canlı: ort ${n(s.avgMs)} ms (model ${n(s.modelMs)}), en uzun ${n(s.maxMs)}, >10 ms: ${s.overHop}, geç: ${s.late ?? '-'}, kare: ${s.frames}`,
       `ses çekirdeği: ${s.audioCore ?? '-'}; işlemci: ${s.soc ?? '-'} · ${s.cpu ?? '-'}`,
     ].join('\n');
   }
@@ -114,6 +128,9 @@ export function noiseFallbackReason(status: NoiseFilterStatus | null): string | 
  */
 export async function prepareNoiseFilter(): Promise<void> {
   running = false;
+  session++;
+  inCall = true;
+  clearRetry();
   if (!NoiseFilter) return;
   const s = getSettings();
   const want = effectiveNoiseMode(s.noiseMode) === 'dpdfnet';
@@ -121,16 +138,33 @@ export async function prepareNoiseFilter(): Promise<void> {
     const status = await NoiseFilter.configure(want, s.noiseStrengthDb);
     running = want && status.active;
     useNoiseFilter.setState({ status: want ? status : null });
-    if (want && !status.active && status.reason) report(status.reason, status);
+    if (want && !status.active) {
+      if (status.reason) report(status.reason, status);
+      scheduleRetry(status.retryInMs);
+    }
   } catch (err) {
     reportClientError(err, 'dpdfnet');
     useNoiseFilter.setState({ status: null });
   }
 }
 
+/**
+ * Ayrılış başlarken (oda kapanmadan önce, eşzamanlı): bekleyen yeniden deneme durur ve süren bir denemenin sonucu
+ * yok sayılır; böylece oda kapanırken configure(true) ya da mikrofonun yeniden açılması çalışmaz. Model
+ * releaseNoiseFilter ile bellekten atılır.
+ */
+export function suspendNoiseFilterRetry(): void {
+  inCall = false;
+  session++;
+  clearRetry();
+}
+
 /** Sesli sohbetten ayrılınca: model bellekten atılır */
 export async function releaseNoiseFilter(): Promise<void> {
   running = false;
+  session++;
+  inCall = false;
+  clearRetry();
   useNoiseFilter.setState({ status: null });
   await NoiseFilter?.configure(false, 100).catch(() => undefined);
 }
@@ -154,14 +188,63 @@ export function noiseFilterStats(): NoiseFilterStatus | null {
  * mikrofon standart engellemeyle yeniden açılmalı.
  */
 export function onNoiseFilterBypass(listener: (reason: string) => void): void {
-  NoiseFilter?.addListener('onBypass', ({ reason }) => {
+  NoiseFilter?.addListener('onBypass', ({ reason, retryInMs }) => {
     if (!running) return;
     running = false;
     const status = useNoiseFilter.getState().status;
-    if (status) useNoiseFilter.setState({ status: { ...status, active: false, reason } });
+    if (status) useNoiseFilter.setState({ status: { ...status, active: false, reason, retryInMs } });
     report(reason);
     listener(reason);
+    scheduleRetry(retryInMs);
   });
+}
+
+/**
+ * DPDFNet sesli sohbet sırasında yeniden açıldığında (bekleme süresi doldu, telefon yetişti) çağrılır; çağrıldığında
+ * webrtcNoiseSuppression() artık false döner: mikrofon standart engelleme kapalı yeniden açılmalı.
+ */
+export function onNoiseFilterRecover(listener: () => void): void {
+  recoverListener = listener;
+}
+
+function clearRetry(): void {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+}
+
+/** Bekleme süresi dolunca (sesli sohbetteyse) DPDFNet yeniden denenir; eski APK'larda süre gelmez: denenmez */
+function scheduleRetry(retryInMs: number | null | undefined): void {
+  clearRetry();
+  if (!inCall || retryInMs == null || !(retryInMs >= 0) || retryInMs > MAX_RETRY_WAIT_MS) return;
+  const mine = session;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    void retryNoiseFilter(mine);
+  }, Math.max(retryInMs, 1000));
+}
+
+async function retryNoiseFilter(mine: number): Promise<void> {
+  if (!NoiseFilter || !inCall || mine !== session || running) return;
+  const s = getSettings();
+  if (effectiveNoiseMode(s.noiseMode) !== 'dpdfnet') return;
+  let status: NoiseFilterStatus;
+  try {
+    status = await NoiseFilter.configure(true, s.noiseStrengthDb);
+  } catch (err) {
+    reportClientError(err, 'dpdfnet');
+    return;
+  }
+  // Bu arada ayrılındı ya da yeniden katılındı: ayrılışın/yeni katılışın kendi kurulumu geçerli (yerel modülde
+  // çağrılar sırayla işlenir, sonra gelen kapatma ya da kurulum bunu ezer)
+  if (mine !== session || !inCall) return;
+  useNoiseFilter.setState({ status });
+  if (status.active) {
+    running = true;
+    recoverListener?.();
+  } else {
+    if (status.reason) report(status.reason, status);
+    scheduleRetry(status.retryInMs);
+  }
 }
 
 // Güç ayarı sesli sohbetteyken de anında uygulanır
