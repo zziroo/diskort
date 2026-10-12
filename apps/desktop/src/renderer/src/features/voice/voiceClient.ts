@@ -61,6 +61,7 @@ import {
 } from './micProcessor';
 import { denoiserHealth, ladderFor, type DenoiserFailure, type FailureReason } from './denoiserHealth';
 import { MicSequencer } from './micSequencer';
+import { resolveOutputSink } from './outputSink';
 import {
   EFFECTIVE_NOISE_LABELS,
   fallbackNoticeText,
@@ -212,6 +213,13 @@ class VoiceClient {
   /** Açık bağlantı paneli sayısı; açıkken ayrıntılı istatistikler de toplanır */
   private detailWatchers = 0;
   private pttReleaseTimer: number | null = null;
+  /** Odaya uygulanmış çıkış sink kimliği ('' = sistem varsayılanı) */
+  private appliedSink = '';
+  private sinkErrorReported = false;
+  /** Son applyOutputSink çağrısının sırası; eski çağrının sonucu uygulanmaz */
+  private sinkSeq = 0;
+  private deviceChangeTimer: number | null = null;
+  private unbindDeviceChangeFn: (() => void) | null = null;
   private joinSeq = 0;
   private readonly duplicates = new SpuriousDuplicateGuard();
   /** Sunucunun bildirdiği konuşanlar; yalnızca sesi yerelde ölçülemeyenler için (bkz. remoteSpeaking.ts) */
@@ -312,6 +320,8 @@ class VoiceClient {
       if (seq !== this.joinSeq) return;
 
       const s = getSettings();
+      // Kayıtlı çıkış aygıtı artık yoksa sistem varsayılanı ('' ) kullanılır (setSinkId reddi önlenir)
+      const outputSink = await resolveOutputSink(s.outputDeviceId);
       const room = new Room({
         // İzlenen yayının katmanı izleme öğesinin boyutuna göre seçilir (görünmeyen yayın sunucuda durur). Piksel
         // yoğunluğu 2: öğe boyutunun iki katı istenir, böylece sahnede/tam ekranda (ızgarada da çoğunlukla) üst
@@ -320,12 +330,14 @@ class VoiceClient {
         adaptiveStream: { pixelDensity: 2 },
         dynacast: true,
         webAudioMix: true,
-        audioOutput: { deviceId: s.outputDeviceId },
+        audioOutput: { deviceId: outputSink },
         publishDefaults: { dtx: true, red: true, stopMicTrackOnMute: false },
         disconnectOnPageLeave: true,
       });
       this.room = room;
       this.bindRoom(room);
+      this.appliedSink = outputSink;
+      this.bindDeviceChange();
       // Bağlanırken gelen katılımcı/yayın olayları ses çıkarmaz (süre bağlanınca kısaltılır)
       this.channelSounds.quiet(60_000);
 
@@ -382,6 +394,51 @@ class VoiceClient {
     setVoice({ error: null });
   }
 
+  /** Çıkış aygıtını çözümleyip odaya uygular; hata türü bir kez kaydedilir (DOMException adı görünsün) */
+  private async applyOutputSink(deviceId: string): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    const seq = ++this.sinkSeq;
+    const sink = await resolveOutputSink(deviceId);
+    if (this.room !== room || seq !== this.sinkSeq) return;
+    try {
+      await room.switchActiveDevice('audiooutput', sink);
+      // Yalnız başarıda atanır: başarısız denemeler sonraki devicechange'te yeniden denenir
+      if (this.room === room && seq === this.sinkSeq) this.appliedSink = sink;
+    } catch (err: unknown) {
+      if (this.sinkErrorReported) return;
+      this.sinkErrorReported = true;
+      const e = err as { name?: string; message?: string } | null;
+      reportClientError(new Error(`çıkış aygıtı ayarlanamadı: ${e?.name ?? 'Error'}: ${e?.message ?? String(err)}`), 'ses');
+    }
+  }
+
+  /** Aygıt takılıp çıkınca: seçili çıkış kaybolduysa varsayılana, geri geldiyse ona geçer (ayar silinmez) */
+  private bindDeviceChange(): void {
+    this.unbindDeviceChange();
+    const md = navigator.mediaDevices;
+    if (!md?.addEventListener) return;
+    const handler = (): void => {
+      if (this.deviceChangeTimer !== null) window.clearTimeout(this.deviceChangeTimer);
+      this.deviceChangeTimer = window.setTimeout(() => {
+        this.deviceChangeTimer = null;
+        void (async () => {
+          const wanted = await resolveOutputSink(getSettings().outputDeviceId);
+          if (wanted !== this.appliedSink) await this.applyOutputSink(getSettings().outputDeviceId);
+        })();
+      }, 300);
+    };
+    md.addEventListener('devicechange', handler);
+    this.unbindDeviceChangeFn = () => md.removeEventListener('devicechange', handler);
+  }
+
+  private unbindDeviceChange(): void {
+    this.unbindDeviceChangeFn?.();
+    this.unbindDeviceChangeFn = null;
+    if (this.deviceChangeTimer !== null) window.clearTimeout(this.deviceChangeTimer);
+    this.deviceChangeTimer = null;
+  }
+
   private async teardownRoom(): Promise<void> {
     this.channelSounds.cancel();
     this.clearReconnectTimer();
@@ -398,6 +455,9 @@ class VoiceClient {
     setConnectionStats(EMPTY_CONNECTION_STATS);
     if (this.pttReleaseTimer !== null) window.clearTimeout(this.pttReleaseTimer);
     this.pttReleaseTimer = null;
+    this.unbindDeviceChange();
+    this.sinkErrorReported = false;
+    this.sinkSeq++;
     const room = this.room;
     this.room = null;
     await this.stopScreenShareInternal(room, false);
@@ -976,7 +1036,7 @@ class VoiceClient {
     if (next.noiseStrengthDb !== prev.noiseStrengthDb) this.processor?.setAttenLimit(next.noiseStrengthDb);
     if (next.inputVolume !== prev.inputVolume) this.processor?.setInputGain(next.inputVolume);
     if (next.outputDeviceId !== prev.outputDeviceId) {
-      void this.room?.switchActiveDevice('audiooutput', next.outputDeviceId).catch(() => undefined);
+      void this.applyOutputSink(next.outputDeviceId);
     }
     if (
       next.inputDeviceId !== prev.inputDeviceId ||

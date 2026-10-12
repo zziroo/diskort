@@ -5,7 +5,13 @@ function describe(context: unknown): string {
   if (context === undefined) return '';
   let text: string;
   try {
-    text = typeof context === 'string' ? context : JSON.stringify(context);
+    // Error/DOMException JSON'da `{}` olur; tür ve ileti açıkça yazılır
+    text =
+      typeof context === 'string'
+        ? context
+        : context instanceof Error
+          ? `${context.name}: ${context.message}`
+          : JSON.stringify(context);
   } catch {
     text = String(context);
   }

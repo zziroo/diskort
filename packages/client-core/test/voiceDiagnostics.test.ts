@@ -44,4 +44,10 @@ describe('LiveKit uyarılarının bildirimi', () => {
     expect(reported.map((r) => r.message)).toEqual(['ping timeout triggered', 'could not publish track']);
     expect(reported.every((r) => r.where === 'livekit')).toBe(true);
   });
+
+  it('Error/DOMException bağlamı tür ve iletiyle yazılır ({} değil)', () => {
+    reported.length = 0;
+    reportVoiceLog(4, 3, 'Failed to set sink id', new DOMException('aygıt yok', 'NotFoundError'), true);
+    expect(reported[0]?.message).toBe('Failed to set sink id NotFoundError: aygıt yok');
+  });
 });

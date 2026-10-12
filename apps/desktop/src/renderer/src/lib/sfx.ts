@@ -15,6 +15,7 @@ import {
   type SoundName,
 } from '@diskort/client-core';
 import { getSettings, useSettings } from '../stores/settings';
+import { resolveOutputSink } from '../features/voice/outputSink';
 
 export type { SoundName } from '@diskort/client-core';
 
@@ -36,18 +37,29 @@ export function sharedAudioContext(): AudioContext {
   return ctx;
 }
 
-const wantedSink = (): string => {
-  const id = getSettings().outputDeviceId;
-  return id === 'default' ? '' : id;
-};
 
-/** Seçili çıkış aygıtını bağlama uygular; değişim sürerken çalınan sesler onu bekler */
+/** Her uygulama isteğinde artar; çözümleme bitince eski isteklerin sonucu atılır */
+let sinkGen = 0;
+let sinkStarted = false;
+
+/**
+ * Seçili çıkış aygıtını bağlama uygular. Zincirler sıraya dizilir (setSinkId'ler üst üste binmez), ayar
+ * çözümleme anında okunur, eski istek sonucu atılır. Çalınan sesler bekleyen değişimi bekler.
+ */
 function applySink(ac: SinkContext): void {
-  const sink = wantedSink();
-  if (sink === appliedSink || !ac.setSinkId) return;
-  appliedSink = sink;
-  const change = ac
-    .setSinkId(sink)
+  if (!ac.setSinkId) return;
+  const gen = ++sinkGen;
+  const prev = sinkChange ?? Promise.resolve();
+  const change: Promise<void> = prev
+    .then(() => resolveOutputSink(getSettings().outputDeviceId))
+    .then(async (sink) => {
+      if (gen !== sinkGen || sink === appliedSink) return;
+      const before = appliedSink;
+      appliedSink = sink;
+      await ac.setSinkId?.(sink).catch(() => {
+        appliedSink = before;
+      });
+    })
     .catch(() => undefined)
     .finally(() => {
       if (sinkChange === change) sinkChange = null;
@@ -57,7 +69,11 @@ function applySink(ac: SinkContext): void {
 
 async function ready(): Promise<AudioContext> {
   const ac = sharedAudioContext() as SinkContext;
-  applySink(ac);
+  // Çözümleme yalnız ilk kullanımda, ayar değişince ve aygıt takılıp çıkınca yapılır (her seste değil)
+  if (!sinkStarted) {
+    sinkStarted = true;
+    applySink(ac);
+  }
   if (sinkChange) await sinkChange;
   if (ac.state === 'suspended') await ac.resume().catch(() => undefined);
   return ac;
@@ -90,6 +106,18 @@ export function prepareSounds(): void {
 useSettings.subscribe((next, prev) => {
   if (ctx && next.outputDeviceId !== prev.outputDeviceId) applySink(ctx);
 });
+
+// Aygıt takılıp çıkınca (modül ömrü boyunca tek dinleyici, 300 ms debounce) çıkış yeniden çözülür
+let deviceChangeTimer: number | null = null;
+if (typeof navigator !== 'undefined') {
+  navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+    if (deviceChangeTimer !== null) window.clearTimeout(deviceChangeTimer);
+    deviceChangeTimer = window.setTimeout(() => {
+      deviceChangeTimer = null;
+      if (ctx) applySink(ctx);
+    }, 300);
+  });
+}
 
 function selfDeafened(): boolean {
   const s = getSettings();
