@@ -358,7 +358,7 @@ export function VoiceSettings() {
           label="Otomatik kazanç kontrolü"
           description={
             s.noise === 'dpdfnet'
-              ? 'Ses seviyeni otomatik olarak dengeler. Gelişmiş yapay zekâ çalışırken kapalı tutulur; standart engellemeye geçilirse yeniden devreye girer.'
+              ? 'Ses seviyeni otomatik olarak dengeler. Gelişmiş yapay zekâ çalışırken mikrofonun sistem seviyesine dokunmayan yazılımsal kazanç kullanılır; standart engellemede tarayıcının kazanç kontrolü çalışır.'
               : 'Ses seviyeni otomatik olarak dengeler.'
           }
           checked={s.autoGainControl}

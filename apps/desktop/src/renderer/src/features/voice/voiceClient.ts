@@ -150,6 +150,8 @@ const LIVEKIT_RESTART_WAIT_MS = 3000;
 const REUPGRADE_MIN_DELAY_MS = 5000;
 /** Kendiliğinden yeniden kurulumda mikrofon açılamadıysa bir kez daha denemeden önce */
 const AUTO_REBUILD_RETRY_MS = 2000;
+/** Konuşma seviyesi bildirmek için en az ölçüm: worklet 128 örneklik (~2,67 ms) blok başına bir sayar → ~1 sn konuşma */
+const SPEECH_MIN_BLOCKS = 375;
 
 /** "Katıldın" sesi mikrofonun hazır olmasını en çok bu kadar bekler */
 const JOIN_SOUND_MAX_WAIT_MS = 1500;
@@ -516,6 +518,8 @@ class VoiceClient {
   private telemetryContext(): TelemetryContext {
     const v = useVoice.getState();
     const stats = this.processor?.stats ?? null;
+    // Özet başına bir kez çağrılır: bu aralıktaki konuşma seviyesi alınıp sıfırlanır
+    const speech = this.processor?.takeSpeechLevel(SPEECH_MIN_BLOCKS) ?? null;
     const f = v.noiseFallback;
     return {
       channelId: v.status === 'idle' ? null : v.channelId,
@@ -535,6 +539,13 @@ class VoiceClient {
             fallback: f
               ? { from: f.from, to: f.to, reason: f.reason, transient: f.transient, at: f.at, retryAt: f.retryAt }
               : null,
+            speechRmsDb: speech?.pre?.median ?? null,
+            speechRmsDbP90: speech?.pre?.p90 ?? null,
+            speechRmsDbOut: speech?.out?.median ?? null,
+            speechRmsDbOutP90: speech?.out?.p90 ?? null,
+            // Ayar (settings.autoGainControl) değil, gerçekte çalışan: model istendiğinde tarayıcı AGC'si kapalı
+            effectiveAgc: getSettings().autoGainControl && !this.processor?.requested,
+            digitalAgc: this.processor?.digitalAgc ?? false,
           }
         : null,
       settings: this.telemetrySettings(),
@@ -573,6 +584,8 @@ class VoiceClient {
       auto: s.vadAuto,
       threshold: s.vadThresholdDb,
       ptt: useVoice.getState().pttActive,
+      // Ayar; yazılımsal kazanç yalnızca tarayıcı AGC'si kapalıyken (model istendiğinde) çalışır (MicProcessor)
+      agc: s.autoGainControl,
     };
   }
 
@@ -1028,7 +1041,8 @@ class VoiceClient {
     if (
       next.inputMode !== prev.inputMode ||
       next.vadAuto !== prev.vadAuto ||
-      next.vadThresholdDb !== prev.vadThresholdDb
+      next.vadThresholdDb !== prev.vadThresholdDb ||
+      next.autoGainControl !== prev.autoGainControl
     ) {
       if (next.inputMode !== 'ptt') this.applyPtt(false);
       this.processor?.updateGate(this.gateConfig());
@@ -1042,7 +1056,8 @@ class VoiceClient {
       next.inputDeviceId !== prev.inputDeviceId ||
       next.noise !== prev.noise ||
       next.echoCancellation !== prev.echoCancellation ||
-      // Model çalışırken otomatik kazanç zaten kapalı; değiştirmek mikrofonu boşuna yeniden kurmasın
+      // Model çalışırken tarayıcı AGC'si zaten kapalı (yerine ses kapısındaki yazılımsal kazanç çalışır, yukarıda
+      // updateGate ile açılıp kapanır); değiştirmek mikrofonu boşuna yeniden kurmasın
       (next.autoGainControl !== prev.autoGainControl && !this.processor?.activeDenoiser) ||
       next.audioBitrateKbps !== prev.audioBitrateKbps
     ) {

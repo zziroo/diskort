@@ -936,6 +936,25 @@ function micText(mic) {
   return `${mic.muted ? 'Kapalı · ' : ''}${name}${load}`;
 }
 
+/** Konuşma seviyesi (dBFS medyanı; kazanç öncesi → gönderilen) ve gerçekte çalışan otomatik kazanç */
+function speechText(mic) {
+  if (!mic) return null;
+  const has = (v) => v !== null && v !== undefined;
+  const pre = has(mic.speechRmsDb) ? dec(mic.speechRmsDb, 1) : null;
+  const out = has(mic.speechRmsDbOut) ? dec(mic.speechRmsDbOut, 1) : null;
+  const agc =
+    mic.digitalAgc === true ? 'yazılımsal kazanç' : mic.effectiveAgc === true ? 'tarayıcı kazancı' : mic.effectiveAgc === false ? 'kazanç yok' : '';
+  if (!pre && !out && !agc) return null;
+  const level = pre && out && pre !== out ? `${pre} → ${out} dBFS` : pre || out ? `${out ?? pre} dBFS` : '';
+  const p90 = has(mic.speechRmsDbOutP90) ? `p90 ${dec(mic.speechRmsDbOutP90, 1)}` : '';
+  return [level, p90, agc].filter(Boolean).join(' · ');
+}
+/** Gönderilen konuşma seviyesi çok kısık ya da çok yüksekse uyarı */
+const speechTone = (mic) => {
+  const v = mic?.speechRmsDbOut ?? mic?.speechRmsDb;
+  return v === null || v === undefined ? undefined : v < -35 || v > -10 ? 'warn' : undefined;
+};
+
 function screenText(s) {
   if (!s) return null;
   const size = s.width && s.height ? `${s.width}×${s.height}` : '';
@@ -1007,6 +1026,7 @@ function metricsOf(q) {
     metric('Bit hızı ↑ / ↓', `${bits(q.bitrateOut)} / ${bits(q.bitrateIn)}`),
     metric('Bağlantı yolu', routeText(q.candidate, q.protocol), q.candidate === 'relay' ? 'warn' : undefined),
     metric('Mikrofon', micText(q.mic), toneOf(q.mic?.load, 0.6, 0.8)),
+    speechText(q.mic) && metric('Konuşma seviyesi', speechText(q.mic), speechTone(q.mic)),
     q.screen && metric('Yayın', screenText(q.screen)),
     q.screen &&
       q.screen.limitation !== 'none' &&

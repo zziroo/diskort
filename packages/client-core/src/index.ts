@@ -33,6 +33,7 @@ export {
   type FeedbackDraft,
 } from './feedback';
 export { reportVoiceLog, SpuriousDuplicateGuard } from './voiceDiagnostics';
+export { SpeechLevelHistogram, type SpeechLevelSummary } from './speechLevel';
 export {
   fetchStreamPreview,
   formatStreamElapsed,

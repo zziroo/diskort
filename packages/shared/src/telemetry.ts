@@ -43,6 +43,20 @@ export interface TelemetryMic {
   effectiveNoise?: string | null;
   /** Masaüstü: seçili modelden düşüş (hangi modelden hangisine, neden, ne zaman); düşüş yoksa null */
   fallback?: TelemetryNoiseFallback | null;
+  /**
+   * Konuşma seviyesi (dBFS, bu aralıkta konuşulan anların RMS'i): medyan ve 90. yüzdelik. speechRmsDb kazanç
+   * öncesi (masaüstü: gürültü modeli + giriş seviyesi sonrası, yazılımsal AGC öncesi); speechRmsDbOut gönderilen
+   * (masaüstü: AGC + sınırlayıcı sonrası; telefon: WebRTC işlemesi sonrası, kodlayıcıya giden). Yeterli konuşma
+   * yoksa null.
+   */
+  speechRmsDb?: number | null;
+  speechRmsDbP90?: number | null;
+  speechRmsDbOut?: number | null;
+  speechRmsDbOutP90?: number | null;
+  /** Masaüstü: tarayıcının (WebRTC) otomatik kazancı gerçekten açık mı (ayar açık olsa da model çalışırken kapalı) */
+  effectiveAgc?: boolean | null;
+  /** Masaüstü: yazılımsal otomatik kazanç (ses kapısında, model çalışırken AGC yerine) çalışıyor mu */
+  digitalAgc?: boolean | null;
 }
 
 /** Masaüstünde gürültü engelleyicinin bir alt seçeneğe düşmesi */

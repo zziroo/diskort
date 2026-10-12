@@ -7,6 +7,12 @@ import { createRateLimiter } from './messages.js';
 /** Aralık dışı ölçüm tüm özeti düşürmez: 0–max'a sıkıştırılır (gövde zaten 8 KB ile sınırlı) */
 const clamp = (max: number) => (v: number): number => Math.min(max, Math.max(0, v));
 const num = (max: number) => z.number().finite().transform(clamp(max)).nullable();
+/** dBFS seviye: -200..0'a sıkıştırılır */
+const dbfs = z
+  .number()
+  .finite()
+  .transform((v) => Math.min(0, Math.max(-200, v)))
+  .nullable();
 /** Uzun metin reddedilmez, kısaltılır */
 const text = (max: number) =>
   z
@@ -63,6 +69,12 @@ const reportSchema = z.object({
         })
         .nullable()
         .optional(),
+      speechRmsDb: dbfs.optional(),
+      speechRmsDbP90: dbfs.optional(),
+      speechRmsDbOut: dbfs.optional(),
+      speechRmsDbOutP90: dbfs.optional(),
+      effectiveAgc: z.boolean().nullable().optional(),
+      digitalAgc: z.boolean().nullable().optional(),
     })
     .nullable(),
   screen: z

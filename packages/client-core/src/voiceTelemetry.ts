@@ -613,8 +613,9 @@ export class VoiceTelemetry {
     const w = this.win;
     // Takılma ölçümleri her aralıkta okunur (gönderilmese de): sonraki özete kalmasın
     const jsLag = this.lag.take();
-    if (w.samples === 0) return;
+    // context() konuşma seviyesi histogramını da alıp sıfırlar: örnek yoksa bile çağrılır ki sayımlar sonraki özete taşınmasın
     const ctx = this.context();
+    if (w.samples === 0) return;
     if (!ctx.channelId) return;
     const { platform, version } = env();
     const last = w.screenLast;

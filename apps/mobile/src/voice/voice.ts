@@ -529,6 +529,11 @@ class MobileVoiceClient {
     return this.gate.watchLevel();
   }
 
+  /** Ses kalitesi özeti için: son alımdan beri gönderilen konuşma seviyesi (dBFS) */
+  takeSpeechLevel(): ReturnType<MicGate['takeSpeechLevel']> {
+    return this.gate.takeSpeechLevel();
+  }
+
   /**
    * Telefonun ekranını paylaşır / durdurur. Android her seferinde "ekranın kaydedilecek" onayı ister;
    * paylaşım bildirimden ya da sistemden durdurulursa durum kendiliğinden güncellenir.

@@ -173,6 +173,8 @@ function telemetryContext(): TelemetryContext {
   const s = getSettings();
   const noise = effectiveNoiseMode();
   const ns = noise === 'dpdfnet' ? noiseFilterStats() : null;
+  // Özet başına bir kez çağrılır: bu aralıktaki konuşma seviyesi alınıp sıfırlanır
+  const speech = voice.takeSpeechLevel();
   return {
     channelId: v.status === 'idle' ? null : v.channelId,
     mic: {
@@ -190,6 +192,13 @@ function telemetryContext(): TelemetryContext {
       core: ns?.audioCore ?? null,
       // DPDFNet seçili ama çalışmıyorsa nedeni (yetişemedi, ısındı…)
       noiseFallback: noiseFallbackReason(ns),
+      // Telefonda ölçülen tek seviye WebRTC işlemesi (AGC dahil) sonrasıdır: gönderilen (Out)
+      speechRmsDb: null,
+      speechRmsDbOut: speech?.median ?? null,
+      speechRmsDbOutP90: speech?.p90 ?? null,
+      // Telefonda yakalama ayarı doğrudan WebRTC'ye gider (bkz. voice.ts captureOptions); yazılımsal kazanç yok
+      effectiveAgc: s.autoGainControl,
+      digitalAgc: false,
     },
     view: v.watching ? streamView : null,
     device: { appState: AppState.currentState ?? null, soc: deviceSoc(), ...deviceThermal() },

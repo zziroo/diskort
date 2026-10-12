@@ -10,6 +10,7 @@ import { createRing, HOP } from './denoise/ring';
 import type { EngineInit, HostMessage, HostStats } from './denoise/engine';
 import type { WorkerInit } from './denoise/denoise.worker';
 import type { MicLevel } from '../../stores/voice';
+import { SpeechLevelHistogram, type SpeechLevelSummary } from '@diskort/client-core';
 import {
   classifySetupError,
   denoiserHealth,
@@ -27,7 +28,22 @@ export interface GateConfig {
   auto: boolean;
   threshold: number;
   ptt: boolean;
+  /**
+   * Kullanıcının otomatik kazanç ayarı. Ses kapısındaki yazılımsal kazanç yalnızca model istendiğinde (o zaman
+   * tarayıcının AGC'si kapalı yakalanır, bkz. voiceClient.captureOptions) çalışır; standart yolda tarayıcının
+   * AGC'si çalıştığı için yazılımsal kazanç kapalı kalır (ikisi birlikte çalışmaz).
+   */
+  agc: boolean;
 }
+
+/** Konuşma seviyesi özeti (ses kalitesi telemetrisi): kazanç öncesi ve gönderilen */
+export interface MicSpeechLevel {
+  pre: SpeechLevelSummary | null;
+  out: SpeechLevelSummary | null;
+}
+
+/** Ses kapısı worklet'inden gelen iletiler: seviye (~20 Hz) ya da konuşma seviyesi dağılımı (~1 Hz) */
+type GateMessage = MicLevel | { type: 'speech'; pre: number[]; post: number[] };
 
 interface DenoiserSpec {
   name: string;
@@ -176,8 +192,8 @@ export async function firstAvailableDenoiser(ladder: readonly Denoiser[]): Promi
 }
 
 /**
- * Mikrofon işleme zinciri: [köprü ⇄ model: DPDFNet] → giriş seviyesi → tepe sınırlayıcı + ses kapısı (VAD /
- * bas-konuş; ikisi de gate-worklet.js'te) → LiveKit. Modelli ve standart yol aynıdır; mikrofon testi de bunu kullanır.
+ * Mikrofon işleme zinciri: [köprü ⇄ model: DPDFNet] → giriş seviyesi → [yazılımsal otomatik kazanç, model
+ * istendiğinde] → tepe sınırlayıcı + ses kapısı (VAD / bas-konuş; üçü de gate-worklet.js'te) → LiveKit. Modelli ve standart yol aynıdır; mikrofon testi de bunu kullanır.
  * Gürültü engelleyici mikrofonun ses iş parçacığında çalışmaz: oradaki köprü (bridge-worklet.js) yalnızca
  * paylaşımlı halka tamponlara örnek kopyalar. Model, ayrı ve sessiz ikinci bir AudioContext'in gerçek zamanlı
  * ses iş parçacığında (compute.worklet.ts) çalışır; o kurulamazsa bir Web Worker'da (denoise.worker.ts).
@@ -217,6 +233,9 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   private lastLevelAt = 0;
   private maxLevelGapMs = 0;
   private denoiser: Denoiser | null;
+  /** Konuşma seviyesi dağılımı (zincir yeniden kurulsa da birikir; takeSpeechLevel ile alınır) */
+  private speechPre = new SpeechLevelHistogram();
+  private speechOut = new SpeechLevelHistogram();
 
   constructor(
     private gateConfig: GateConfig,
@@ -279,7 +298,25 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
 
   updateGate(patch: Partial<GateConfig>): void {
     this.gateConfig = { ...this.gateConfig, ...patch };
-    this.gate?.port.postMessage(patch);
+    this.gate?.port.postMessage(this.workletConfig(patch));
+  }
+
+  /**
+   * Ses kapısındaki yazılımsal otomatik kazanç çalışıyor mu: ayar açık ve tarayıcının AGC'si kapalı yakalandı
+   * (model istendi). Model sonradan düşse de bu izde tarayıcı AGC'si kapalı kalır; kazanç sürer.
+   */
+  get digitalAgc(): boolean {
+    return this.gateConfig.agc && this.requested !== null;
+  }
+
+  /** Son alımdan beri konuşma seviyesi (medyan, 90. yüzdelik) ve sıfırlama */
+  takeSpeechLevel(minCount: number): MicSpeechLevel {
+    return { pre: this.speechPre.take(minCount), out: this.speechOut.take(minCount) };
+  }
+
+  /** Worklet'e giden yapılandırma: agc, ayar yerine gerçekte çalışacak yazılımsal kazançtır */
+  private workletConfig(patch: Partial<GateConfig>): Partial<GateConfig> {
+    return 'agc' in patch ? { ...patch, agc: this.digitalAgc } : patch;
   }
 
   /**
@@ -344,9 +381,14 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
       numberOfOutputs: 1,
       outputChannelCount: [1],
     });
-    this.gate.port.postMessage(this.gateConfig);
+    this.gate.port.postMessage(this.workletConfig(this.gateConfig));
     this.lastLevelAt = 0;
-    this.gate.port.onmessage = (e: MessageEvent<MicLevel>) => {
+    this.gate.port.onmessage = (e: MessageEvent<GateMessage>) => {
+      if ('type' in e.data) {
+        this.speechPre.addCounts(e.data.pre);
+        this.speechOut.addCounts(e.data.post);
+        return;
+      }
       // Seviye ~20 Hz gelir; araya uzun boşluk girdiyse ana iş parçacığı (ya da sistem) takılmıştır
       const now = performance.now();
       if (this.lastLevelAt) this.maxLevelGapMs = Math.max(this.maxLevelGapMs, now - this.lastLevelAt);

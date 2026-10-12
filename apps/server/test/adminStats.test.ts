@@ -238,6 +238,13 @@ describe('ses kalitesi ölçümleri', () => {
         // Masaüstü: gerçekte çalışan engelleme ve düşüş ayrıntısı
         effectiveNoise: 'deepfilter',
         fallback: { from: 'dpdfnet', to: 'deepfilter', reason: 'underrun', transient: true, at: 1_790_000_000_000, retryAt: 1_790_000_300_000 },
+        // Konuşma seviyesi (dBFS) ve gerçekte çalışan otomatik kazanç
+        speechRmsDb: -36.25,
+        speechRmsDbP90: -30.75,
+        speechRmsDbOut: -20.25,
+        speechRmsDbOutP90: -15.75,
+        effectiveAgc: false,
+        digitalAgc: true,
       },
       screen: { width: 1920, height: 1080, fps: 60, bitrate: 8e6, encoder: 'libvpx', codec: 'video/VP9', limitation: 'cpu', limitedRatio: 0.4, encodeMs: 9.5, hardware: false },
       watch,
@@ -251,7 +258,17 @@ describe('ses kalitesi ölçümleri', () => {
     expect((await send({ ...report(), watch: null, device: null })).statusCode).toBe(204);
     // Aralık dışı sayılar sıkıştırılır, uzun metin kısaltılır (özet düşmez); geçersiz tür/değer reddedilir
     const long = 'x'.repeat(500);
-    expect((await send({ ...report(), lossInPct: 900, watch: { ...watch, decodeMs: -1, width: 99_999, decoder: long } })).statusCode).toBe(204);
+    expect(
+      (
+        await send({
+          ...report(),
+          lossInPct: 900,
+          watch: { ...watch, decodeMs: -1, width: 99_999, decoder: long },
+          mic: { ...report().mic!, speechRmsDb: 12, speechRmsDbOut: -500 },
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect((await send({ ...report(), mic: { ...report().mic!, speechRmsDb: 'kısık' } })).statusCode).toBe(400);
     expect((await send({ ...report(), watch: { ...watch, view: { mode: 'yan', width: 1, height: 1 } } })).statusCode).toBe(400);
     expect((await send({ ...report(), watch: { ...watch, decodeMs: 'yavaş' } })).statusCode).toBe(400);
     expect(
@@ -269,6 +286,12 @@ describe('ses kalitesi ölçümleri', () => {
       noiseFallback: 'yavaş: kare başına 6,3 ms',
       effectiveNoise: 'deepfilter',
       fallback: { from: 'dpdfnet', to: 'deepfilter', reason: 'underrun', transient: true, retryAt: 1_790_000_300_000 },
+      speechRmsDb: -36.25,
+      speechRmsDbP90: -30.75,
+      speechRmsDbOut: -20.25,
+      speechRmsDbOutP90: -15.75,
+      effectiveAgc: false,
+      digitalAgc: true,
     });
     expect(first.screen).toMatchObject({ encodeMs: 9.5, hardware: false });
     expect(JSON.stringify(first)).not.toContain('gelecek');
@@ -277,6 +300,7 @@ describe('ses kalitesi ölçümleri', () => {
     expect(clamped.lossIn).toBe(100);
     expect(clamped.watch).toMatchObject({ decodeMs: 0, width: 20_000 });
     expect(clamped.watch!.decoder).toHaveLength(80);
+    expect(clamped.mic).toMatchObject({ speechRmsDb: 0, speechRmsDbOut: -200 });
 
     // Günlük JSONL dosyasında da
     await s.ctx.telemetry.flush();

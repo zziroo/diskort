@@ -1,5 +1,6 @@
 import { AppState } from 'react-native';
 import { type LocalAudioTrack, type Room, Track } from 'livekit-client';
+import { SpeechLevelHistogram, type SpeechLevelSummary } from '@diskort/client-core';
 
 export interface GateConfig {
   /** Ses algılama açık mı (kapalıyken mikrofon hep açıktır, yalnızca seviye ölçülebilir) */
@@ -30,6 +31,8 @@ const RELEASE_MS = 350;
 const HYSTERESIS_DB = 4;
 /** Bu süre ölçüm alınamazsa kapı açılır: ölçemediğimiz sesi asla kesmeyiz */
 const STALE_MS = 400;
+/** Konuşma seviyesi bildirmek için en az ölçüm: ~90 ms yoklamada ~11 ölçüm ≈ 1 sn konuşma */
+const SPEECH_MIN_COUNT = 11;
 /** Kapı kapalıyken ölçüm bu kadar süre tam sessizlik (dijital sıfır) gösterirse ölçüm kör sayılır */
 const BLIND_MS = 3000;
 
@@ -69,6 +72,12 @@ export class MicGate {
   private silentSince = 0;
   private open = true;
   private lastReported: MicLevel = SILENT_LEVEL;
+  /**
+   * Konuşma seviyesi dağılımı (ses kalitesi telemetrisi): eşik üstü ölçümler. Ölçüm WebRTC işlemesinden (AGC,
+   * gürültü engelleme) sonraki, kodlayıcıya giden sestir. Yalnızca ölçüm sürerken (ses algılama açık ya da
+   * gösterge açık) dolar.
+   */
+  private speech = new SpeechLevelHistogram();
 
   constructor(private readonly onLevel: (level: MicLevel) => void) {
     AppState.addEventListener('change', (state) => {
@@ -218,7 +227,13 @@ export class MicGate {
     }
 
     this.setOpen(track, open);
+    if (db >= threshold) this.speech.add(db);
     this.report({ db, threshold, open });
+  }
+
+  /** Son alımdan beri konuşma seviyesi (medyan, 90. yüzdelik; yetersizse null) ve sıfırlama */
+  takeSpeechLevel(): SpeechLevelSummary | null {
+    return this.speech.take(SPEECH_MIN_COUNT);
   }
 
   /** İstatistikten dBFS seviye: iki ölçüm arasındaki enerji (ortalama kare), yoksa anlık seviye */
