@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { avatarUrl, streamPreviewHeaders, streamPreviewUrl, useChannelMemberColor, useGuild } from '@diskort/client-core';
@@ -56,6 +56,9 @@ function TileFrame({
   children: ReactNode;
 }) {
   const appear = useAppear(true, 260);
+  // Render içinde interpolate() her çizimde yeni Animated düğümü yaratıp Android'de OOM'a yol
+  // açıyordu; düğüm yalnız appear değişince oluşturulur.
+  const scale = useMemo(() => appear.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }), [appear]);
   return (
     <Animated.View
       style={[
@@ -65,7 +68,7 @@ function TileFrame({
           width,
           height,
           opacity: appear,
-          transform: [{ scale: appear.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }) }],
+          transform: [{ scale }],
         },
       ]}
     >

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -52,6 +52,9 @@ function VoiceBarInner({ bottomInset, onSettings }: { bottomInset: number; onSet
   // Konuşma izni yoksa (yetki ya da sunucuda susturma) mikrofon kapalı görünür
   const micAllowed = useVoice((s) => s.micAllowed);
   const appear = useAppear(true, 220);
+  // Render içinde interpolate() her çizimde yeni Animated düğümü yaratıp Android'de OOM'a yol
+  // açıyordu; düğüm yalnız appear değişince oluşturulur.
+  const translateY = useMemo(() => appear.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }), [appear]);
   const connected = status === 'connected';
   const muted = selfMute || selfDeaf || !micAllowed;
   const level = useVoiceLevel();
@@ -64,7 +67,7 @@ function VoiceBarInner({ bottomInset, onSettings }: { bottomInset: number; onSet
       style={[
         styles.wrap,
         { paddingBottom: bottomInset },
-        { opacity: appear, transform: [{ translateY: appear.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] },
+        { opacity: appear, transform: [{ translateY }] },
       ]}
     >
       <View style={styles.bar}>

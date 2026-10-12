@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Animated, Easing, View } from 'react-native';
 import { prefersReducedMotion, timing } from '../motion';
 import { colors } from '../theme';
@@ -36,6 +36,16 @@ export function SpeakingRing({
     return () => loop.stop();
   }, [speaking, shown, pulse]);
 
+  // Her çizimde yeni Animated düğümü yaratmak Android'de yerel düğüm yöneticisini şişirip OOM'a
+  // yol açıyordu; türetilmiş düğümler yalnız shown/pulse değişince bir kez oluşturulur.
+  const waveStyle = useMemo(
+    () => ({
+      opacity: Animated.multiply(shown, pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] })),
+      transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] }) }],
+    }),
+    [shown, pulse],
+  );
+
   const ring = {
     position: 'absolute' as const,
     top: -(width + gap),
@@ -54,10 +64,7 @@ export function SpeakingRing({
         pointerEvents="none"
         style={[
           ring,
-          {
-            opacity: Animated.multiply(shown, pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] })),
-            transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] }) }],
-          },
+          waveStyle,
         ]}
       />
       <Animated.View pointerEvents="none" style={[ring, { opacity: shown }]} />
