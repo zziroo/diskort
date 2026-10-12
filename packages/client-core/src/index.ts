@@ -252,6 +252,8 @@ export {
   discardMessage,
   editMessage,
   isMentioned,
+  memberRoleIdsIn,
+  withRoleNames,
   loadInitial,
   loadOlder,
   mentions,
@@ -292,11 +294,16 @@ export {
 export {
   BROADCAST_MENTIONS,
   broadcastSuggestions,
+  decodeRoleMentions,
+  encodeRoleMentions,
+  typableRoles,
   focusComposer,
   hasComposer,
   insertText,
   mentionInComposer,
   registerComposer,
+  roleMentionText,
+  roleSuggestions,
   type BroadcastMention,
   type ComposerHandle,
 } from './composer';
@@ -388,6 +395,7 @@ export {
 } from './gifs';
 export {
   broadcastMention,
+  DELETED_ROLE_LABEL,
   parseInline,
   parseMarkdown,
   plainText,

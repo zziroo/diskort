@@ -219,12 +219,20 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
     () => Object.values(users).map((u) => `${u.username}:${u.id}:${u.displayName}`).join('|'),
     [users],
   );
+  // Rol etiketleri yalnızca sunucu kanalında (direkt mesajda rol yoktur); kendi rollerimiz anahtar olarak
+  const roles = useGuild((s) => s.roles);
+  const selfRolesKey = useGuild((s) => (self && !dm ? (s.users[self.id]?.roles.join(',') ?? '') : ''));
   const md: MarkdownContext = useMemo(
-    () => ({ usersByName: Object.fromEntries(Object.values(users).map((u) => [u.username, u])), selfId: self?.id }),
+    () => ({
+      usersByName: Object.fromEntries(Object.values(users).map((u) => [u.username, u])),
+      selfId: self?.id,
+      roles: dm ? undefined : roles,
+      selfRoleIds: dm || !selfRolesKey ? undefined : selfRolesKey.split(','),
+    }),
     // usersByNameKey değişmediği sürece `users`'ın içeriği bahsetmeler için aynıdır (yalnızca ilgisiz
     // alanlar değişmiştir); en güncel `users` yine de kapanışta okunur.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [usersByNameKey, self?.id],
+    [usersByNameKey, self?.id, roles, selfRolesKey, Boolean(dm)],
   );
 
   // Ters liste: en yeni mesaj en altta (indeks 0). Gruplama ve ayraçlar burada bir kez hesaplanır;

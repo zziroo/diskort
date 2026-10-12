@@ -11,15 +11,19 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { AtSign, CirclePlus, Lock, X } from 'lucide-react';
-import { MESSAGE_MAX_LENGTH, Permission, type Channel, type User } from '@diskort/shared';
+import { MESSAGE_MAX_LENGTH, Permission, type Channel, type Role, type User } from '@diskort/shared';
 import {
   addFiles,
   broadcastSuggestions,
+  encodeRoleMentions,
+  typableRoles,
   formatBytes,
   insertText,
   notifyTyping,
   registerComposer,
   removeFile,
+  roleMentionText,
+  roleSuggestions,
   sendMessage,
   setEditing,
   useCan,
@@ -39,12 +43,18 @@ import { ReplyBar } from './ReplyBar';
 /** Kanal değiştirince yarım kalan mesaj kaybolmasın */
 const drafts = new Map<string, string>();
 
-const MENTION_QUERY = /(?:^|[\s(])@([a-z0-9_.]{0,32})$/i;
+// Rol adlarında Türkçe harfler olabilir; boşluk içeren rol adının ilk sözcüğüyle aranır
+const MENTION_QUERY = /(?:^|[\s(])@([a-z0-9_.çğıöşüâîûÇĞİÖŞÜÂÎÛ]{0,32})$/i;
 const MAX_SUGGESTIONS = 8;
+const MAX_ROLE_SUGGESTIONS = 5;
 const NO_FILES: LocalFile[] = [];
+const NO_ROLES: Record<string, Role> = {};
 
-/** Bahsetme önerisi: üye ya da (yetkisi varsa) @everyone / @here */
-type Suggestion = { kind: 'user'; user: User } | { kind: 'broadcast'; mention: BroadcastMention };
+/** Bahsetme önerisi: üye, rol (sunucu kanalında) ya da (yetkisi varsa) @everyone / @here */
+type Suggestion =
+  | { kind: 'user'; user: User }
+  | { kind: 'role'; role: Role }
+  | { kind: 'broadcast'; mention: BroadcastMention };
 
 export interface ComposerHandle {
   focus: () => void;
@@ -121,6 +131,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const files = useMessages((s) => s.pendingFiles[channel.id] ?? NO_FILES);
   const users = useGuild((s) => s.users);
   const online = useGuild((s) => s.online);
+  const usernames = useMemo(() => new Set(Object.values(users).map((u) => u.username)), [users]);
+  const isUsername = useCallback((name: string) => usernames.has(name), [usernames]);
+  // Rol etiketi yalnızca sunucu kanalında (direkt mesajda `mentionable` verilir, rol yoktur)
+  const roleScope = useGuild((s) => (mentionable ? null : (s.channelGuild[channel.id] ?? null)));
+  const roles = useGuild((s) => (roleScope ? (s.guilds[roleScope]?.roles ?? NO_ROLES) : NO_ROLES));
   const canSend = useCan(Permission.SEND_MESSAGES, channel.id);
   const canAttach = useCan(Permission.ATTACH_FILES, channel.id);
   // @everyone / @here yalnızca yetkisi olana önerilir (direkt mesajda bu yetki yoktur)
@@ -145,11 +160,13 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       .filter((u) => u.username.startsWith(q) || u.displayName.toLocaleLowerCase('tr').includes(q))
       .sort((a, b) => Number(!!online[b.id]) - Number(!!online[a.id]) || a.username.localeCompare(b.username))
       .slice(0, MAX_SUGGESTIONS);
+    const roleItems = roleScope ? roleSuggestions(q, roles, roleScope, MAX_ROLE_SUGGESTIONS) : [];
     return [
       ...members.map((user): Suggestion => ({ kind: 'user', user })),
+      ...roleItems.map((role): Suggestion => ({ kind: 'role', role })),
       ...broadcastSuggestions(q, canMentionEveryone).map((mention): Suggestion => ({ kind: 'broadcast', mention })),
     ];
-  }, [query, dismissed, users, online, mentionable, canMentionEveryone]);
+  }, [query, dismissed, users, online, mentionable, canMentionEveryone, roles, roleScope]);
   const active = Math.min(selected, Math.max(0, suggestions.length - 1));
 
   const update = (next: string, nextCaret: number): void => {
@@ -175,8 +192,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const focusInput = useCallback(() => ref.current?.focus(), []);
 
   const pick = (suggestion: Suggestion): void => {
-    const name = suggestion.kind === 'user' ? suggestion.user.username : suggestion.mention.name;
-    const before = value.slice(0, caret).replace(/@[a-z0-9_.]*$/i, `@${name} `);
+    // Rol kutuda adıyla görünür (`@Rol Adı`); gönderirken gömülü biçime çevrilir (bkz. send)
+    const text =
+      suggestion.kind === 'role'
+        ? roleMentionText(suggestion.role, isUsername)
+        : `@${suggestion.kind === 'user' ? suggestion.user.username : suggestion.mention.name} `;
+    const before = value.slice(0, caret).replace(/@[a-z0-9_.çğıöşüâîûÇĞİÖŞÜÂÎÛ]*$/i, () => text);
     const next = before + value.slice(caret);
     update(next, before.length);
     requestAnimationFrame(() => ref.current?.setSelectionRange(before.length, before.length));
@@ -202,8 +223,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   }, [channel.id, canSend]);
 
   const send = (): void => {
-    const content = value.trim();
-    if (!content && files.length === 0) return;
+    const typed = value.trim();
+    if (!typed && files.length === 0) return;
+    // `@Rol Adı` yazıları rol etiketine (`<@&kimlik>`) çevrilir; sınır gönderilecek metne uygulanır
+    const content = roleScope ? encodeRoleMentions(typed, typableRoles(roles, roleScope), isUsername) : typed;
     if (content.length > MESSAGE_MAX_LENGTH) {
       toast(`Mesaj en fazla ${MESSAGE_MAX_LENGTH} karakter olabilir.`, 'error');
       return;
@@ -292,7 +315,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           <div className="px-3 pb-1 text-xs font-bold text-text-muted uppercase">Üyeler</div>
           {suggestions.map((item, i) => (
             <button
-              key={item.kind === 'user' ? item.user.id : `@${item.mention.name}`}
+              key={
+                item.kind === 'user' ? item.user.id : item.kind === 'role' ? `&${item.role.id}` : `@${item.mention.name}`
+              }
               className={cn(
                 'flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors duration-75',
                 i === active ? 'bg-bg-active text-text-head' : 'text-text-normal',
@@ -308,6 +333,24 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
                   <PresenceAvatar userId={item.user.id} user={item.user} size={24} ringClassName="bg-bg-float" />
                   <span className="font-medium">{item.user.displayName}</span>
                   <span className="text-sm text-text-muted">{item.user.username}</span>
+                </>
+              ) : item.kind === 'role' ? (
+                <>
+                  <span
+                    className={cn(
+                      'flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
+                      !item.role.color && 'bg-brand/30 text-mention',
+                    )}
+                    style={
+                      item.role.color ? { color: item.role.color, backgroundColor: `${item.role.color}33` } : undefined
+                    }
+                  >
+                    <AtSign size={14} />
+                  </span>
+                  <span className="min-w-0 truncate font-medium" style={{ color: item.role.color ?? undefined }}>
+                    @{item.role.name}
+                  </span>
+                  <span className="text-sm text-text-muted">Rol</span>
                 </>
               ) : (
                 <>

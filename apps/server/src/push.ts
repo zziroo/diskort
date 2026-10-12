@@ -107,7 +107,7 @@ export class PushService {
     const author = message.authorId ? this.store.getUser(message.authorId) : null;
     const guild = guildId ? this.store.getGuild(guildId) : null;
     // Yalnızca dosyalı bir yanıtın metni boş olabilir
-    const body = this.text(message) || (message.attachments.length ? '📎 Dosya gönderdi' : '');
+    const body = this.text(message, guildId) || (message.attachments.length ? '📎 Dosya gönderdi' : '');
     await Promise.all(
       tokens.map((t) =>
         this.deliver(t, {
@@ -246,15 +246,21 @@ export class PushService {
 
   /** @kullanıcıadı yerine görünen ad */
   /** Bildirimde gösterilen metin: GIF mesajında bağlantı yerine "GIF" */
-  private text(message: Message): string {
-    return isGifMessage(message) ? GIF_SNIPPET : this.readable(message.content);
+  /** `guildId`: rol etiketleri yalnızca o sunucunun rolleriyse adıyla yazılır (direkt mesajda rol yoktur) */
+  private text(message: Message, guildId?: string): string {
+    return isGifMessage(message) ? GIF_SNIPPET : this.readable(message.content, guildId);
   }
 
-  private readable(content: string): string {
-    return content.replace(/(?<![\w.@])@([a-z0-9_.]*[a-z0-9_])/gi, (raw, name: string) => {
-      const user = this.store.getUserAuthByUsername(name.toLowerCase());
-      return user ? `@${user.displayName}` : raw;
-    });
+  private readable(content: string, guildId?: string): string {
+    return content
+      .replace(/(?<![\w.@])@([a-z0-9_.]*[a-z0-9_])/gi, (raw, name: string) => {
+        const user = this.store.getUserAuthByUsername(name.toLowerCase());
+        return user ? `@${user.displayName}` : raw;
+      })
+      .replace(/<@&([A-Za-z0-9_-]{1,64})>/g, (_raw, id: string) => {
+        const role = guildId && id !== guildId ? this.store.getRole(id) : null;
+        return `@${role && role.guildId === guildId ? role.name : 'silinmiş-rol'}`;
+      });
   }
 
   /** Bu platformun anahtarı var mı (iOS: APNs, diğerleri: FCM) */

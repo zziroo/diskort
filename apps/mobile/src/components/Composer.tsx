@@ -3,16 +3,21 @@ import { Animated, Image, Pressable, StyleSheet, Text, TextInput, View } from 'r
 // Gesture-handler'ın kaydırma görünümü: yatay kaydırma sol paneli açan sağa kaydırmayla çakışmasın (önce o kazanır)
 import { ScrollView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
-import { MESSAGE_MAX_LENGTH, Permission, type Channel, type User } from '@diskort/shared';
+import { MESSAGE_MAX_LENGTH, Permission, type Channel, type Role, type User } from '@diskort/shared';
 import {
   addFiles,
   broadcastSuggestions,
+  decodeRoleMentions,
   editMessage,
+  encodeRoleMentions,
+  typableRoles,
   formatBytes,
   insertText,
   notifyTyping,
   registerComposer,
   removeFile,
+  roleMentionText,
+  roleSuggestions,
   sendGif,
   sendMessage,
   useCan,
@@ -63,8 +68,13 @@ export function hasOpenEdit(): boolean {
   return openEdits.size > 0;
 }
 
-const MENTION_QUERY = /(?:^|[\s(])@([a-z0-9_.]{0,32})$/i;
+// Rol adlarında Türkçe harfler olabilir (\p{…} yok: Hermes); boşluk içeren rol adının ilk sözcüğüyle aranır
+const MENTION_QUERY = /(?:^|[\s(])@([a-z0-9_.çğıöşüâîûÇĞİÖŞÜÂÎÛ]{0,32})$/i;
 const NO_FILES: LocalFile[] = [];
+const NO_ROLES: Record<string, Role> = {};
+
+/** Bilinen bir kullanıcı adı mı (adı kullanıcı adıyla aynı rol kutuda gömülü biçimiyle kalır) */
+const isUsername = (name: string): boolean => Object.values(useGuild.getState().users).some((u) => u.username === name);
 // Bahsetme yazılmıyorken (çoğu zaman) kullanıcı/çevrimiçi listesine hiç ihtiyaç yok: sabit boş nesneler
 // döndürülünce zustand aboneliği tetiklemez, yazma kutusu her üye/çevrimiçi güncellemesinde yeniden çizilmez.
 const EMPTY_USERS: Record<string, MemberUser> = {};
@@ -105,8 +115,17 @@ export function Composer({
   const [attachMenu, setAttachMenu] = useState(false);
   const [expressions, setExpressions] = useState<ExpressionTab | null>(null);
   const gifsEnabled = useFeatures((s) => s.gifs);
-  // Düzenleme kipine geçince mesaj metniyle başla
-  const text = editing ? (editText ?? editing.content) : value;
+  // Rol etiketi yalnızca sunucu kanalında (direkt mesajda `mentionable` verilir, rol yoktur)
+  const roleScope = useGuild((s) => (mentionable ? null : (s.channelGuild[channel.id] ?? null)));
+  const roles = useGuild((s) => (roleScope ? (s.guilds[roleScope]?.roles ?? NO_ROLES) : NO_ROLES));
+  // Düzenleme kipine geçince mesaj metniyle başla; rol etiketleri (`<@&kimlik>`) kutuda `@Rol Adı` görünür
+  const editingText = useMemo(
+    () => (editing ? (roleScope ? decodeRoleMentions(editing.content, roles, isUsername) : editing.content) : ''),
+    // Yalnızca düzenleme başlarken: sonradan değişen rol listesi yazılanı değiştirmesin
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editing],
+  );
+  const text = editing ? (editText ?? editingText) : value;
   const query = MENTION_QUERY.exec(text.slice(0, selection.start))?.[1];
   // Yalnızca bahsetme yazılırken gerçek listeler abone olunur (bkz. EMPTY_USERS/EMPTY_ONLINE yukarısı)
   const users = useGuild((s) => (query !== undefined ? s.users : EMPTY_USERS));
@@ -138,6 +157,10 @@ export function Composer({
       .sort((a, b) => Number(!!online[b.id]) - Number(!!online[a.id]) || a.username.localeCompare(b.username))
       .slice(0, 5);
   }, [query, users, online, mentionable]);
+  const roleItems = useMemo(
+    () => (query === undefined || !roleScope ? [] : roleSuggestions(query, roles, roleScope, 3)),
+    [query, roles, roleScope],
+  );
   const broadcasts = useMemo(
     () => (query === undefined ? [] : broadcastSuggestions(query, canMentionEveryone)),
     [query, canMentionEveryone],
@@ -146,7 +169,7 @@ export function Composer({
   // Yazma kutusunun üstüne şerit (yanıt, düzenleme, dosyalar, öneriler) gelip gidince liste
   // sıçramak yerine yumuşakça kayar
   const replying = useMessages((s) => Boolean(s.replies[channel.id]));
-  useLayoutAnimationOn(`${files.length}:${replying}:${Boolean(editing)}:${suggestions.length > 0}`, 180, false);
+  useLayoutAnimationOn(`${files.length}:${replying}:${Boolean(editing)}:${suggestions.length + roleItems.length > 0}`, 180, false);
 
   // Düzenleme kipindeyken kanal açık düzenleme olarak işaretlenir (bkz. hasOpenEdit, UpdateBanner):
   // güncelleme için yeniden başlatmadan önce sorulur. ChannelChat, editing değişince Composer'ı
@@ -159,8 +182,10 @@ export function Composer({
     };
   }, [editing, channel.id]);
 
-  const pick = (user: Pick<User, 'username'>): void => {
-    const before = text.slice(0, selection.start).replace(/@[a-z0-9_.]*$/i, `@${user.username} `);
+  /** Öneriden seçilen: kullanıcı / @everyone adıyla; rol kutuda adıyla görünür, gönderirken çevrilir */
+  const pick = (target: Pick<User, 'username'> | { role: Role }): void => {
+    const inserted = 'role' in target ? roleMentionText(target.role, isUsername) : `@${target.username} `;
+    const before = text.slice(0, selection.start).replace(/@[a-z0-9_.çğıöşüâîûÇĞİÖŞÜÂÎÛ]*$/i, () => inserted);
     setText(before + text.slice(selection.start));
     setSelection({ start: before.length, end: before.length });
     setForcedSelection({ start: before.length, end: before.length });
@@ -197,8 +222,10 @@ export function Composer({
   const canSubmit = Boolean(text.trim()) || (editing ? editing.attachments.length > 0 : files.length > 0);
 
   const submit = (): void => {
-    const content = text.trim();
     if (!canSubmit) return;
+    // `@Rol Adı` yazıları rol etiketine (`<@&kimlik>`) çevrilir; sınır gönderilecek metne uygulanır
+    const typed = text.trim();
+    const content = roleScope ? encodeRoleMentions(typed, typableRoles(roles, roleScope), isUsername) : typed;
     if (content.length > MESSAGE_MAX_LENGTH) {
       toast(`Mesaj en fazla ${MESSAGE_MAX_LENGTH} karakter olabilir.`, 'error');
       return;
@@ -249,13 +276,27 @@ export function Composer({
 
   return (
     <View style={styles.wrap}>
-      {suggestions.length + broadcasts.length > 0 && (
+      {suggestions.length + roleItems.length + broadcasts.length > 0 && (
         <Suggestions>
           {suggestions.map((u) => (
             <Pressable key={u.id} android_ripple={ripple.row} style={styles.suggestion} onPress={() => pick(u)}>
               <PresenceAvatar userId={u.id} user={u} size={28} surface={colors.side} />
               <Text style={styles.suggestionName}>{u.displayName}</Text>
               <Text style={styles.suggestionUser}>@{u.username}</Text>
+            </Pressable>
+          ))}
+          {roleItems.map((r) => (
+            <Pressable key={r.id} android_ripple={ripple.row} style={styles.suggestion} onPress={() => pick({ role: r })}>
+              <Ionicons
+                name="at"
+                size={22}
+                color={r.color ?? colors.mention}
+                style={{ width: 26, textAlign: 'center' }}
+              />
+              <Text style={[styles.suggestionName, { flexShrink: 1 }, r.color ? { color: r.color } : null]} numberOfLines={1}>
+                @{r.name}
+              </Text>
+              <Text style={styles.suggestionUser}>Rol</Text>
             </Pressable>
           ))}
           {broadcasts.map((b) => (

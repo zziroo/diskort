@@ -139,6 +139,22 @@ describe('telefon bildirimleri', () => {
     expect(body.message.android.notification.tag).toBe(pushTag(text.id, message.id));
   });
 
+  it('rol etiketi bildirim metninde rol adıyla yazılır (başka sunucunun ya da silinmiş rolü yazılmaz)', async () => {
+    const google = fakeGoogle();
+    const { admin, member, text, push } = await start(google);
+    const role = ctx.store.createRole(text.guildId, { name: 'Oyun Ekibi', color: null, hoist: false, permissions: 0 });
+    ctx.store.addMemberRole(member.user.id, role.id);
+    ctx.store.savePushToken(member.user.id, 'mehmetin-telefonu', 'android');
+    const message = ctx.store.createMessage(text.id, admin.user.id, `<@&${role.id}> ve <@&yokboyle> gelin`)!;
+    const mentioned = ctx.store.resolveRoleMentions(message.content, admin.user.id, text.guildId);
+    expect(mentioned).toEqual([member.user.id]);
+    await push.notifyMention(message, mentioned, text.name, text.guildId);
+
+    const send = google.requests.find((r) => r.url.includes('fcm.googleapis.com'))!;
+    const body = JSON.parse(send.body) as { message: Record<string, any> };
+    expect(body.message.notification.body).toBe('@Oyun Ekibi ve @silinmiş-rol gelin');
+  });
+
   it('direkt mesaj ayrı Android kanalından, her mesaj ayrı bildirim olarak gider (etiket yok)', async () => {
     const google = fakeGoogle();
     const { admin, member, push } = await start(google);

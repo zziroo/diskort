@@ -155,6 +155,7 @@ function renderEmbedText(text: string): ReactNode[] {
         case 'emoji':
           return node.text;
         case 'mention':
+        case 'roleMention':
           return node.raw;
         case 'code':
           return (

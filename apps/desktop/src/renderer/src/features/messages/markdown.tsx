@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react';
-import { broadcastMention, parseMarkdown, type MdInline } from '@diskort/client-core';
-import type { Message, User } from '@diskort/shared';
+import { useState, type CSSProperties, type ReactNode } from 'react';
+import { broadcastMention, DELETED_ROLE_LABEL, parseMarkdown, type MdInline } from '@diskort/client-core';
+import type { Message, Role, User } from '@diskort/shared';
 import { cn } from '../../lib/utils';
 
 /**
@@ -12,6 +12,15 @@ export interface MarkdownContext {
   selfId: string | undefined;
   /** Çizilen mesajın @everyone / @here bayrakları: yalnızca bildirim olduysa vurgulanır (yoksa düz metin) */
   flags?: Pick<Message, 'mentionEveryone' | 'mentionHere'>;
+  /** Kanalın sunucusunun rolleri (rol etiketleri için; direkt mesajda boş) */
+  roles?: Record<string, Role>;
+  /** Kendi rollerimiz (o sunucuda): bizim rolümüzün etiketi daha belirgin görünür */
+  selfRoleIds?: readonly string[];
+}
+
+/** Rol etiketinin rengi: rolün rengi (yoksa bahsetme rengi); bizim rolümüzse arka plan daha koyu */
+function roleMentionStyle(color: string | null, mine: boolean): CSSProperties | undefined {
+  return color ? { color, backgroundColor: `${color}${mine ? '4d' : '24'}` } : undefined;
 }
 
 const BROADCAST_TOOLTIP = {
@@ -86,6 +95,32 @@ function renderInline(nodes: MdInline[], ctx: MarkdownContext, key: string): Rea
             data-tooltip={`@${user.username}`}
           >
             @{user.displayName}
+          </span>
+        );
+      }
+      case 'roleMention': {
+        // Object.hasOwn: `<@&constructor>` gibi anahtarlar prototipten sahte rol getirmesin
+        const role = ctx.roles && Object.hasOwn(ctx.roles, node.roleId) ? ctx.roles[node.roleId] : undefined;
+        // @everyone rolünün sırası hep 0'dır; onun etiketi yoktur (yerine @everyone bahsetmesi var)
+        if (!role || role.position === 0) {
+          return (
+            <span key={k} className="rounded-[3px] bg-bg-input px-0.5 font-medium text-text-muted">
+              @{DELETED_ROLE_LABEL}
+            </span>
+          );
+        }
+        const mine = ctx.selfRoleIds?.includes(role.id) ?? false;
+        return (
+          <span
+            key={k}
+            className={cn(
+              'rounded-[3px] px-0.5 font-medium',
+              !role.color && (mine ? 'bg-brand/40 text-text-head' : 'bg-brand/20 text-mention'),
+            )}
+            style={roleMentionStyle(role.color, mine)}
+            data-tooltip="Rol"
+          >
+            @{role.name}
           </span>
         );
       }

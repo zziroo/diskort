@@ -6,6 +6,7 @@ import {
   ALL_PERMISSIONS,
   DEFAULT_EVERYONE_PERMISSIONS,
   extractMentions,
+  extractRoleMentions,
   extractMessageUrls,
   hasPermission,
   INLINE_IMAGE_TYPES,
@@ -74,6 +75,8 @@ const V8_EVERYONE =
 /** Göçte ve yeni toplulukta oluşturulan yönetici rolü */
 const ADMIN_ROLE_NAME = 'Yönetici';
 const ADMIN_ROLE_COLOR = '#e67e22';
+/** Bir mesajın bildirim üreten en fazla farklı rol etiketi sayısı (toplu bildirim sınırı) */
+const MAX_ROLE_MENTIONS = 3;
 
 /**
  * Mesaj araması için SQLite FTS5 dizini (göç 19). Dizinde mesaj metninin arama için katlanmış kopyası
@@ -2902,6 +2905,31 @@ export class Store {
       if (!user || user.id === authorId) continue;
       if (members !== null && !members?.has(user.id)) continue;
       ids.push(user.id);
+    }
+    return ids;
+  }
+
+  /**
+   * Metinde bahsedilen rollere (`<@&kimlik>`, kod dışında) sahip üyeler; yazar hariç. Yalnızca o sunucunun
+   * rolleri sayılır (@everyone ve başka sunucuların rolleri, silinmiş ya da uydurma kimlikler yok sayılır).
+   * Kanalı görüp görmedikleri ayrıca denetlenir. Rol etiketlemek ek yetki istemez.
+   */
+  resolveRoleMentions(content: string, authorId: string | null, guildId: string): string[] {
+    const guild = this.permissionData().guilds.get(guildId);
+    if (!guild) return [];
+    // Toplu bildirim sınırı: bir mesaj en fazla MAX_ROLE_MENTIONS farklı rolü bildirir (geçerli roller, metin
+    // sırasıyla ilk 3); fazlası yok sayılır (metin bozulmaz, yalnız bildirim/sayaç üretmez). Aksi halde tek
+    // mesajla tüm rollere bildirim yağdırılabilirdi. Object.hasOwn: `<@&constructor>` prototipten rol sayılmasın.
+    const roleIds = new Set(
+      extractRoleMentions(content)
+        .filter((id) => id !== guildId && Object.hasOwn(guild.roles, id))
+        .slice(0, MAX_ROLE_MENTIONS),
+    );
+    if (roleIds.size === 0) return [];
+    const ids: string[] = [];
+    for (const [userId, roles] of guild.memberRoles) {
+      if (userId === authorId || !guild.members.has(userId)) continue;
+      if (roles.some((id) => roleIds.has(id))) ids.push(userId);
     }
     return ids;
   }

@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { Linking, Text, View } from 'react-native';
-import { broadcastMention, isJumboEmoji, parseMarkdown, type MdInline } from '@diskort/client-core';
-import type { Message, User } from '@diskort/shared';
+import { broadcastMention, DELETED_ROLE_LABEL, isJumboEmoji, parseMarkdown, type MdInline } from '@diskort/client-core';
+import type { Message, Role, User } from '@diskort/shared';
 import { brandTint, colors, createStyles, tint } from '../theme';
 
 /** Ortak çekirdeğin ayrıştırdığı biçimlendirmeyi React Native metnine çizer. */
@@ -10,6 +10,10 @@ export interface MarkdownContext {
   selfId: string | undefined;
   /** Çizilen mesajın @everyone / @here bayrakları: yalnızca bildirim olduysa vurgulanır (yoksa düz metin) */
   flags?: Pick<Message, 'mentionEveryone' | 'mentionHere'>;
+  /** Kanalın sunucusunun rolleri (rol etiketleri için; direkt mesajda boş) */
+  roles?: Record<string, Role>;
+  /** Kendi rollerimiz (o sunucuda): bizim rolümüzün etiketi daha belirgin görünür */
+  selfRoleIds?: readonly string[];
   /** Mesaj yalnızca emojiden oluşuyor: emojiler dev boyutta (Markdown kendisi belirler) */
   jumbo?: boolean;
 }
@@ -66,6 +70,31 @@ function inline(nodes: MdInline[], ctx: MarkdownContext, key: string): ReactNode
         return (
           <Text key={k} style={[styles.mention, user.id === ctx.selfId && styles.mentionSelf]}>
             @{user.displayName}
+          </Text>
+        );
+      }
+      case 'roleMention': {
+        // Object.hasOwn: `<@&constructor>` gibi anahtarlar prototipten sahte rol getirmesin
+        const role = ctx.roles && Object.hasOwn(ctx.roles, node.roleId) ? ctx.roles[node.roleId] : undefined;
+        // @everyone rolünün sırası hep 0'dır; onun etiketi yoktur (yerine @everyone bahsetmesi var)
+        if (!role || role.position === 0) {
+          return (
+            <Text key={k} style={styles.roleDeleted}>
+              @{DELETED_ROLE_LABEL}
+            </Text>
+          );
+        }
+        const mine = ctx.selfRoleIds?.includes(role.id) ?? false;
+        return (
+          <Text
+            key={k}
+            style={[
+              styles.mention,
+              mine && styles.mentionSelf,
+              role.color ? { color: role.color, backgroundColor: `${role.color}${mine ? '4d' : '29'}` } : null,
+            ]}
+          >
+            @{role.name}
           </Text>
         );
       }
@@ -152,6 +181,7 @@ const styles = createStyles(() => ({
   link: { color: colors.link },
   mention: { color: colors.mention, backgroundColor: brandTint(0.3), fontWeight: '500' },
   mentionSelf: { color: colors.head, backgroundColor: brandTint(0.45) },
+  roleDeleted: { color: colors.muted, backgroundColor: colors.code, fontWeight: '500' },
   spoilerHidden: { backgroundColor: colors.code, color: colors.code },
   spoilerShown: { backgroundColor: tint(0.1) },
   quote: { borderLeftWidth: 4, borderLeftColor: colors.faint, paddingLeft: 10, marginVertical: 2 },

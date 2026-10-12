@@ -97,7 +97,7 @@ export function PinList({
 }) {
   const pins = usePins((s) => s.channels[channelId] ?? EMPTY_PINS);
   const canPin = useCan(Permission.PIN_MESSAGES, channelId);
-  const md = useMarkdownContext();
+  const md = useMarkdownContext(channelId);
 
   if (!pins.loaded) return <ActivityIndicator color={colors.muted} style={styles.loading} />;
   if (pins.items.length === 0) {
@@ -213,18 +213,26 @@ function MessageSummary({
   );
 }
 
-function useMarkdownContext(): MarkdownContext {
+function useMarkdownContext(channelId: string): MarkdownContext {
   const users = useGuild((s) => s.users);
+  const roles = useGuild((s) => s.roles);
   const selfId = useSession((s) => s.user?.id);
+  const inGuild = useGuild((s) => s.channelGuild[channelId] !== undefined);
   return useMemo(
-    () => ({ usersByName: Object.fromEntries(Object.values(users).map((u) => [u.username, u])), selfId }),
-    [users, selfId],
+    () => ({
+      usersByName: Object.fromEntries(Object.values(users).map((u) => [u.username, u])),
+      selfId,
+      // Direkt mesajda rol yoktur: açık sunucunun rolleri DM'deki sabitlenmişlere sızmasın
+      roles: inGuild ? roles : undefined,
+      selfRoleIds: inGuild && selfId ? users[selfId]?.roles : undefined,
+    }),
+    [users, roles, selfId, inGuild],
   );
 }
 
 /** Onay penceresindeki mesaj önizlemesi */
 function ConfirmPreview({ message }: { message: Message }) {
-  const md = useMarkdownContext();
+  const md = useMarkdownContext(message.channelId);
   return (
     <View style={styles.preview}>
       <MessageSummary message={message} md={md} />

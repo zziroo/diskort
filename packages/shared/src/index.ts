@@ -1351,6 +1351,22 @@ export function mentionsHere(content: string): boolean {
   return /(?<![a-z0-9_.@])@here(?![a-z0-9_])/i.test(withoutCode(content));
 }
 
+/**
+ * Rol bahsetmesinin mesajdaki gömülü biçimi (Discord ile aynı): `<@&rolKimliği>`. Rol adları boşluk
+ * içerebildiği için metne kimlikle yazılır; istemciler rol adıyla gösterir. Direkt mesajlarda rol yoktur.
+ */
+export const roleMentionToken = (roleId: string): string => `<@&${roleId}>`;
+
+/**
+ * Metinde kod dışında bahsedilen rollerin kimlikleri (tekrarsız, metindeki sırayla). Rolün o sunucuya ait
+ * olup olmadığı ve @everyone olmadığı ayrıca denetlenir.
+ */
+export function extractRoleMentions(content: string): string[] {
+  const ids = new Set<string>();
+  for (const m of withoutCode(content).matchAll(/<@&([A-Za-z0-9_-]{1,64})>/g)) ids.add(m[1]!);
+  return [...ids];
+}
+
 /** "1.2.3" biçimindeki sürümleri karşılaştırır (ön ek "v" ve "-beta" gibi ekler yok sayılır). */
 export function compareVersions(a: string, b: string): number {
   const parse = (v: string): number[] =>

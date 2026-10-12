@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   extractMentions,
+  extractRoleMentions,
   type DmChannel,
   MESSAGE_MAX_ATTACHMENTS,
   MESSAGE_MAX_REACTIONS,
@@ -22,6 +23,7 @@ import { gifEmbed } from './gifs';
 import { forgetReactionUsers } from './reactions';
 import { useGuild } from './guild';
 import { useSession } from './session';
+import { DELETED_ROLE_LABEL } from './markdown';
 import { formatBytes, uploadFile } from './uploads';
 
 /** Gönderilmekte olan mesajın bir dosyası: yüklenen bayt ve yüklendiyse sunucudaki karşılığı */
@@ -576,18 +578,45 @@ export const mentions = (content: string, username: string): boolean => extractM
 
 /**
  * Mesaj bu kullanıcıyı ilgilendiriyor mu: adıyla, (yetkili bir yazarın) @everyone ya da @here
- * bahsetmesiyle veya bildirimli ("@ AÇIK") bir yanıtla. @here yalnızca o an çevrimiçi olanlara bildirilir;
+ * bahsetmesiyle, sahip olduğu bir rolün etiketiyle (`roleIds`: kullanıcının mesajın sunucusundaki rolleri)
+ * veya bildirimli ("@ AÇIK") bir yanıtla. @here yalnızca o an çevrimiçi olanlara bildirilir;
  * canlı gelen mesajı alan istemci zaten çevrimiçidir, geçmişteki @here ise Discord'daki gibi herkeste vurgulanır.
+ * Rol etiketinde rolün sonradan verilmesi/alınması geçmiş mesajların vurgusunu da değiştirir (Discord gibi).
  */
 export const isMentioned = (
   message: Pick<Message, 'content' | 'mentionEveryone' | 'mentionHere' | 'authorId' | 'replyMentionUserId'>,
   user: { id: string; username: string },
+  roleIds?: readonly string[],
 ): boolean =>
   message.authorId !== user.id &&
   (message.mentionEveryone === true ||
     message.mentionHere === true ||
     message.replyMentionUserId === user.id ||
-    mentions(message.content, user.username));
+    mentions(message.content, user.username) ||
+    (roleIds !== undefined && roleIds.length > 0 && extractRoleMentions(message.content).some((id) => roleIds.includes(id))));
+
+/**
+ * Bildirim metni için: rol etiketleri (`<@&kimlik>`) kanalın sunucusundaki rol adıyla yazılır (rol yoksa
+ * "@silinmiş-rol"). Ham metin dışında biçim değişmez.
+ */
+export function withRoleNames(content: string, channelId: string): string {
+  if (!content.includes('<@&')) return content;
+  const s = useGuild.getState();
+  const guildId = s.channelGuild[channelId];
+  const roles = guildId ? s.guilds[guildId]?.roles : undefined;
+  return content.replace(/<@&([A-Za-z0-9_-]{1,64})>/g, (_raw, id: string) => {
+    const role = id !== guildId && roles && Object.hasOwn(roles, id) ? roles[id] : undefined;
+    return `@${role?.name ?? DELETED_ROLE_LABEL}`;
+  });
+}
+
+/** Kullanıcının kanalın sunucusundaki rolleri (@everyone hariç; direkt mesajda ya da üye değilse boş) */
+export function memberRoleIdsIn(channelId: string, userId: string): readonly string[] {
+  const s = useGuild.getState();
+  const guildId = s.channelGuild[channelId];
+  const member = guildId ? s.guilds[guildId]?.members[userId] : undefined;
+  return member && !member.removed ? member.roles : [];
+}
 
 function countUnread(channelId: string): void {
   useMessages.setState((s) => ({
@@ -642,7 +671,7 @@ gateway.on((msg: GatewayServerMessage) => {
       const dm = useGuild.getState().dms[m.channelId];
       if (dm) {
         if (me && m.authorId !== me.id) notifyDirectMessage(m, dm);
-      } else if (me && isMentioned(m, me)) notifyMention(m);
+      } else if (me && isMentioned(m, me, memberRoleIdsIn(m.channelId, me.id))) notifyMention(m);
       break;
     }
     case 'MESSAGE_UPDATE':

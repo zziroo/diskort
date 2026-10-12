@@ -14,8 +14,15 @@ export function ReplyPreview({ message, md }: { message: LocalMessage; md: Markd
   const author = useGuild((s) => (reference?.authorId ? s.users[reference.authorId] : undefined));
   const color = useChannelMemberColor(reference?.authorId, message.channelId);
   const snippet = useMemo(
-    () => (reference ? plainText(reference.content, (u) => md.usersByName[u]?.displayName) : ''),
-    [reference, md.usersByName],
+    () =>
+      reference
+        ? plainText(
+            reference.content,
+            (u) => md.usersByName[u]?.displayName,
+            (id) => (md.roles && Object.hasOwn(md.roles, id) ? md.roles[id]?.name : undefined),
+          )
+        : '',
+    [reference, md.usersByName, md.roles],
   );
 
   if (!reference) {

@@ -26,6 +26,18 @@ describe('roller', () => {
     expect(s.ctx.store.getGuild(s.guildId)!.ownerId).toBe(s.owner.user.id);
   });
 
+  it('everyone/here adlı rol oluşturulamaz ya da bu adla yeniden adlandırılamaz (büyük/küçük duyarsız)', async () => {
+    for (const name of ['everyone', 'Here', 'EVERYONE', '@here']) {
+      const res = await s.req(s.owner.token, 'POST', `/api/guilds/${s.guildId}/roles`, { name });
+      expect(res.statusCode).toBe(400);
+    }
+    const ok = await s.createRole(s.owner.token, { name: 'Ekip' });
+    const patched = await s.req(s.owner.token, 'PATCH', `/api/guilds/${s.guildId}/roles/${ok.id}`, { name: 'Here' });
+    expect(patched.statusCode).toBe(400);
+    const fine = await s.req(s.owner.token, 'PATCH', `/api/guilds/${s.guildId}/roles/${ok.id}`, { name: 'Herkes' });
+    expect(fine.statusCode).toBe(200);
+  });
+
   it('rolleri yalnızca MANAGE_ROLES yetkilisi yönetir; kimse kendinde olmayan yetkiyi veremez', async () => {
     const member = await s.member('uye');
     expect((await s.req(member.token, 'POST', `/api/guilds/${s.guildId}/roles`, { name: 'x' })).statusCode).toBe(403);

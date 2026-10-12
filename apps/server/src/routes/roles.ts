@@ -15,7 +15,11 @@ const roleName = z
   .string()
   .trim()
   .min(1, 'Rol adı boş olamaz.')
-  .max(ROLE_NAME_MAX_LENGTH, `Rol adı en fazla ${ROLE_NAME_MAX_LENGTH} karakter olabilir.`);
+  .max(ROLE_NAME_MAX_LENGTH, `Rol adı en fazla ${ROLE_NAME_MAX_LENGTH} karakter olabilir.`)
+  // everyone/here adlı rol @everyone/@here yayınlarıyla karışırdı (Türkçe I/İ/ı dahil büyük/küçük duyarsız)
+  .refine((n) => !['everyone', 'here'].includes(n.replace(/^@/, '').replace(/[Iİı]/g, 'i').toLowerCase()), {
+    message: '"everyone" ve "here" rol adı olarak kullanılamaz.',
+  });
 const roleColor = z
   .string()
   .regex(ROLE_COLOR_PATTERN, 'Geçersiz renk.')

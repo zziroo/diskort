@@ -9,13 +9,16 @@ import {
   type User,
 } from '@diskort/shared';
 import {
+  decodeRoleMentions,
   deleteMessage,
   discardMessage,
   editMessage,
+  encodeRoleMentions,
   gifOf,
   isJumboEmoji,
   isMentioned,
   mentionInComposer,
+  typableRoles,
   useGuild,
   QUICK_REACTIONS,
   retryMessage,
@@ -96,7 +99,7 @@ export const MessageItem = memo(function MessageItem({ message, author, compact,
   const authorColor = useChannelMemberColor(message.authorId, message.channelId);
   const canDelete = own || canManage;
   const confirmed = !message.status;
-  const mentioned = isMentioned(message, self);
+  const mentioned = isMentioned(message, self, md.selfRoleIds);
   const jumbo = isJumboEmoji(message.content);
   // Metni yalnızca GIPHY bağlantısı olan mesaj: bağlantı yerine GIF gösterilir
   const gif = gifOf(message);
@@ -277,7 +280,7 @@ export const MessageItem = memo(function MessageItem({ message, author, compact,
         )}
 
         {editing ? (
-          <EditBox message={message} />
+          <EditBox message={message} md={md} />
         ) : (
           !gif &&
           (message.content || message.editedAt) && (
@@ -420,8 +423,14 @@ export const MessageItem = memo(function MessageItem({ message, author, compact,
   );
 });
 
-function EditBox({ message }: { message: LocalMessage }) {
-  const [value, setValue] = useState(message.content);
+function EditBox({ message, md }: { message: LocalMessage; md: MarkdownContext }) {
+  // Rol etiketleri (`<@&kimlik>`) kutuda `@Rol Adı` görünür, kaydederken geri çevrilir (direkt mesajda rol yok)
+  const isUsername = (name: string): boolean => md.usersByName[name] !== undefined;
+  // @everyone ve "everyone"/"here" adlı roller gönderirkenki gibi düzenlemede de çevrilmez
+  const guildId = useGuild((s) => s.channelGuild[message.channelId] ?? null);
+  const [value, setValue] = useState(() =>
+    md.roles ? decodeRoleMentions(message.content, md.roles, isUsername) : message.content,
+  );
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useLayoutEffect(() => {
@@ -439,7 +448,8 @@ function EditBox({ message }: { message: LocalMessage }) {
   }, []);
 
   const save = (): void => {
-    const content = value.trim();
+    const typed = value.trim();
+    const content = md.roles && guildId ? encodeRoleMentions(typed, typableRoles(md.roles, guildId), isUsername) : typed;
     // Dosyası olmayan mesajın metni silinirse mesajın kendisi silinir (Discord gibi)
     if (!content && message.attachments.length === 0) {
       setEditing(null);

@@ -134,7 +134,7 @@ export const MessageRow = memo(function MessageRow({
   lockReactions = false,
 }: Props) {
   const author = useRowAuthor(authorId, message.channelId);
-  const mentioned = isMentioned(message, self);
+  const mentioned = isMentioned(message, self, md.selfRoleIds);
   // Metni yalnızca GIPHY bağlantısı olan mesaj: bağlantı yerine GIF gösterilir
   const gif = gifOf(message);
   // Bağlantı önizlemeleri hep gösterilir (gönderen kaldırdıysa hiç gelmez)

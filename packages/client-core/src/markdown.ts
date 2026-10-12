@@ -17,6 +17,8 @@ export type MdInline =
   | { type: 'link'; url: string }
   /** Kullanıcı adı küçük harfle; böyle bir kullanıcı yoksa çizici `raw` metni gösterir */
   | { type: 'mention'; username: string; raw: string }
+  /** Rol etiketi (`<@&kimlik>`); çizici rol adıyla ve rengiyle gösterir, rol yoksa "@silinmiş-rol" */
+  | { type: 'roleMention'; roleId: string; raw: string }
   | { type: MdStyle; children: MdInline[] };
 
 export type MdBlock =
@@ -24,13 +26,14 @@ export type MdBlock =
   | { type: 'quote'; children: MdInline[] }
   | { type: 'codeblock'; lang: string | null; text: string };
 
-type InlineRule = { name: 'code' | 'url' | 'mention' | MdStyle; re: RegExp };
+type InlineRule = { name: 'code' | 'url' | 'mention' | 'roleMention' | MdStyle; re: RegExp };
 
 // Aynı konumda eşleşen kurallardan listede önce gelen kazanır (** önce *, __ önce _).
 const INLINE: InlineRule[] = [
   { name: 'code', re: /`([^`\n]+)`/ },
   { name: 'url', re: /https?:\/\/[^\s<>"]*[^\s<>".,:;'!?)\]]/i },
   { name: 'mention', re: /(?<![\w.@])@([a-z0-9_.]*[a-z0-9_])/i },
+  { name: 'roleMention', re: /<@&([A-Za-z0-9_-]{1,64})>/ },
   { name: 'bold', re: /\*\*([\s\S]+?)\*\*/ },
   { name: 'underline', re: /__([\s\S]+?)__/ },
   { name: 'italic', re: /\*([^*\s](?:[^*]*?[^*\s])?)\*|(?<![a-z0-9])_([^_\n]+?)_(?![a-z0-9])/i },
@@ -48,34 +51,44 @@ export function parseInline(text: string): MdInline[] {
       else out.push({ type: 'text', text: part.text });
     }
   };
-  let rest = text;
-  while (rest) {
+  // Rol etiketinin (`<@&ab__cd>`) içindeki biçim işaretleri kuralları yanıltmasın: eşleştirme, etiketlerin
+  // içi 'x' ile maskelenmiş kopyada yapılır (uzunluk aynı), parçalar ise özgün metinden alınır. Böylece
+  // `__x <@&ab__cd> y__` altı çizili olarak kalır ve etiket bölünmez.
+  const masked = text.replace(/<@&[A-Za-z0-9_-]{1,64}>/g, (t) => t.replace(/[_*~|]/g, 'x'));
+  let pos = 0;
+  while (pos < text.length) {
+    const rest = masked.slice(pos);
     let best: { rule: InlineRule; m: RegExpExecArray } | null = null;
     for (const rule of INLINE) {
       const m = rule.re.exec(rest);
       if (m && (!best || m.index < best.m.index)) best = { rule, m };
     }
     if (!best) {
-      pushText(rest);
+      pushText(text.slice(pos));
       break;
     }
     const { rule, m } = best;
-    if (m.index > 0) pushText(rest.slice(0, m.index));
-    const inner = m[1] ?? m[2] ?? '';
+    if (m.index > 0) pushText(text.slice(pos, pos + m.index));
+    const full = text.slice(pos + m.index, pos + m.index + m[0].length);
     switch (rule.name) {
       case 'code':
-        out.push({ type: 'code', text: inner });
+        out.push({ type: 'code', text: full.slice(1, -1) });
         break;
       case 'url':
-        out.push({ type: 'link', url: m[0] });
+        out.push({ type: 'link', url: full });
         break;
       case 'mention':
-        out.push({ type: 'mention', username: inner.toLowerCase(), raw: m[0] });
+        out.push({ type: 'mention', username: full.slice(1).toLowerCase(), raw: full });
         break;
-      default:
-        out.push({ type: rule.name, children: parseInline(inner) });
+      case 'roleMention':
+        out.push({ type: 'roleMention', roleId: full.slice(3, -1), raw: full });
+        break;
+      default: {
+        const d = rule.name === 'italic' ? 1 : 2;
+        out.push({ type: rule.name, children: parseInline(full.slice(d, -d)) });
+      }
     }
-    rest = rest.slice(m.index + m[0].length);
+    pos += m.index + m[0].length;
   }
   return out;
 }
@@ -106,11 +119,19 @@ export function broadcastMention(
   return null;
 }
 
+/** Silinmiş (ya da bu sunucuda olmayan) rolün etiketi */
+export const DELETED_ROLE_LABEL = 'silinmiş-rol';
+
 /**
  * Tek satırlık düz metin (yanıtın üstündeki alıntı gibi): biçim işaretleri atılır, satırlar
- * birleştirilir, bahsetmeler görünen adla yazılır, sürprizler gizli kalır.
+ * birleştirilir, bahsetmeler görünen adla yazılır, sürprizler gizli kalır. `roleNameOf` verilmezse
+ * rol etiketleri "@silinmiş-rol" yazılır.
  */
-export function plainText(content: string, displayNameOf: (username: string) => string | undefined): string {
+export function plainText(
+  content: string,
+  displayNameOf: (username: string) => string | undefined,
+  roleNameOf?: (roleId: string) => string | undefined,
+): string {
   const flatten = (nodes: MdInline[]): string =>
     nodes
       .map((node) => {
@@ -125,6 +146,8 @@ export function plainText(content: string, displayNameOf: (username: string) => 
             const name = displayNameOf(node.username);
             return name ? `@${name}` : node.raw;
           }
+          case 'roleMention':
+            return `@${roleNameOf?.(node.roleId) ?? DELETED_ROLE_LABEL}`;
           case 'spoiler':
             return '▒▒▒▒';
           default:

@@ -276,6 +276,8 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
             ? store.guildMemberIds(channel.guildId).filter((id) => id !== req.user.id)
             : store.resolveMentions(content, req.user.id, channel.guildId),
         );
+        // Rol etiketi (<@&kimlik>): o role sahip üyeler, ek yetki gerekmez (@everyone zaten herkesi kapsar)
+        if (!everyone) for (const id of store.resolveRoleMentions(content, req.user.id, channel.guildId)) candidates.add(id);
         if (here && !everyone) {
           for (const id of gateway.connectedUserIds()) if (id !== req.user.id) candidates.add(id);
         }

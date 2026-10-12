@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Paperclip, X } from 'lucide-react';
-import { Permission, type Message, type User } from '@diskort/shared';
+import { Permission, type Message, type Role } from '@diskort/shared';
 import {
   gifOf,
   jumpToPinned,
@@ -14,6 +14,7 @@ import {
   usePins,
   useSession,
   type ChannelPins,
+  type MemberUser,
 } from '@diskort/client-core';
 import { renderMarkdown, type MarkdownContext } from '../../features/messages/markdown';
 import { confirmDialog, useDialog } from '../../lib/dialog';
@@ -29,9 +30,17 @@ import { GifEmbed } from './GifEmbed';
 // Discord'daki sabitlenmiş mesajlar: mesajın sağ tık menüsünden sabitlenir (önizlemeli onayla), kanal
 // başlığındaki raptiye düğmesi listeyi açar; listeden mesaja atlanır ya da (yetkiliyse) sabitleme kaldırılır.
 
-const markdownContext = (users: Record<string, User>, selfId: string | undefined): MarkdownContext => ({
+const markdownContext = (
+  users: Record<string, MemberUser>,
+  roles: Record<string, Role>,
+  selfId: string | undefined,
+  inGuild: boolean,
+): MarkdownContext => ({
   usersByName: Object.fromEntries(Object.values(users).map((u) => [u.username, u])),
   selfId: selfId ?? '',
+  // Direkt mesajda rol yoktur: açık sunucunun rolleri DM'deki sabitlenmişlere sızmasın
+  roles: inGuild ? roles : undefined,
+  selfRoleIds: inGuild && selfId ? users[selfId]?.roles : undefined,
 });
 
 /** Onay penceresinde ve sabitlenmiş mesajlar listesinde mesajın özeti */
@@ -83,8 +92,10 @@ function MessageCard({ message, md, full = false }: { message: Message; md: Mark
 
 function ConfirmPreview({ message }: { message: Message }) {
   const users = useGuild((s) => s.users);
+  const roles = useGuild((s) => s.roles);
   const selfId = useSession((s) => s.user?.id);
-  const md = useMemo(() => markdownContext(users, selfId), [users, selfId]);
+  const inGuild = useGuild((s) => s.channelGuild[message.channelId] !== undefined);
+  const md = useMemo(() => markdownContext(users, roles, selfId, inGuild), [users, roles, selfId, inGuild]);
   return (
     <div className="max-h-60 overflow-hidden rounded-lg border border-edge bg-bg-main p-3 shadow-sm">
       <MessageCard message={message} md={md} />
@@ -167,8 +178,10 @@ function PinsPopout({
   const pins = usePins((s) => s.channels[channelId] ?? EMPTY_PINS);
   const canPin = useCan(Permission.PIN_MESSAGES, channelId);
   const users = useGuild((s) => s.users);
+  const roles = useGuild((s) => s.roles);
   const selfId = useSession((s) => s.user?.id);
-  const md = useMemo(() => markdownContext(users, selfId), [users, selfId]);
+  const inGuild = useGuild((s) => s.channelGuild[channelId] !== undefined);
+  const md = useMemo(() => markdownContext(users, roles, selfId, inGuild), [users, roles, selfId, inGuild]);
 
   // Açıkken liste güncel tutulur; açılınca "yeni sabitleme" noktası söner
   useEffect(() => {

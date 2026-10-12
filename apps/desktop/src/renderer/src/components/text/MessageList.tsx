@@ -38,10 +38,17 @@ export function MessageList({ channel, dm, self, dividerId, onAtBottomChange, sc
   const editingId = useMessages((s) => s.editingId);
   const jump = useMessages((s) => s.jump);
   const users = useGuild((s) => s.users);
+  const roles = useGuild((s) => s.roles);
 
+  // Rol etiketleri yalnızca sunucu kanalında (direkt mesajda rol yoktur)
   const md: MarkdownContext = useMemo(
-    () => ({ usersByName: Object.fromEntries(Object.values(users).map((u) => [u.username, u])), selfId: self.id }),
-    [users, self.id],
+    () => ({
+      usersByName: Object.fromEntries(Object.values(users).map((u) => [u.username, u])),
+      selfId: self.id,
+      roles: dm ? undefined : roles,
+      selfRoleIds: dm ? undefined : users[self.id]?.roles,
+    }),
+    [users, roles, dm, self.id],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);

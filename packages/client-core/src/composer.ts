@@ -2,6 +2,8 @@
 // "Yanıtla" deyince kutuya odaklanmak gibi. Metnin kendisi platformun yazma kutusunda durur; kutu
 // açılınca registerComposer ile kendini kaydeder.
 
+import { roleMentionToken, type Role } from '@diskort/shared';
+
 export interface ComposerHandle {
   /** Kutuya odaklanır (klavye açılır) */
   focus(): void;
@@ -85,3 +87,144 @@ export function broadcastSuggestions(query: string, allowed: boolean): Broadcast
   const q = query.toLowerCase();
   return BROADCAST_MENTIONS.filter((m) => m.name.startsWith(q));
 }
+
+// ---------- Rol etiketleri ----------
+
+/** Rol etiketi için gereken rol bilgisi */
+type RoleRef = Pick<Role, 'id' | 'name'>;
+
+/**
+ * Rol adı karşılaştırması için küçültme: Türkçe I/İ/ı hepsi `i` olur ki `@ADMIN` "admin" rolüne eşleşsin.
+ * Karakter başına çalışır, uzunluk korunur (kesme/slice hesapları bozulmasın).
+ */
+function fold(s: string): string {
+  let out = '';
+  for (const c of s) {
+    if (c === 'I' || c === 'İ' || c === 'ı') out += 'i';
+    else {
+      const l = c.toLowerCase();
+      out += l.length === c.length ? l : c;
+    }
+  }
+  return out;
+}
+
+const startsWith = (role: RoleRef, q: string): boolean => fold(role.name).startsWith(q);
+
+/**
+ * "@…" yazılırken önerilecek roller (önce adı yazılanla başlayanlar) (@everyone hariç: onun yerine @everyone bahsetmesi var), yukarıdan
+ * aşağı rol sırasıyla. Ek yetki istemez; direkt mesajda sunucu olmadığı için çağrılmaz.
+ */
+export function roleSuggestions(query: string, roles: Record<string, Role>, guildId: string, max: number): Role[] {
+  const q = fold(query);
+  return Object.values(roles)
+    .filter((r) => r.id !== guildId && fold(r.name).includes(q))
+    .sort((a, b) => Number(startsWith(b, q)) - Number(startsWith(a, q)) || b.position - a.position)
+    .slice(0, max);
+}
+
+/** Kod blokları, satır içi kod ve bağlantılar (markdown.ts'teki URL kuralıyla aynı): içlerindeki etiketler çevrilmez */
+const CODE = /```[\s\S]*?```|`[^`\n]+`|https?:\/\/[^\s<>"]*[^\s<>".,:;'!?)\]]/gi;
+// \p{…} kullanılmaz (telefonlardaki Hermes her Unicode özelliğini tanımıyor); Türkçe harfler açıkça yazılır
+const WORD_CHAR = /[a-z0-9_çğıöşüâîûÇĞİÖŞÜÂÎÛ]/i;
+const MENTION_BEFORE = /[\w.@]/;
+
+/** Kod dışındaki parçalara uygular */
+function outsideCode(content: string, fn: (text: string) => string): string {
+  let out = '';
+  let last = 0;
+  for (const m of content.matchAll(CODE)) {
+    out += fn(content.slice(last, m.index)) + m[0];
+    last = m.index + m[0].length;
+  }
+  return out + fn(content.slice(last));
+}
+
+/**
+ * Yazma kutusunda rol adıyla yazılabilir mi: adı bir kullanıcı adıyla aynıysa `@ad` kullanıcı etiketi
+ * sayılır, o rol kutuda gömülü biçimiyle (`<@&kimlik>`) kalır.
+ */
+const typable = (role: RoleRef, isUsername: (name: string) => boolean): boolean =>
+  role.name.length > 0 && !isUsername(role.name.toLowerCase());
+
+/** Yayın adları: bu adlı rol `@everyone`/`@here` ile karışırdı, adla yazılıp çevrilmez */
+const BROADCAST_NAMES = new Set<string>(BROADCAST_MENTIONS.map((m) => m.name));
+
+/**
+ * Yazma kutusundaki `@RolAdı` çevirisi için aday roller: @everyone rolü (kimliği sunucu kimliğidir) ve adı
+ * `everyone`/`here` olan roller çıkarılır.
+ */
+export function typableRoles(roles: Record<string, RoleRef>, guildId: string): RoleRef[] {
+  return Object.values(roles).filter((r) => r.id !== guildId && !BROADCAST_NAMES.has(fold(r.name)));
+}
+
+/**
+ * Gönderirken yazma kutusundaki `@RolAdı` yazılarını mesajdaki gömülü biçime (`<@&kimlik>`) çevirir.
+ * Rol adları boşluk içerebildiği için en uzun ad önce denenir; büyük/küçük harf fark etmez. Kod
+ * içindekiler ve kullanıcı adıyla aynı adlı roller (bkz. `typable`) çevrilmez.
+ */
+export function encodeRoleMentions(
+  content: string,
+  roles: readonly RoleRef[],
+  isUsername: (name: string) => boolean,
+): string {
+  const candidates = roles
+    .filter((r) => typable(r, isUsername))
+    .map((r) => ({ id: r.id, name: r.name, lower: fold(r.name) }))
+    .sort((a, b) => b.name.length - a.name.length);
+  if (candidates.length === 0 || !content.includes('@')) return content;
+  return outsideCode(content, (text) => {
+    let out = '';
+    let i = 0;
+    while (i < text.length) {
+      const at = text.indexOf('@', i);
+      if (at < 0) break;
+      out += text.slice(i, at);
+      i = at + 1;
+      const prev = at > 0 ? text[at - 1]! : '';
+      if (MENTION_BEFORE.test(prev) || (prev === '<' && text[at + 1] === '&')) {
+        out += '@';
+        continue;
+      }
+      const role = candidates.find((r) => {
+        const after = text[at + 1 + r.name.length];
+        return (
+          fold(text.slice(at + 1, at + 1 + r.name.length)) === r.lower &&
+          (after === undefined || !WORD_CHAR.test(after) || !WORD_CHAR.test(r.name.at(-1)!))
+        );
+      });
+      if (!role) {
+        out += '@';
+        continue;
+      }
+      out += roleMentionToken(role.id);
+      i = at + 1 + role.name.length;
+    }
+    return out + text.slice(i);
+  });
+}
+
+/**
+ * Düzenlenecek mesajın metni: gömülü rol etiketleri (`<@&kimlik>`) kutuda `@RolAdı` görünür; kaydederken
+ * `encodeRoleMentions` geri çevirir. Bilinmeyen (silinmiş) roller ve adla yazılamayanlar olduğu gibi kalır.
+ */
+export function decodeRoleMentions(
+  content: string,
+  roles: Record<string, RoleRef>,
+  isUsername: (name: string) => boolean,
+): string {
+  if (!content.includes('<@&')) return content;
+  const decoded = outsideCode(content, (text) =>
+    text.replace(/<@&([A-Za-z0-9_-]{1,64})>/g, (raw, id: string) => {
+      const role = Object.hasOwn(roles, id) ? roles[id] : undefined;
+      return role && typable(role, isUsername) ? `@${role.name}` : raw;
+    }),
+  );
+  // Geri çevirince aynı metin çıkmıyorsa (ör. "Admin" etiketinin ardından " Ekibi" yazılmış ve "Admin Ekibi"
+  // diye bir rol de var) çevrilmeden gösterilir: düzenleme etiketi başka bir role kaydırmasın.
+  return encodeRoleMentions(decoded, Object.values(roles), isUsername) === content ? decoded : content;
+}
+
+/** Öneriden seçilen rolün kutuya yazılacak hâli (sonuna boşluk dahil) */
+export const roleMentionText = (role: RoleRef, isUsername: (name: string) => boolean): string =>
+  typable(role, isUsername) ? `@${role.name} ` : `${roleMentionToken(role.id)} `;

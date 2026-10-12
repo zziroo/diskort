@@ -1,6 +1,6 @@
 // Masaüstünün ortak çekirdeğe (@diskort/client-core) verdiği platform ayrıntıları.
 // main.tsx'te arayüzden önce içe aktarılır.
-import { channelById, configureClient, dmTitle, useGuild, useSession } from '@diskort/client-core';
+import { channelById, configureClient, dmTitle, useGuild, useSession, withRoleNames } from '@diskort/client-core';
 import { GIF_SNIPPET, isGifMessage, type DmChannel, type Message } from '@diskort/shared';
 import { bridge } from './lib/bridge';
 import { startCrashReports } from './lib/crashReports';
@@ -13,7 +13,10 @@ import { useUpdate } from './stores/update';
 /** Bildirim metni: mesajın başı, yalnızca dosya varsa dosya bilgisi */
 function preview(message: Message): string {
   if (isGifMessage(message)) return GIF_SNIPPET;
-  if (message.content) return message.content.length > 140 ? `${message.content.slice(0, 140)}…` : message.content;
+  if (message.content) {
+    const text = withRoleNames(message.content, message.channelId);
+    return text.length > 140 ? `${text.slice(0, 140)}…` : text;
+  }
   const files = message.attachments.length;
   return files > 1 ? `📎 ${files} dosya gönderdi` : files === 1 ? '📎 Bir dosya gönderdi' : '';
 }
