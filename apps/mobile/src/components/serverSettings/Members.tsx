@@ -32,7 +32,8 @@ export function MembersSection() {
     <View>
       <Intro>
         {all.length} üye · {onlineCount} çevrimiçi. Bir üyeye dokunarak rollerini, sesli sohbetini ve üyeliğini
-        yönetebilirsin. Yalnızca en üst rolü seninkinden aşağıda olanları yönetebilirsin.
+        yönetebilirsin. Atma ve yasaklama yalnızca en üst rolü seninkinden aşağıda olanlara; rol verme ise rolün senin
+        en üst rolünden aşağıda olmasına bakar.
       </Intro>
       <View style={styles.search}>
         <Ionicons name="search" size={18} color={colors.muted} />

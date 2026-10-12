@@ -71,8 +71,12 @@ describe('roller', () => {
     // Altındaki rolü üyelere verir; kendi rolünü veremez
     expect(await s.giveRole(mod.token, member.user.id, helper.id)).toBe(200);
     expect(await s.giveRole(mod.token, member.user.id, modRole.id)).toBe(403);
-    // Sahibin rollerine dokunamaz
-    expect(await s.giveRole(mod.token, s.owner.user.id, helper.id)).toBe(403);
+    // Hedefin seviyesine bakılmaz (Discord gibi): altındaki rolü sahibe ve aynı seviyedeki üyeye de verir
+    expect(await s.giveRole(mod.token, s.owner.user.id, helper.id)).toBe(200);
+    const mod2 = await s.member('mod2');
+    await s.giveRole(s.owner.token, mod2.user.id, modRole.id);
+    expect(await s.giveRole(mod.token, mod2.user.id, helper.id)).toBe(200);
+    expect(await s.giveRole(mod.token, mod2.user.id, modRole.id)).toBe(403);
     // Sıralamada kendi rolünün üstüne rol çıkaramaz
     const [admin] = (await s.req(s.owner.token, 'GET', `/api/guilds/${s.guildId}/roles`)).json() as Role[];
     const bad = await s.req(mod.token, 'PUT', `/api/guilds/${s.guildId}/roles/order`, { roleIds: [helper.id, admin!.id, modRole.id] });

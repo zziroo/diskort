@@ -49,18 +49,16 @@ function lackingBits(ctx: AppContext, guildId: string, userId: string, bits: num
 }
 
 /**
- * `actor`, `target` üyeye bu rolü verip alabilir mi; veremiyorsa nedeni. Kurallar: MANAGE_ROLES,
- * rol actor'ün en üst rolünün altında, hedef kendisi ya da kendisinden aşağıda, rolde actor'ün
- * sahip olmadığı yetki yok (yetkisini aşan birini yaratamasın).
+ * `actor`, `target` üyeye bu rolü verip alabilir mi; veremiyorsa nedeni. Kurallar (Discord gibi): MANAGE_ROLES,
+ * rol actor'ün en üst rolünün altında, rolde actor'ün sahip olmadığı yetki yok (yetkisini aşan birini
+ * yaratamasın). Hedefin seviyesine bakılmaz: aynı seviyedeki (ya da üstteki) üyeye de alt bir rol verilebilir
+ * (2026-10-12 kararı; eskiden hedef kendinden aşağıda olmalıydı, aynı roldeki arkadaşlar birbirine rol veremiyordu).
  */
 export function canAssignRole(ctx: AppContext, guildId: string, actorId: string, targetId: string, role: Role): string | null {
   const { permissions } = ctx;
   if (!permissions.canInGuild(guildId, actorId, Permission.MANAGE_ROLES)) return 'Rolleri yönetme yetkin yok.';
   if (role.id === guildId) return '@everyone rolü verilip alınamaz.';
   if (!permissions.roleIsBelow(guildId, actorId, role)) return `"${role.name}" rolü senin en üst rolünden aşağıda değil.`;
-  if (targetId !== actorId && !permissions.outranks(guildId, actorId, targetId)) {
-    return 'En üst rolü seninkinden aşağıda olmayan birinin rollerini değiştiremezsin.';
-  }
   if (lackingBits(ctx, guildId, actorId, role.permissions) !== 0) return 'Kendinde olmayan yetkileri içeren bir rolü veremezsin.';
   return null;
 }

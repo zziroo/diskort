@@ -297,8 +297,9 @@ describe('üye yönetimi', () => {
     const ali = memberActions('ali');
     expect(ali).toMatchObject({ kick: true, ban: false, mute: true, deafen: false, move: true });
     expect(ali.roles.map((r) => r.id)).toEqual(['dj']);
-    // Sahip atılamaz, rolü değiştirilemez; sesteki yönetim (susturma, taşıma) Discord'daki gibi hiyerarşiye bakmaz
-    expect(memberActions('sahip')).toMatchObject({ kick: false, ban: false, roles: [] });
+    // Sahip atılamaz; rol verme ve sesteki yönetim (susturma, taşıma) Discord'daki gibi hedefin seviyesine bakmaz
+    expect(memberActions('sahip')).toMatchObject({ kick: false, ban: false });
+    expect(memberActions('sahip').roles.map((r) => r.id)).toEqual(['dj']);
     // Kendini atamaz ama sesteyse kendini yönetebilir
     expect(memberActions('mod').kick).toBe(false);
     // Taşıma hedefleri: bulunduğu kanal ve üyenin bağlanamadığı kanal hariç

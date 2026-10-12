@@ -136,12 +136,11 @@ export function canManageRole(s: PermissionState, actorId: string | undefined, r
 }
 
 /**
- * Üyeye bu rolü verip alabilir mi (sunucudaki kuralla aynı): rol yönetilebilir, üye kendisi ya da
- * kendisinden aşağıda, rolde actor'ün sahip olmadığı yetki yok.
+ * Üyeye bu rolü verip alabilir mi (sunucudaki kuralla aynı, Discord gibi): rol yönetilebilir, rolde actor'ün
+ * sahip olmadığı yetki yok. Hedefin seviyesine bakılmaz (aynı seviyedeki üyeye de alt rol verilebilir).
  */
-export function canAssignRole(s: PermissionState, actorId: string | undefined, targetId: string, role: Role): boolean {
+export function canAssignRole(s: PermissionState, actorId: string | undefined, _targetId: string, role: Role): boolean {
   if (!actorId || !s.guild || role.id === s.guild.id || !canManageRole(s, actorId, role)) return false;
-  if (targetId !== actorId && !outranksUser(s, actorId, targetId)) return false;
   return (role.permissions & ~permissionsOf(s, actorId)) === 0;
 }
 

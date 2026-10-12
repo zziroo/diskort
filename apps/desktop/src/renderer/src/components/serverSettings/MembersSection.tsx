@@ -47,8 +47,8 @@ export function MembersSection() {
       <h2 className="mb-2 text-xl font-bold text-text-head">Üyeler</h2>
       <p className="mb-4 text-sm text-text-muted">
         {total} üye · {list.filter((u) => online[u.id]).length} çevrimiçi. Bir üyeye sağ tıklayarak ya da “…” düğmesiyle
-        rollerini, sesli sohbetini ve üyeliğini yönetebilirsin. Yalnızca en üst rolü seninkinden aşağıda olanları
-        yönetebilirsin.
+        rollerini, sesli sohbetini ve üyeliğini yönetebilirsin. Atma ve yasaklama yalnızca en üst rolü seninkinden
+        aşağıda olanlara; rol verme ise rolün senin en üst rolünden aşağıda olmasına bakar.
       </p>
       <TextInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Üye ara" className="mb-4" />
 
