@@ -393,7 +393,10 @@ window.addEventListener('hashchange', () => {
   const hash = decodeURIComponent(location.hash.slice(1));
   const tab = TAB_ALIASES[hash] ?? hash;
   if (hash === 'hat-testleri') setDiagView('testler');
-  if (TABS.includes(tab) && tab !== ui.tab) setTab(tab);
+  if (!TABS.includes(tab)) return;
+  if (tab !== ui.tab) setTab(tab);
+  // Takma ad (ör. eski #makine) zaten açık sekmeye çözüldüyse adres çubuğuna yeni adı yaz
+  else if (hash !== tab) window.history.replaceState(null, '', `#${tab}`);
 });
 
 /** Bölümü çizer; bir bölümdeki hata diğerlerini bozmaz */
