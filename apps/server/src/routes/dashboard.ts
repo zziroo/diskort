@@ -21,13 +21,4 @@ export function registerDashboardRoutes(app: FastifyInstance, ctx: AppContext, d
     void reply.header('Cache-Control', 'no-store');
     return dashboard.build(query.data.tz ?? 0);
   });
-
-  // Makine yükünün uzun geçmişi (24 saat / 7 gün grafikleri): özetten ayrı, panel dakikada bir ister
-  const historyQuery = z.object({ range: z.enum(['24h', '7d']).default('24h') });
-  app.get('/api/admin/system-history', { preHandler: ctx.auth.requireInstanceAdmin }, async (req, reply) => {
-    const query = historyQuery.safeParse(req.query);
-    if (!query.success) return sendError(reply, 400, 'invalid_query', 'Geçersiz istek.');
-    void reply.header('Cache-Control', 'no-store');
-    return dashboard.systemHistory(query.data.range);
-  });
 }

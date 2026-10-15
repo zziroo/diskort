@@ -1690,20 +1690,9 @@ h3 {
 .adm-chart .adm-spark {
   height: 56px;
 }
-.adm-hist .adm-spark {
-  height: 90px;
-}
-.adm-hist .adm-net-head {
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 12px;
-  row-gap: 2px;
-}
-.adm-hist .adm-net-head b {
-  font-size: 0.82rem;
-}
-#adm-machine-history {
-  margin-top: 12px;
+
+.adm-netdata {
+  margin: 0 0 12px;
 }
 
 /* Ses kalitesi: canlı liste satırı ve zaman çizelgesi */

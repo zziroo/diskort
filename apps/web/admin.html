@@ -65,7 +65,7 @@
             <button type="button" role="tab" data-tab="ses">Ses</button>
             <button type="button" role="tab" data-tab="teshis">Bağlantı teşhisi</button>
             <button type="button" role="tab" data-tab="ses-gecmisi">Ses geçmişi</button>
-            <button type="button" role="tab" data-tab="makine">Makine</button>
+            <button type="button" role="tab" data-tab="altyapi">Altyapı</button>
             <button type="button" role="tab" data-tab="api">API</button>
             <button type="button" role="tab" data-tab="istemciler">İstemciler</button>
             <button type="button" role="tab" data-tab="guvenlik">Güvenlik</button>
@@ -99,10 +99,14 @@
             <div class="adm-grid" id="adm-history"></div>
           </section>
 
-          <section class="adm-section" id="makine" role="tabpanel">
-            <h2>Makine</h2>
+          <!-- Yalnızca Diskort'a ait bileşenler; makinenin geneli Netdata'da (bkz. vault proje-altyapi-standardi) -->
+          <section class="adm-section" id="altyapi" role="tabpanel">
+            <h2>Altyapı</h2>
+            <p class="adm-sub adm-netdata">
+              Makinenin geneli (CPU, RAM, disk, ağ):
+              <a href="https://ops.ziroo.net/netdata/" target="_blank" rel="noopener">https://ops.ziroo.net/netdata/</a>
+            </p>
             <div class="adm-grid" id="adm-system"></div>
-            <div class="adm-grid" id="adm-machine-history"></div>
             <h2>Kapsayıcılar ve hizmetler</h2>
             <div class="adm-grid" id="adm-infra"></div>
             <h2>Bildirimler, indirmeler ve güncellemeler</h2>

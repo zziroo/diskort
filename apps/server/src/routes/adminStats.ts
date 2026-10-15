@@ -196,13 +196,6 @@ export function registerAdminStatsRoutes(app: FastifyInstance, ctx: AppContext, 
       // Olay sırasında 2 sn'de bir ölçülür; panel grafikleri için 10 sn'ye seyreltilir
       livekit: { ...metrics, history: livekitMetrics.historySince(now - HOUR, 9_000) },
       ...snapshot,
-      // Makine ağı: tek örnekleyiciden (saniyelik kayıt) 15 sn'lik ortalamalar
-      network: {
-        ok: ctx.netSampler.readable.net,
-        iface: ctx.netSampler.iface,
-        error: ctx.netSampler.readable.net ? null : ctx.config.systemStats ? '/proc/net okunamadı (yalnızca Linux)' : 'ağ ölçümü kapalı',
-        history: ctx.netSampler.history15(),
-      },
       push: {
         enabled: ctx.push.enabled,
         tokens: pushTokens,

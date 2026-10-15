@@ -51,9 +51,9 @@ let inflight = false;
 let lastData = null;
 let failures = 0;
 
-const TABS = ['genel', 'ses', 'teshis', 'ses-gecmisi', 'makine', 'api', 'istemciler', 'guvenlik', 'sunucular', 'geri-bildirim', 'iphone', 'hatalar'];
+const TABS = ['genel', 'ses', 'teshis', 'ses-gecmisi', 'altyapi', 'api', 'istemciler', 'guvenlik', 'sunucular', 'geri-bildirim', 'iphone', 'hatalar'];
 /** Eski bağlantılar (#sunucu, #hat-testleri) yeni sekmelere */
-const TAB_ALIASES = { sunucu: 'makine', 'hat-testleri': 'teshis' };
+const TAB_ALIASES = { makine: 'altyapi', sunucu: 'altyapi', 'hat-testleri': 'teshis' };
 
 /** "Bağlantı teşhisi" sekmesinin açılış görünümü: eski #hat-testleri bağlantısı testleri açar */
 function initialDiagView() {
@@ -72,8 +72,10 @@ function initialTab() {
   const fromHash = TAB_ALIASES[hash] ?? hash;
   if (TABS.includes(fromHash)) return fromHash;
   try {
+    // Eski sekme adı kayıtlıysa (ör. "makine") yeni adına düşer
     const saved = localStorage.getItem(TAB_KEY);
-    if (TABS.includes(saved)) return saved;
+    const tab = TAB_ALIASES[saved] ?? saved;
+    if (TABS.includes(tab)) return tab;
   } catch {
     // depolama kapalı
   }
@@ -94,8 +96,6 @@ const ui = {
   diagView: initialDiagView(),
   /** Dakikalık ağ geçmişinde seçili gün (null: bugün) */
   minuteDay: null,
-  /** Makine yükü geçmişinin aralığı: '24h' ya da '7d' */
-  machineRange: '24h',
 };
 
 const VIEWS = ['adm-login', 'adm-denied', 'adm-loading', 'adm-dashboard'];
@@ -284,13 +284,12 @@ const LOADERS = {
     every: 60_000,
     render: (x) => draw('adm-history', () => voiceHistory(x)),
   },
-  makine: {
-    load: () => loadMachine(),
+  altyapi: {
+    url: () => '/api/admin/infra',
     every: 10_000,
     render: (x) => {
-      draw('adm-machine-history', () => machineHistory(x.history));
-      draw('adm-infra', () => infra(x.infra));
-      draw('adm-usage', () => usage(x.infra));
+      draw('adm-infra', () => infra(x));
+      draw('adm-usage', () => usage(x));
     },
   },
   api: { url: () => '/api/admin/api-stats', every: 5_000, render: (x) => draw('adm-api', () => apiHealth(x)) },
@@ -345,7 +344,7 @@ function placeholder(tab, text) {
   const target = {
     teshis: ['adm-diag'],
     'ses-gecmisi': ['adm-history'],
-    makine: ['adm-machine-history', 'adm-infra', 'adm-usage'],
+    altyapi: ['adm-infra', 'adm-usage'],
     api: ['adm-api'],
     guvenlik: ['adm-security'],
     sunucular: ['adm-guilds'],
@@ -2533,9 +2532,6 @@ function openLine(s, x) {
 function system(d, now) {
   const s = d.system;
   const p = s.process;
-  const hist = s.history;
-  // Son ölçüm hesaplanamadıysa (ör. sunucu yeni başladı) geçmişteki en son değer
-  const latest = (value, key) => value ?? hist.findLast((x) => x[key] !== null && x[key] !== undefined)?.[key] ?? null;
   const processCard = card({
     label: 'Çalışma süresi',
     value: duration(s.hostUptimeSec ?? p.uptimeSec),
@@ -2546,41 +2542,16 @@ function system(d, now) {
   if (!s.available) {
     return [
       card({
-        label: 'Makine',
+        label: 'Disk ve trafik',
         value: 'Bilgi yok',
         tone: 'warn',
-        sub: 'Makine bilgileri yalnızca Linux sunucuda (/proc) okunabilir.',
+        sub: 'Disk ve trafik bilgileri yalnızca Linux sunucuda (/proc) okunabilir.',
       }),
       processCard,
     ];
   }
-  const mem = s.memory;
   const disk = s.disk;
-  const cards = [
-    card({
-      label: 'İşlemci',
-      value: percent(latest(s.cpu?.usage, 'cpu')),
-      sub: s.cpu?.load
-        ? `Yük ${s.cpu.load.map((l) => nf2.format(l)).join(' · ')} (${num(s.cpu.cores)} çekirdek)`
-        : `${num(s.cpu?.cores ?? 0)} çekirdek`,
-      children: sparkline(series(hist, 'cpu'), { max: 1, format: percent, label: 'İşlemci kullanımı, son dakikalar' }),
-    }),
-  ];
-  if (mem) {
-    const used = mem.total - mem.available;
-    cards.push(
-      card({
-        label: 'Bellek',
-        value: bytes(used),
-        unit: `/ ${bytes(mem.total)}`,
-        sub: `${bytes(mem.available)} kullanılabilir`,
-        children: [
-          meter(used / mem.total, 'Bellek doluluğu'),
-          sparkline(series(hist, 'memUsed'), { max: mem.total, format: bytes, label: 'Kullanılan bellek, son dakikalar', color: 'ok' }),
-        ],
-      }),
-    );
-  }
+  const cards = [];
   if (disk) {
     cards.push(
       card({
@@ -2631,115 +2602,6 @@ function system(d, now) {
   }
   cards.push(processCard);
   return cards;
-}
-
-// ---------- Makine yükü geçmişi (24 saat / 7 gün) ----------
-
-/** Uzun geçmiş dakikada bir (ya da aralık değişince) istenir; alınamazsa kapsayıcılar yine çizilir */
-const longHistory = { data: null, at: 0, failed: false };
-const LONG_HISTORY_EVERY = 60_000;
-
-async function loadMachine() {
-  const range = ui.machineRange;
-  const stale = !longHistory.data || longHistory.data.range !== range || Date.now() - longHistory.at >= LONG_HISTORY_EVERY;
-  const [infraData, hist] = await Promise.all([
-    apiGet('/api/admin/infra'),
-    stale
-      ? apiGet(`/api/admin/system-history?range=${range}`).catch((err) => {
-          if (err instanceof AccessError) throw err;
-          return null;
-        })
-      : null,
-  ]);
-  if (stale) longHistory.failed = !hist;
-  if (hist && hist.range === ui.machineRange) {
-    longHistory.data = hist;
-    longHistory.at = Date.now();
-  }
-  return { infra: infraData, history: longHistory.data };
-}
-
-/** Kovalardan grafik noktaları: sunucunun kapalı olduğu (kovası olmayan) aralıkta boşluk */
-function bucketSeries(buckets, stepMs, key) {
-  const out = [];
-  let prev = null;
-  for (const b of buckets) {
-    if (prev !== null && b.at - prev > stepMs * 1.5) out.push({ at: prev + stepMs, v: null });
-    out.push({ at: b.at, v: b[key] ?? null });
-    prev = b.at;
-  }
-  return out;
-}
-
-function machineHistory(x) {
-  const range = ui.machineRange;
-  const pick = (value) => {
-    if (value === ui.machineRange) return;
-    ui.machineRange = value;
-    draw('adm-machine-history', () => machineHistory(longHistory.data));
-    void loadExtra(true);
-  };
-  const head = [
-    h('div', 'adm-label', 'Makine yükü geçmişi'),
-    chips(
-      [
-        ['24h', '24 saat'],
-        ['7d', '7 gün'],
-      ],
-      range,
-      pick,
-      'Geçmiş aralığı',
-    ),
-  ];
-  if (!x || x.range !== range) {
-    return h('article', 'adm-card adm-wide', head, h('div', 'adm-sub', longHistory.failed ? 'Geçmiş alınamadı; yeniden denenecek.' : 'Yükleniyor…'));
-  }
-  const span = [x.from, x.to];
-  const week = range === '7d';
-  // Eksen: 5 eşit aralık (24 saatte saat, 7 günde gün)
-  const ticks = Array.from({ length: 5 }, (_, i) => {
-    const at = x.from + ((x.to - x.from) * i) / 4;
-    return week ? shortDate(at) : clock(at);
-  });
-  const stat = (key, format) => {
-    const avgs = x.buckets.map((b) => b[key]).filter((v) => v !== null && v !== undefined);
-    const tops = x.buckets.map((b) => b[`${key}Max`]).filter((v) => v !== null && v !== undefined);
-    if (avgs.length === 0) return null;
-    return `ort. ${format(avgs.reduce((a, b) => a + b, 0) / avgs.length)}${tops.length ? ` · en çok ${format(Math.max(...tops))}` : ''}`;
-  };
-  const box = (label, key, format, opts = {}) => {
-    const pts = bucketSeries(x.buckets, x.stepMs, key);
-    if (!pts.some((p) => p.v !== null)) {
-      return h('div', 'adm-card adm-chart', h('div', 'adm-net-head', h('span', 'adm-muted', label)), h('div', 'adm-sub', 'Bu aralıkta ölçüm yok.'));
-    }
-    return h(
-      'div',
-      'adm-card adm-chart adm-hist',
-      h('div', 'adm-net-head', h('span', 'adm-muted', label), h('b', null, stat(key, format))),
-      sparkline(pts, { format, label, axis: true, seconds: false, span, ticks, peak: bucketSeries(x.buckets, x.stepMs, `${key}Max`), ...opts }),
-    );
-  };
-  const hasNet = x.buckets.some((b) => b.rx !== null || b.tx !== null);
-  const first = x.buckets[0]?.at;
-  return h(
-    'article',
-    'adm-card adm-wide',
-    head,
-    h(
-      'div',
-      'adm-chart-grid',
-      box('İşlemci', 'cpu', percent, { max: 1 }),
-      box(`Bellek${x.memTotal ? ` (toplam ${bytes(x.memTotal)})` : ''}`, 'mem', bytes, { max: x.memTotal ?? undefined, color: 'ok' }),
-      hasNet && box('Ağ gelen (NIC)', 'rx', mbpsText, { color: 'ok' }),
-      hasNet && box('Ağ giden (NIC)', 'tx', mbpsText),
-    ),
-    h(
-      'div',
-      'adm-sub',
-      `${week ? '30' : '5'} dakikalık ortalama (düz çizgi) ve en yüksek (kesikli). Boşluklar sunucunun kapalı olduğu aralıklardır.` +
-        (first !== undefined && first > x.from + x.stepMs ? ` Kayıt ${dateTime(first)} tarihinden beri.` : ''),
-    ),
-  );
 }
 
 function clients(d, now) {
@@ -3296,7 +3158,7 @@ function voiceHistory(x) {
   ];
 }
 
-// ---------- Makine sekmesi: kapsayıcılar, LiveKit, kullanım sayaçları ----------
+// ---------- Altyapı sekmesi: kapsayıcılar, LiveKit, kullanım sayaçları ----------
 
 const CONTAINER = { api: 'API', livekit: 'LiveKit', caddy: 'Caddy (HTTPS, TURN/TLS)' };
 
@@ -3331,42 +3193,6 @@ function infra(x) {
       ),
     ),
   );
-  const net = x.network;
-  if (net) {
-    if (!net.ok || net.history.length === 0) {
-      cards.push(
-        card({
-          label: 'Makine ağı',
-          value: net.ok ? 'Ölçülüyor…' : 'Bilgi yok',
-          compact: true,
-          tone: net.ok ? undefined : 'warn',
-          sub: net.ok ? 'İlk ölçüm birkaç saniye içinde.' : net.error,
-        }),
-      );
-    } else {
-      const nh = net.history;
-      const last = nh[nh.length - 1];
-      const top = Math.max(1, ...nh.flatMap((p) => [p.rxMbps ?? 0, p.txMbps ?? 0]));
-      const half = (arrow, name, key, color) =>
-        h(
-          'div',
-          'adm-net',
-          h('div', 'adm-net-head', h('span', 'adm-muted', name), h('b', null, `${arrow} ${mbpsText(last[key])}`)),
-          sparkline(series(nh, key), { max: top, format: mbpsText, label: `${name} trafik (makine), son 30 dakika`, color }),
-        );
-      const peak = (key) => Math.max(0, ...nh.map((p) => p[key] ?? 0));
-      cards.push(
-        card({
-          label: `Makine ağı (${net.iface}, son 30 dk)`,
-          sub: [
-            `En yüksek: ↓ ${mbpsText(peak('rxMbps'))} · ↑ ${mbpsText(peak('txMbps'))} · paket ↓ ${ppsText(last.rxPps)} · ↑ ${ppsText(last.txPps)}`,
-            'Saniyelik görünüm, düşen paketler, UDP hataları ve kesintiler: Bağlantı teşhisi sekmesi.',
-          ],
-          children: [half('↓', 'Gelen', 'rxMbps', 'brand'), half('↑', 'Giden', 'txMbps', 'pink')],
-        }),
-      );
-    }
-  }
   const cd = x.caddy;
   cards.push(
     card({

@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistoryBucket, SystemHistory } from './systemHistory.js';
 
 // Sunucu makinesinin yükü (yönetim paneli): CPU, bellek, disk ve aylık trafik sayacı. Linux'ta /proc'tan okunur
 // (API kapsayıcısı host ağında çalıştığından /proc/net/dev makinenin gerçek arayüzlerini gösterir; /proc/stat,
@@ -261,10 +260,6 @@ export interface SystemMonitorOptions {
   quotaBytes: number;
   /** Geçmişte tutulan ölçüm sayısı */
   historySize?: number;
-  /** Uzun geçmiş (24 saat / 7 gün, 5 dk'lık kovalar; bkz. systemHistory.ts); yoksa tutulmaz */
-  longHistory?: SystemHistory;
-  /** NIC'in (from, to] aralığındaki saniyelik hızları, Mbit/sn (tek ağ örnekleyicisi: netSeconds.ts) */
-  netRates?: (from: number, to: number) => { rx: number | null; tx: number | null }[];
   log?: { warn(obj: object, msg: string): void };
 }
 
@@ -333,7 +328,6 @@ export class SystemMonitor {
     for (const name of interfaces) picked[name] = counters![name]!;
 
     const prev = this.prev;
-    const prevAt = prev?.at ?? now - 5_000;
     const usage = prev?.cpu && cpu ? cpuUsage(prev.cpu, cpu.times) : null;
     this.prev = { at: now, cpu: cpu?.times ?? null };
 
@@ -374,33 +368,15 @@ export class SystemMonitor {
     const max = this.opts.historySize ?? 180;
     if (this.history.length > max) this.history.splice(0, this.history.length - max);
 
-    // Uzun geçmiş: kova kapanınca (5 dk'da bir) dosyaya
-    const long = this.opts.longHistory;
-    if (long) {
-      const closed = long.add({
-        at: now,
-        cpu: usage,
-        memUsed: memory ? memory.total - memory.available : null,
-        net: this.opts.netRates?.(prevAt + 1, now) ?? [],
-      });
-      if (closed) await long.persist();
-    }
-
     if (now - this.lastPersist >= PERSIST_INTERVAL_MS) await this.persist(now);
-  }
-
-  /** Uzun geçmiş (yönetim paneli, 24 saat / 7 gün) */
-  longHistory(from: number, to: number, stepMs?: number): HistoryBucket[] {
-    return this.opts.longHistory?.range(from, to, stepMs) ?? [];
   }
 
   snapshot(): { system: SystemSnapshot; history: SystemSample[] } {
     return { system: this.latest, history: [...this.history] };
   }
 
-  /** Trafik durumunu dosyaya yazar (değiştiyse). `final` (kapanış): uzun geçmişin açık kovası da yazılır. */
-  async persist(now = Date.now(), final = false): Promise<void> {
-    if (final) await this.opts.longHistory?.persist(true);
+  /** Trafik durumunu dosyaya yazar (değiştiyse) */
+  async persist(now = Date.now()): Promise<void> {
     if (!this.opts.stateFile || !this.dirty || !this.traffic) return;
     this.lastPersist = now;
     this.dirty = false;

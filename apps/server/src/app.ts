@@ -50,7 +50,6 @@ import { createApns } from './apns.js';
 import { PushService } from './push.js';
 import { ReleaseService } from './releases.js';
 import { StreamPreviewStore } from './streamPreview.js';
-import { SystemHistory } from './systemHistory.js';
 import { SystemMonitor } from './systemStats.js';
 import { VoiceModeration } from './voiceModeration.js';
 import { VoiceStateStore } from './voiceState.js';
@@ -441,9 +440,6 @@ export async function buildApp(
         diskPath: config.dataDir,
         stateFile: statsFile('traffic.json'),
         quotaBytes: config.trafficQuotaBytes,
-        // 24 saat / 7 günlük grafikler: 5 dk'lık kovalar, NIC hızı saniyelik örnekleyiciden
-        longHistory: new SystemHistory(statsFile('system-history.json'), Date.now(), app.log),
-        netRates: (from, to) => netSampler.window(from, to),
         log: app.log,
       }),
     activity: new ActivityTracker(statsFile('activity.json'), Date.now(), app.log),

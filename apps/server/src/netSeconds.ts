@@ -494,40 +494,6 @@ export function minuteOf(at: number, rows: SecondRow[]): MinuteRow {
   };
 }
 
-/** Panelin "Makine ağı" kutusu için 15 sn'lik ortalama */
-export interface NetBucket {
-  at: number;
-  rxMbps: number | null;
-  txMbps: number | null;
-  rxPps: number | null;
-  txPps: number | null;
-}
-
-export function bucketRows(rows: SecondRow[], bucketMs = 15_000): NetBucket[] {
-  const out: NetBucket[] = [];
-  let key = -1;
-  let group: SecondRow[] = [];
-  const close = (): void => {
-    if (group.length === 0) return;
-    const mean = (pick: (r: SecondRow) => number | null, digits: number): number | null => {
-      const v = nums(group.map(pick));
-      return v.length === 0 ? null : round(avg(v), digits);
-    };
-    out.push({ at: (key + 1) * bucketMs, rxMbps: mean((r) => r.rx, 2), txMbps: mean((r) => r.tx, 2), rxPps: mean((r) => r.rxp, 0), txPps: mean((r) => r.txp, 0) });
-    group = [];
-  };
-  for (const r of rows) {
-    const k = Math.floor((r.t - 1) / bucketMs);
-    if (k !== key) {
-      close();
-      key = k;
-    }
-    group.push(r);
-  }
-  close();
-  return out;
-}
-
 // ---------- Halka + kalıcı kayıt ----------
 
 export interface SamplerOptions {
@@ -824,11 +790,6 @@ export class SecondSampler {
   /** Halkadaki satır sayısı */
   get size(): number {
     return this.rows.length;
-  }
-
-  /** Panelin "Makine ağı" kutusu: son 30 dakikanın 15 sn'lik ortalamaları */
-  history15(): NetBucket[] {
-    return bucketRows(this.rows);
   }
 
   /** Varsayılan yol arayüzünün IPv4 adresi (sağlayıcıya rapor için); bulunamazsa null */

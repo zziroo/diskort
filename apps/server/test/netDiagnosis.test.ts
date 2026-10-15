@@ -7,7 +7,6 @@ import { LiveKitMetrics } from '../src/infraStats.js';
 import { isConfirmedOutage, isCorroborated, localStamp, NicSilenceDetector, OutageLog, silenceThreshold, type NicSilence, type Outage } from '../src/netOutages.js';
 import { DEFAULT_PROBE_TARGETS, dnsQuery, OutageDetector, parseProbeTargets, ProbeEngine, type ProbeOutage, type ProbeTarget } from '../src/netProbe.js';
 import {
-  bucketRows,
   findBurst,
   isAbnormalRow,
   minuteOf,
@@ -215,7 +214,7 @@ describe('dakikalık özet ve 15 sn\'lik geçmiş (tek örnekleyiciden)', () => 
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('minuteOf ve bucketRows', () => {
+  it('minuteOf', () => {
     const rows = Array.from({ length: 60 }, (_, i) =>
       row(i + 1, { rx: i < 30 ? 10 : 20, rxp: i === 10 ? 5 : 1000, nd: i === 5 ? 3 : 0, o: i === 10 ? 2 : undefined, vp: 2, p: i % 2 ? { 'udp 1.1.1.1': i === 11 ? -1 : 8 + (i % 5) } : undefined }),
     );
@@ -223,10 +222,6 @@ describe('dakikalık özet ve 15 sn\'lik geçmiş (tek örnekleyiciden)', () => 
     expect(m).toMatchObject({ at: T0, n: 60, rx: [15, 20], nd: 3, o: 1, vp: 2, psi: 1, lk: 0.22, ct: null });
     expect(m.rxp).toEqual([5, Math.round((59 * 1000 + 5) / 60), 1000]);
     expect(m.p).toEqual({ 'udp 1.1.1.1': [30, 1, 12] });
-    const buckets = bucketRows(rows);
-    expect(buckets).toHaveLength(4);
-    expect(buckets[0]).toMatchObject({ at: T0 + 15_000, rxMbps: 10, txMbps: 28 });
-    expect(buckets[3]).toMatchObject({ at: T0 + 60_000, rxMbps: 20 });
   });
 
   it('her dakika netmin-<gün>.jsonl dosyasına bir satır; anormal saniyenin ±30 sn çevresi netsec-<gün>.jsonl dosyasına; diskten okunur', async () => {
@@ -255,7 +250,6 @@ describe('dakikalık özet ve 15 sn\'lik geçmiş (tek örnekleyiciden)', () => 
     expect(mins[1]!.nd).toBe(40);
     expect(await s.minuteDays()).toEqual(['2026-10-01']);
     expect(await s.minutes('../../etc/passwd')).toEqual([]);
-    expect(s.history15().length).toBeGreaterThan(10);
 
     // Halkası boş yeni bir örnekleyici (yeniden başlatma): aralık diskten gelir
     const again = new SecondSampler({ procRoot: '/yok', dir, offsetMin: 180 });
@@ -877,7 +871,7 @@ describe('bağlantı teşhisi uçları', () => {
     expect(inc.rows.map((r: SecondRow) => r.t)).toEqual(d.rows.slice(-2).map((r: SecondRow) => r.t));
   });
 
-  it('saniyelik aralık, kesinti listesi ve dakikalık özet; makine ağı tek örnekleyiciden', async () => {
+  it('saniyelik aralık, kesinti listesi ve dakikalık özet; altyapı ucunda makine ağı yok', async () => {
     const now = feedSampler(130);
     s.ctx.netSampler.addProbeOutage({ at: now - 50_000, durationMs: 2_000, lost: 8, targets: ['udp 1.1.1.1', 'tcp 8.8.8.8'], udp: true, tcp: true });
     const sec = (await s.req(s.owner.token, 'GET', `/api/admin/net/seconds?from=${now - 60_000}&to=${now - 40_000}`)).json();
@@ -894,10 +888,9 @@ describe('bağlantı teşhisi uçları', () => {
     const all = (await Promise.all((min.days as string[]).map(async (day) => (await s.req(s.owner.token, 'GET', `/api/admin/net/minutes?day=${day}`)).json().rows as MinuteRow[]))).flat();
     expect(all.length).toBeGreaterThanOrEqual(1);
     expect(all[0]!.rx?.[0]).toBe(10);
+    // Makine ağı artık altyapı ucunda yok (Netdata'da); bkz. admin.html Altyapı sekmesi
     const infra = (await s.req(s.owner.token, 'GET', '/api/admin/infra')).json();
-    expect(infra.network).toMatchObject({ ok: true, iface: 'eth0', error: null });
-    expect(infra.network.history.length).toBeGreaterThanOrEqual(8);
-    expect(infra.network.history.at(-2)).toMatchObject({ rxMbps: 10, txMbps: 10, rxPps: 1250 });
+    expect(infra.network).toBeUndefined();
     // Olay listesi ucu: çakışan hat testleri alanı da var
     const inc = (await s.req(s.owner.token, 'GET', '/api/admin/telemetry/incidents')).json();
     expect(inc.lineTests).toEqual([]);

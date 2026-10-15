@@ -16,7 +16,6 @@ import type { FeedbackStore } from './feedbackStore.js';
 import type { LiveRoom, LiveTrack } from './livekit.js';
 import type { LiveKitMetrics, LiveKitMetricsStatus } from './infraStats.js';
 import { PRIVATE_CALL_NAME } from './privateCalls.js';
-import type { HistoryBucket } from './systemHistory.js';
 import type { SystemMonitor, SystemSample, SystemSnapshot } from './systemStats.js';
 import type { TelemetryEntry, VoiceTelemetryStore } from './telemetry.js';
 
@@ -80,20 +79,6 @@ export interface DashboardUserActivity {
   lastSeen: number | null;
   lastPlatform: ClientPlatform | null;
   lastVersion: string | null;
-}
-
-export type SystemHistoryRange = '24h' | '7d';
-
-export interface SystemHistoryResponse {
-  range: SystemHistoryRange;
-  from: number;
-  to: number;
-  /** Kova genişliği (ms); ardışık kovalar arasında bundan büyük açıklık = sunucu kapalıydı */
-  stepMs: number;
-  /** Bellek grafiğinin ölçeği (bayt); bilinmiyorsa null */
-  memTotal: number | null;
-  cores: number | null;
-  buckets: HistoryBucket[];
 }
 
 export interface AdminDashboard {
@@ -288,7 +273,7 @@ export class DashboardService {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    await this.opts.monitor.persist(Date.now(), true);
+    await this.opts.monitor.persist(Date.now());
     await this.opts.activity.persist(Date.now(), true);
     await this.ctx.counters.persist(Date.now(), true);
   }
@@ -503,24 +488,6 @@ export class DashboardService {
         server: { total: server.total, last24h: serverDay.count, capped: serverDay.capped, recent: server.recent(ERRORS_LIMIT) },
       },
       feedback: { counts, total: FEEDBACK_STATUSES.reduce((n, s) => n + counts[s], 0) },
-    };
-  }
-
-  /** Makine yükünün uzun geçmişi (GET /api/admin/system-history): 24 saat 5 dk'lık, 7 gün 30 dk'lık kovalarla */
-  systemHistory(range: SystemHistoryRange, now = Date.now()): SystemHistoryResponse {
-    const span = range === '7d' ? 7 * DAY_MS : DAY_MS;
-    const stepMs = range === '7d' ? 30 * 60_000 : 5 * 60_000;
-    // Başlangıç kova sınırına hizalı: seyreltilmiş kovalar eksenin dışına taşmasın
-    const from = Math.floor((now - span) / stepMs) * stepMs;
-    const { system } = this.opts.monitor.snapshot();
-    return {
-      range,
-      from,
-      to: now,
-      stepMs,
-      memTotal: system.memory?.total ?? null,
-      cores: system.cpu?.cores ?? null,
-      buckets: this.opts.monitor.longHistory(from, now, stepMs),
     };
   }
 
