@@ -510,6 +510,9 @@ export async function buildApp(
     return typeof type === 'string' && type.startsWith('application/json') ? withoutPackCosmetics(payload) : payload;
   });
 
+  // Sağlık ucu: ziroo.net projelerinin ortak adı /healthz (düz "ok"; Uptime Kuma buraya bakar).
+  // /api/health eski ad, infra/restore-db.sh hâlâ onu bekler; ikisi de kalır.
+  app.get('/healthz', async (_req, reply) => reply.type('text/plain').send('ok'));
   app.get('/api/health', async () => ({ ok: true }));
   gateway.register(app);
   registerAuthRoutes(app, ctx);
