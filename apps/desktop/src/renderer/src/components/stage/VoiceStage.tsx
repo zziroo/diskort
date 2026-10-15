@@ -28,6 +28,7 @@ import { cn } from '../../lib/utils';
 import {
   channelById,
   membersOf,
+  streamersFirst,
   ringDmCall,
   useCan,
   useChannelMemberColor,
@@ -94,10 +95,11 @@ export function VoiceStage({
   );
 
   const tiles: Tile[] = useMemo(() => {
+    const isStreaming = (m: VoiceState): boolean => (m.userId === selfId ? sharing : Boolean(streams[m.userId]));
     const list: Tile[] = [];
-    for (const m of members) {
-      const streaming = m.userId === selfId ? sharing : Boolean(streams[m.userId]);
-      if (streaming) list.push({ kind: 'stream', userId: m.userId });
+    // Yayın açanlar (yayın + kendi kutucuğu) öne, gerisi katılış sırasında (geri bildirim #35)
+    for (const m of streamersFirst(members, isStreaming)) {
+      if (isStreaming(m)) list.push({ kind: 'stream', userId: m.userId });
       list.push({ kind: 'user', state: m });
     }
     return list;

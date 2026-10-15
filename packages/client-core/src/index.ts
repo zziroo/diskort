@@ -148,6 +148,7 @@ export {
   isGuildUnread,
   isUnread,
   membersOf,
+  streamersFirst,
   useGuild,
   type GatewayStatus,
   type GuildState,

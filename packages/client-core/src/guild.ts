@@ -689,6 +689,21 @@ export function membersOf(voiceStates: Record<string, VoiceState>, channelId: st
     .sort((a, b) => a.joinedAt - b.joinedAt);
 }
 
+/**
+ * Yayın açanlar öne, gerisi olduğu sırada (katılış sırası): kanal üye listesi ve ses sahnesi için.
+ * `isStreaming` verilmezse sunucunun bildirdiği `streaming` bayrağına bakılır (sahne kendi yayın
+ * listesini kullanır). Girdi değişmez; sıralama kararlıdır.
+ */
+export function streamersFirst<T extends { streaming: boolean }>(
+  members: readonly T[],
+  isStreaming: (m: T) => boolean = (m) => m.streaming,
+): T[] {
+  const streaming: T[] = [];
+  const rest: T[] = [];
+  for (const m of members) (isStreaming(m) ? streaming : rest).push(m);
+  return streaming.length === 0 ? [...members] : [...streaming, ...rest];
+}
+
 /** Kanal (hangi sunucuda olursa olsun; görülebiliyorsa) */
 export function channelById(
   state: Pick<GuildStore, 'guilds' | 'channelGuild'>,

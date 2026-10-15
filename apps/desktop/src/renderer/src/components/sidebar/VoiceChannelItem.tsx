@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Lock, Volume2 } from 'lucide-react';
 import { Permission, type Channel } from '@diskort/shared';
 import { voice } from '../../features/voice/voiceClient';
-import { membersOf, useCan, useGuild } from '@diskort/client-core';
+import { membersOf, streamersFirst, useCan, useGuild } from '@diskort/client-core';
 import type { VoiceState } from '@diskort/shared';
 import { channelMenuItems, isPrivateChannel } from '../../lib/channelMenu';
 import { collapseClass, usePresenceList } from '../../lib/motion';
@@ -16,15 +16,16 @@ import { ElapsedTime } from './ElapsedTime';
 
 export function VoiceChannelItem({ channel }: { channel: Channel }) {
   const voiceStates = useGuild((s) => s.voiceStates);
-  const members = useMemo(() => membersOf(voiceStates, channel.id), [voiceStates, channel.id]);
+  // Yayın açanlar üstte, gerisi katılış sırasında (geri bildirim #35)
+  const members = useMemo(() => streamersFirst(membersOf(voiceStates, channel.id)), [voiceStates, channel.id]);
   const activeChannel = useVoice((s) => s.channelId);
   const canConnect = useCan(Permission.CONNECT, channel.id);
   const locked = useGuild((s) => isPrivateChannel(channel, s.guild?.id));
   const openContextMenu = useUi((s) => s.openContextMenu);
   const setView = useUi((s) => s.setView);
   const isActive = activeChannel === channel.id;
-  // Bulunduğun kanalın etkin olduğu süre: içerideki en eski katılım
-  const activeSince = isActive && members.length ? Math.min(...members.map((m) => m.joinedAt)) : null;
+  // Kanalın ne zamandır dolu olduğu: içerideki en eski katılım. Girmeden de görünür (geri bildirim #35)
+  const activeSince = members.length ? Math.min(...members.map((m) => m.joinedAt)) : null;
   // Katılan üye satırı aşağı doğru açılarak, ayrılan kapanarak görünür
   const rows = usePresenceList(members, (m: VoiceState) => m.userId, 180);
   // Sürükle-bırak: üye bırakma hedefi ve kanal sıralama
