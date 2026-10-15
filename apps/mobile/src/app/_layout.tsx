@@ -19,7 +19,7 @@ import { UpdateScreen } from '../components/UpdateScreen';
 import { describeRoute, noteCrashContext, reportPendingNativeCrashes } from '../crashReports';
 import { channelFromResponse, isFriendRequestResponse, registerForPush } from '../notifications';
 import { clientReady } from '../setup';
-import { checkForUpdate, cleanupDownloads, updateOnLaunch, useAppUpdate } from '../update/updater';
+import { checkForUpdate, cleanupDownloads, setBeforeReload, updateOnLaunch, useAppUpdate } from '../update/updater';
 import { showChat } from '../stores/nav';
 import { useUi } from '../stores/ui';
 import { colors, createStyles, useTheme } from '../theme';
@@ -97,6 +97,9 @@ export default function RootLayout() {
       .then(() => (useVoice.getState().status === 'idle' ? updateOnLaunch() : undefined))
       .finally(() => setReady(true));
     void cleanupDownloads();
+    // Arayüz yeniden yüklenmeden önce sesten çıkılır: eski LiveKit odası ve ön plan servisi yeni JS'e taşınmaz,
+    // sunucuda aynı kimlikle ikinci katılımcı kalır ve ses herkese kesik gider (bkz. updater.ts)
+    setBeforeReload(() => (useVoice.getState().status === 'idle' ? Promise.resolve() : voice.leave()));
     const sub = AppState.addEventListener('change', (state) => {
       // Arka planda inen arayüz güncellemesi kendiliğinden uygulanmaz: üstteki şeritten (UpdateBanner)
       // kullanıcı ne zaman isterse yeniden başlatır; yoksa bir sonraki açılışta uygulanır.

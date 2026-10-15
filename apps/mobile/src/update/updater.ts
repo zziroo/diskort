@@ -88,9 +88,29 @@ async function downloadOta(version: string, apply: boolean): Promise<boolean> {
   }
 }
 
-/** İndirilmiş arayüzle uygulamayı yeniden başlatır (bir iki saniye sürer). */
+let beforeReload: (() => Promise<void>) | null = null;
+/** Yeniden yüklemeden önce bu kadar beklenir; sesten çıkış takılırsa güncelleme yine uygulanır (ms) */
+const BEFORE_RELOAD_MAX_MS = 4000;
+
+/**
+ * Yeniden yüklemeden hemen önce çalışacak işlev (uygulama kurulumunda verilir: sesten çıkma). JS yeniden
+ * yüklenince eski LiveKit odası ve ön plan servisi kendiliğinden kapanmıyor: sunucu aynı kimlikle ikinci bir
+ * katılımcı görüyor (DUPLICATE_IDENTITY), telefonun sesi herkese kesik gidiyor ve uygulama silinip
+ * kurulana dek düzelmiyordu (0.11.2 OTA, 2026-10-15).
+ */
+export function setBeforeReload(fn: (() => Promise<void>) | null): void {
+  beforeReload = fn;
+}
+
+/** İndirilmiş arayüzle uygulamayı yeniden başlatır (bir iki saniye sürer). Önce sesten çıkılır. */
 export async function applyOta(): Promise<void> {
   if (useAppUpdate.getState().ota.kind !== 'downloaded') return;
+  if (beforeReload) {
+    await Promise.race([
+      beforeReload().catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, BEFORE_RELOAD_MAX_MS)),
+    ]);
+  }
   await Updates.reloadAsync({
     reloadScreenOptions: { backgroundColor: colors.rail, spinner: { color: colors.head }, fade: true },
   });
