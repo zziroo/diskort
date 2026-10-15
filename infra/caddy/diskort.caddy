@@ -6,6 +6,13 @@
 {$DISKORT_DOMAIN} {
 	encode zstd gzip
 
+	# Sağlık ucu: ziroo.net projelerinin ortak adı /healthz (Uptime Kuma buraya bakar); API'nin kendi yolu
+	# /api/health olduğu için yeniden yazılır. Statik yedek (try_files) bu yola düşmesin diye API'den önce.
+	handle /healthz {
+		rewrite * /api/health
+		reverse_proxy 127.0.0.1:3000
+	}
+
 	# API, gerçek zamanlı gateway, indirme ve uygulama güncelleme yönlendirmeleri (/download/windows, /updates/latest.yml)
 	@api path /api/* /gateway /download/* /updates/*
 	handle @api {
