@@ -137,101 +137,133 @@ export function previewSound(name: MobileSoundName): void {
  * Kişisel giriş sesleri (kanala girenin yüklediği en fazla INTRO_SOUND_MAX_SECONDS saniyelik MP3, sunucudan
  * akıtılır). Aynı anda tek bir tane çalar: yenisi başlayınca öncekisi kesilir. Oynatıcı her ses için yeniden
  * kurulur ve çalış bitince (ya da kesilince) bırakılır; ses dosyaları önbelleğe alınmaz.
+ * Discord'daki gibi önce genel katılma sesi çalar (çağıran çalar), giriş sesi INTRO_AFTER_CUE_MS sonra başlar;
+ * bu bekleme sırasında `player` henüz yoktur.
  */
-let intro: { player: ExpoAudio.AudioPlayer; timer: ReturnType<typeof setTimeout>; started: boolean } | null = null;
+let intro: {
+  player: ExpoAudio.AudioPlayer | null;
+  timer: ReturnType<typeof setTimeout>;
+  started: boolean;
+  onEnd?: () => void;
+} | null = null;
 
-/** Ses bu süre içinde çalmaya başlamazsa (yavaş ağ, bozuk dosya) genel katılma sesine dönülür */
+/** Ses bu süre içinde çalmaya başlamazsa (yavaş ağ, bozuk dosya) bırakılır (genel ses zaten çalmıştır) */
 const INTRO_START_TIMEOUT_MS = 2500;
 /** Bitiş olayı hiç gelmezse oynatıcı en geç bu sürede bırakılır */
 const INTRO_MAX_LIFETIME_MS = 15_000;
+/** Genel katılma sesi ~0,3 sn: giriş sesi onun bitişine denk gelecek şekilde bu kadar sonra başlar */
+export const INTRO_AFTER_CUE_MS = 350;
+/**
+ * Giriş sesinin sabit kısılması (ayardaki seviyenin üstüne): kaydırıcı %100'de eski seviyenin yarısı.
+ * Sunucu da yeni yüklemelerde loudnorm hedefini -20 LUFS'a indirdi; eski dosyalar biraz daha yüksek kalır.
+ */
+const INTRO_GAIN = 0.5;
 
 /**
  * Giriş sesleri çalınabilir mi (yerel modül var, sesler açık, giriş sesi seviyesi 0 değil). Değilse çağıran
- * ChannelSoundGate'e null verir ve genel katılma sesi çalar (o da ayarlara göre).
+ * ChannelSoundGate'e null verir ve yalnızca genel katılma sesi çalar (o da ayarlara göre).
  */
 export function introSoundsEnabled(): boolean {
   const s = getSettings();
   return audio !== null && s.sounds && s.introSoundVolume > 0;
 }
 
-/** Çalan giriş sesini keser ve oynatıcısını bırakır */
+/** Çalan (ya da başlamayı bekleyen) giriş sesini keser, oynatıcısını bırakır; `onEnd` çağrılır */
 export function stopIntroSound(): void {
   if (!intro) return;
-  const { player: p, timer } = intro;
+  const { player: p, timer, onEnd } = intro;
   intro = null;
   clearTimeout(timer);
-  try {
-    p.pause();
-  } catch {
-    // oynatıcı kapatılmış olabilir: önemli değil
+  if (p) {
+    try {
+      p.pause();
+    } catch {
+      // oynatıcı kapatılmış olabilir: önemli değil
+    }
+    try {
+      p.remove();
+    } catch {
+      // önemli değil
+    }
   }
-  try {
-    p.remove();
-  } catch {
-    // önemli değil
-  }
+  onEnd?.();
 }
 
 /**
- * Bir giriş sesini çalar (çalan giriş sesini keser). `own`: kendi girişin (sağırken de çalar, hata olursa
- * genel "katıldın" sesi); değilse başkasının girişi (sağırken çalmaz, hata olursa "biri girdi" sesi).
- * `preview`: profil ayarlarındaki dinleme düğmesi; ses ayarlarına bakılmaz, tam seviyede çalar, hatada
- * yerine bir şey çalınmaz.
+ * Bir giriş sesini çalar (çalan giriş sesini keser). `own`: kendi girişin (sağırken de çalar); değilse
+ * başkasının girişi (sağırken çalmaz). Genel katılma sesini çağıran çalar; `delayMs` kadar sonra (genelde
+ * INTRO_AFTER_CUE_MS) giriş sesi başlar. Hata ya da zaman aşımında yerine bir şey çalınmaz (genel ses zaten
+ * çaldı). `onStart`: ses gerçekten çalmaya başlayınca; `onEnd`: başladıysa bitince/kesilince (konuşma
+ * halkası için). `preview`: profil ayarlarındaki dinleme düğmesi; ses ayarlarına bakılmaz, tam seviyede çalar.
  */
-export function playIntroSound(url: string, opts: { preview?: boolean; own?: boolean } = {}): void {
+export function playIntroSound(
+  url: string,
+  opts: { preview?: boolean; own?: boolean; delayMs?: number; onStart?: () => void; onEnd?: () => void } = {},
+): void {
   if (!audio) return;
-  const fallback: MobileSoundName | null = opts.preview ? null : opts.own ? 'join' : 'userJoin';
   if (!opts.preview) {
     const s = getSettings();
-    if (!s.sounds) return;
+    if (!s.sounds || s.introSoundVolume <= 0) return;
     if (!opts.own && deafened()) return;
-    if (s.introSoundVolume <= 0) {
-      if (fallback) start(fallback);
-      return;
-    }
   }
   stopIntroSound();
-  const fail = (p: ExpoAudio.AudioPlayer): void => {
-    // Yalnızca hâlâ çalan giriş sesi buysa (bu arada yenisi başlamadıysa) genel sese dönülür
-    if (intro?.player !== p) return;
-    const started = intro.started;
-    stopIntroSound();
-    if (!started && fallback && allowed(fallback)) start(fallback);
-  };
+  if (opts.delayMs && opts.delayMs > 0) {
+    // Bekleme de "çalan giriş sesi" sayılır: arada yenisi gelir ya da ayrılınırsa stopIntroSound iptal eder
+    const pending = {
+      player: null,
+      started: false,
+      timer: setTimeout(() => {
+        if (intro !== pending) return;
+        intro = null;
+        // Bekleme sırasında ayarlar değişmiş olabilir: çalma anında yeniden kontrol et
+        if (!opts.preview && !opts.own && deafened()) return;
+        if (!opts.preview && !introSoundsEnabled()) return;
+        startIntro(url, opts);
+      }, opts.delayMs),
+    };
+    intro = pending;
+    return;
+  }
+  startIntro(url, opts);
+}
+
+function startIntro(url: string, opts: { preview?: boolean; onStart?: () => void; onEnd?: () => void }): void {
+  if (!audio) return;
   let p: ExpoAudio.AudioPlayer;
   try {
     p = audio.createAudioPlayer({ uri: url }, { keepAudioSessionActive: Platform.OS === 'ios' });
   } catch {
-    if (fallback && allowed(fallback)) start(fallback);
     return;
   }
-  const current = {
+  const current: NonNullable<typeof intro> = {
     player: p,
     started: false,
-    timer: setTimeout(() => fail(p), INTRO_START_TIMEOUT_MS),
+    timer: setTimeout(() => {
+      if (intro === current) stopIntroSound();
+    }, INTRO_START_TIMEOUT_MS),
   };
   intro = current;
   try {
-    p.volume = opts.preview ? 1 : Math.min(1, Math.max(0, getSettings().introSoundVolume));
+    p.volume = opts.preview ? 1 : Math.min(1, Math.max(0, getSettings().introSoundVolume)) * INTRO_GAIN;
     p.addListener('playbackStatusUpdate', (status) => {
       if (intro !== current) return;
-      if (status.error) {
-        fail(p);
-      } else if (status.didJustFinish) {
+      if (status.error || status.didJustFinish) {
         stopIntroSound();
       } else if (status.playing && !current.started) {
-        // Çalmaya başladı: zaman aşımı yerine en uzun ömür sınırı
+        // Çalmaya başladı: zaman aşımı yerine en uzun ömür sınırı; bitişte onEnd çağrılsın
         current.started = true;
+        current.onEnd = opts.onEnd;
         clearTimeout(current.timer);
         current.timer = setTimeout(() => {
           if (intro === current) stopIntroSound();
         }, INTRO_MAX_LIFETIME_MS);
+        opts.onStart?.();
       }
     });
     // Yükleme bitmeden çağrılabilir: hazır olunca çalar
     p.play();
   } catch {
-    fail(p);
+    if (intro === current) stopIntroSound();
   }
 }
 

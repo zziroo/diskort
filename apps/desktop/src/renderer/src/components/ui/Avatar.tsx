@@ -9,6 +9,8 @@ interface Props {
   user: Pick<User, 'displayName' | 'avatarColor' | 'avatarUrl'> | undefined;
   size?: number;
   speaking?: boolean;
+  /** Giriş sesi çalıyor: konuşma halkası yerine sarı giriş sesi halkası */
+  intro?: boolean;
   /** Eski biçim: çevrimiçi (yeşil) / çevrimdışı (gri halka). `status` verilirse o kullanılır */
   online?: boolean;
   /** Durum noktası (Discord biçimli); verilmezse ve `online` da yoksa nokta çizilmez */
@@ -37,6 +39,7 @@ export function Avatar({
   user,
   size = 32,
   speaking,
+  intro,
   online,
   status,
   mobile,
@@ -68,7 +71,7 @@ export function Avatar({
       <div
         className={cn(
           'avatar-ring flex h-full w-full items-center justify-center rounded-full font-semibold',
-          speaking && 'speaking-ring',
+          intro ? 'intro-ring' : speaking && 'speaking-ring',
         )}
         style={{
           background: user?.avatarColor ?? '#747f8d',

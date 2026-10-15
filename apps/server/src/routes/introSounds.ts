@@ -3,14 +3,14 @@ import type { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { UploadError } from '../attachments.js';
 import { sendError, type AppContext } from '../context.js';
-import { INTRO_SOUND_HASH, parseIntroStart } from '../introSounds.js';
+import { INTRO_SOUND_HASH, parseIntroDuration, parseIntroStart } from '../introSounds.js';
 import { createRateLimiter } from './messages.js';
 
 const LIMIT_MESSAGE = 'Giriş sesini çok sık değiştiriyorsun, biraz bekle.';
 const NOT_FOUND = 'Giriş sesi bulunamadı.';
 
 /**
- * Kişisel giriş sesleri. Kullanıcı yalnızca kendininkini yükler (POST /api/me/intro-sound?start=<sn>, gövde ham
+ * Kişisel giriş sesleri. Kullanıcı yalnızca kendininkini yükler (POST /api/me/intro-sound?start=<sn>&duration=<sn>, gövde ham
  * ses dosyası) ya da kaldırır; değişiklik USER_UPDATE ile onu görebilenlere iletilir. Hesap yöneticisi
  * herhangi birininkini kaldırabilir (DELETE /api/users/:id/intro-sound). Ses, oynatıcılar jeton
  * gönderemediği için kimlik doğrulamasız sunulur; adres içerik özetini taşıdığından süresiz önbelleklenebilir.
@@ -25,7 +25,7 @@ export function registerIntroSoundRoutes(app: FastifyInstance, ctx: AppContext):
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
 
-    scope.post<{ Querystring: { start?: string } }>(
+    scope.post<{ Querystring: { start?: string; duration?: string } }>(
       '/api/me/intro-sound',
       {
         onRequest: auth.requireUser,
@@ -38,12 +38,14 @@ export function registerIntroSoundRoutes(app: FastifyInstance, ctx: AppContext):
       async (req, reply) => {
         const start = parseIntroStart(req.query.start);
         if (start === null) return sendError(reply, 400, 'invalid_start', 'Başlangıç noktası geçersiz.');
+        const duration = parseIntroDuration(req.query.duration);
+        if (duration === null) return sendError(reply, 400, 'invalid_duration', 'Süre geçersiz.');
         if (!allow(req.user.id)) return sendError(reply, 429, 'rate_limited', LIMIT_MESSAGE);
         const length = req.headers['content-length'];
         const body = (req.body as Readable | undefined) ?? req.raw;
         const size = length !== undefined && /^\d+$/.test(length) ? Number(length) : null;
         try {
-          const user = await introSounds.upload(req.user.id, body, size, start);
+          const user = await introSounds.upload(req.user.id, body, size, start, duration);
           gateway.sendUserUpdate(user);
           return user;
         } catch (err) {

@@ -24,6 +24,7 @@ export function UserPanel() {
   const selfDeaf = useSettings((s) => s.selfDeaf);
   const inputMode = useSettings((s) => s.inputMode);
   const speaking = useVoice((s) => (user ? s.speaking[user.id] === true : false));
+  const intro = useVoice((s) => (user ? s.introPlayingUserId === user.id : false));
   const pttActive = useVoice((s) => s.pttActive);
   const voiceStatus = useVoice((s) => s.status);
   // Konuşma izni yoksa (yetki ya da sunucuda susturma) mikrofon kapalı görünür
@@ -91,6 +92,7 @@ export function UserPanel() {
           user={user ?? undefined}
           size={32}
           speaking={speaking}
+          intro={intro}
           status={status}
           ringClassName="bg-bg-card"
           decoration={user?.avatarDecoration}

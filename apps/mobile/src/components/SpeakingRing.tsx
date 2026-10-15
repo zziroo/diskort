@@ -6,16 +6,24 @@ import { colors } from '../theme';
 /**
  * Konuşan kişinin avatarını saran yeşil halka: yumuşakça belirir, konuşma sürdükçe dışa doğru
  * nabız atar, susunca yavaşça söner. Avatar bileşenine dokunmadan dışarıdan sarar.
+ * `intro`: kişinin giriş sesi çalıyor; halka sarı yanar (konuşmanın önüne geçer). Kenar kalınlığı hep
+ * aynı, yalnızca rengi değişir.
  */
 export function SpeakingRing({
-  speaking,
+  speaking: talking,
+  intro = false,
   size,
   children,
 }: {
   speaking: boolean;
+  intro?: boolean;
   size: number;
   children: ReactNode;
 }) {
+  const speaking = talking || intro;
+  // Sönüş animasyonu (280 ms) sırasında intro false olsa da renk son haliyle kalsın (yeşile dönmesin)
+  const lastIntro = useRef(false);
+  if (speaking) lastIntro.current = intro;
   const shown = useRef(new Animated.Value(speaking ? 1 : 0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
   const width = size >= 48 ? 3 : 2;
@@ -54,7 +62,7 @@ export function SpeakingRing({
     bottom: -(width + gap),
     borderRadius: size,
     borderWidth: width,
-    borderColor: colors.ok,
+    borderColor: lastIntro.current ? colors.warn : colors.ok,
   };
 
   return (

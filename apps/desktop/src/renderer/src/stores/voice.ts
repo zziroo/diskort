@@ -19,6 +19,8 @@ interface VoiceStore {
   status: VoiceStatus;
   /** Konuşan kullanıcılar (userId → true) */
   speaking: Record<string, true>;
+  /** Giriş sesi şu an çalan kullanıcı (avatarında konuşma halkası yerine giriş sesi halkası yanar); yoksa null */
+  introPlayingUserId: string | null;
   pingMs: number | null;
   quality: ConnectionQualityLabel;
   /** Bulunduğun kanalda yayın yapan kullanıcılar */
@@ -57,6 +59,7 @@ export const useVoice = create<VoiceStore>()(() => ({
   channelId: null,
   status: 'idle',
   speaking: {},
+  introPlayingUserId: null,
   pingMs: null,
   quality: 'unknown',
   streams: {},

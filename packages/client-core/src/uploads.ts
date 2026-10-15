@@ -1,4 +1,4 @@
-import { AVATAR_MAX_BYTES, INTRO_SOUND_MAX_BYTES, type AnimatedDecoration, type ApiErrorBody, type Attachment, type CosmeticSetId, type ProfileTheme, type User } from '@diskort/shared';
+import { AVATAR_MAX_BYTES, INTRO_SOUND_MAX_BYTES, INTRO_SOUND_MAX_SECONDS, type AnimatedDecoration, type ApiErrorBody, type Attachment, type CosmeticSetId, type ProfileTheme, type User } from '@diskort/shared';
 import { api, ApiError, clientFeatureHeaders, normalizeServerUrl } from './api';
 import { env, type LocalFile, type UploadRequest, type UploadResponse } from './env';
 import { useGuild } from './guild';
@@ -136,12 +136,12 @@ export async function uploadBanner(file: LocalFile, signal: AbortSignal = new Ab
 
 /**
  * Kişisel giriş sesini yükler ve güncellenen kullanıcıyı oturuma yazar. Sunucu sesi `start` saniyesinden
- * (varsayılan 0) başlayarak en fazla INTRO_SOUND_MAX_SECONDS saniyeye kırpar, ses yüksekliğini eşitler ve
+ * (varsayılan 0) başlayarak `duration` saniyeye (varsayılan ve en çok INTRO_SOUND_MAX_SECONDS) kırpar, ses yüksekliğini eşitler ve
  * MP3'e çevirir. Okunamayan dosyada ApiError 400 'unsupported', sık değişiklikte 429 'rate_limited'.
  */
 export async function uploadIntroSound(
   file: LocalFile,
-  opts: { start?: number } = {},
+  opts: { start?: number; duration?: number } = {},
   signal: AbortSignal = new AbortController().signal,
 ): Promise<User> {
   if (file.size > INTRO_SOUND_MAX_BYTES) {
@@ -150,8 +150,10 @@ export async function uploadIntroSound(
   // Sunucu yalnızca düz ondalık sayı kabul eder (üslü gösterim yok); milisaniyeye yuvarlanır
   const raw = opts.start ?? 0;
   const start = Number.isFinite(raw) && raw > 0 ? Math.round(raw * 1000) / 1000 : 0;
+  const rawDuration = opts.duration ?? INTRO_SOUND_MAX_SECONDS;
+  const duration = Number.isFinite(rawDuration) && rawDuration > 0 ? Math.round(rawDuration * 1000) / 1000 : INTRO_SOUND_MAX_SECONDS;
   const user = await sendFile<User>(
-    `/api/me/intro-sound?start=${start.toFixed(3)}`,
+    `/api/me/intro-sound?start=${start.toFixed(3)}&duration=${duration.toFixed(3)}`,
     file,
     200,
     'Giriş sesi yüklenemedi',

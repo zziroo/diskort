@@ -378,6 +378,7 @@ const VoiceMember = memo(function VoiceMember({ state, onLongPress }: { state: V
   const color = useChannelMemberColor(state.userId, state.channelId);
   const selfId = useSession((s) => s.user?.id);
   const speaking = useVoice((s) => Boolean(s.speaking[state.userId]));
+  const intro = useVoice((s) => s.introPlayingUserId === state.userId);
   const inMyChannel = useVoice((s) => s.channelId === state.channelId);
   // Asıl (en son başlanan) oyunun ikonu, masaüstündeki gibi satırın sağında
   const activity = useActivity(state.userId);
@@ -390,7 +391,7 @@ const VoiceMember = memo(function VoiceMember({ state, onLongPress }: { state: V
       accessibilityLabel={`${user?.displayName ?? 'Üye'}${state.streaming ? ', yayında' : ''}`}
       accessibilityHint="Seçenekler için uzun bas"
     >
-      <SpeakingRing speaking={inMyChannel && speaking} size={24}>
+      <SpeakingRing speaking={inMyChannel && speaking} intro={inMyChannel && intro} size={24}>
         <Avatar user={user} size={24} />
       </SpeakingRing>
       <Text

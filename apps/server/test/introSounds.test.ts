@@ -20,10 +20,13 @@ let ctx: AppContext;
 let dir: string;
 /** Sahte dönüştürücünün aldığı başlangıç noktaları */
 let starts: number[];
+/** Sahte dönüştürücünün aldığı süreler */
+let durations: number[];
 
 /** Sahte ffmpeg: "bozuk" ile başlayan girdi okunamaz, "boş" boş çıktı verir; diğerleri etiketlenip döner */
-const fakeTranscode: IntroSoundTranscode = async (input, startSec) => {
+const fakeTranscode: IntroSoundTranscode = async (input, startSec, durationSec) => {
   starts.push(startSec);
+  durations.push(durationSec);
   const text = input.toString();
   if (text.startsWith('bozuk')) throw new Error('Invalid data found when processing input');
   if (text.startsWith('boş')) return Buffer.alloc(0);
@@ -32,6 +35,7 @@ const fakeTranscode: IntroSoundTranscode = async (input, startSec) => {
 
 beforeEach(async () => {
   starts = [];
+  durations = [];
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diskort-intro-'));
   ({ app, ctx } = await buildApp(config, {
     dbFile: ':memory:',
@@ -161,6 +165,19 @@ describe('giriş sesi', () => {
     expect(empty.statusCode).toBe(400);
   });
 
+  it('süre: istenen süre dönüştürücüye iletilir, geçersiz süre 400, varsayılan 5 sn', async () => {
+    const { member } = await setup();
+    expect((await upload(member.token, 'ses')).statusCode).toBe(200);
+    expect((await upload(member.token, 'ses', '?duration=1.5')).statusCode).toBe(200);
+    expect((await upload(member.token, 'ses', '?start=2&duration=0.3')).statusCode).toBe(200);
+    expect(durations).toEqual([5, 1.5, 0.3]);
+    for (const query of ['?duration=0.2', '?duration=5.1', '?duration=0', '?duration=-1', '?duration=abc', '?duration=1e0', '?duration=NaN']) {
+      const res = await upload(member.token, 'ses', query);
+      expect([query, res.statusCode, res.json().error]).toEqual([query, 400, 'invalid_duration']);
+    }
+    expect(durations).toEqual([5, 1.5, 0.3]);
+  });
+
   it('boyut sınırı: 8 MB üstü 413', async () => {
     const { member } = await setup();
     const over = await upload(member.token, Buffer.alloc(INTRO_SOUND_MAX_BYTES + 1, 1));
@@ -287,16 +304,24 @@ function sineWav(seconds: number): Buffer {
 describe.skipIf(!hasFfmpeg)('ffmpeg dönüştürücü', () => {
   it('8 sn WAV en fazla 5 sn MP3 olur; bozuk girdi hata verir', async () => {
     const transcode = ffmpegTranscode(ffmpegPath);
-    const out = await transcode(sineWav(8), 1);
+    const out = await transcode(sineWav(8), 1, 5);
     // 5 sn × 96 kbps ≈ 60 KB (+ başlık); MP3 çerçeve eşlemesi ya da ID3 ile başlar
     expect(out.length).toBeGreaterThan(20_000);
     expect(out.length).toBeLessThan(80_000);
     expect(out.subarray(0, 3).toString() === 'ID3' || (out[0] === 0xff && (out[1]! & 0xe0) === 0xe0)).toBe(true);
-    await expect(transcode(Buffer.from('bu bir ses dosyası değil'), 0)).rejects.toThrow();
+    await expect(transcode(Buffer.from('bu bir ses dosyası değil'), 0, 5)).rejects.toThrow();
+  }, 30_000);
+
+  it('kısa süre istenirse çıktı o kadar kısa olur', async () => {
+    const transcode = ffmpegTranscode(ffmpegPath);
+    const out = await transcode(sineWav(8), 0, 1);
+    // 1 sn × 96 kbps ≈ 12 KB
+    expect(out.length).toBeGreaterThan(3_000);
+    expect(out.length).toBeLessThan(25_000);
   }, 30_000);
 
   it('başlangıç noktası girdinin sonunu geçerse (sesi olmayan çıktı) reddeder', async () => {
     const transcode = ffmpegTranscode(ffmpegPath);
-    await expect(transcode(sineWav(2), 30)).rejects.toMatchObject({ code: 'unsupported' });
+    await expect(transcode(sineWav(2), 30, 5)).rejects.toMatchObject({ code: 'unsupported' });
   }, 30_000);
 });

@@ -599,6 +599,7 @@ function ParticipantTile({ state, compact }: { state: VoiceState; compact?: bool
   const user = useGuild((s) => s.users[state.userId]);
   const color = useChannelMemberColor(state.userId, state.channelId);
   const speaking = useVoice((s) => s.speaking[state.userId] === true);
+  const intro = useVoice((s) => s.introPlayingUserId === state.userId);
   const selfId = useSession((s) => s.user?.id);
   const localMuted = useSettings((s) => s.localMutes[state.userId] === true);
   const openContextMenu = useUi((s) => s.openContextMenu);
@@ -612,7 +613,7 @@ function ParticipantTile({ state, compact }: { state: VoiceState; compact?: bool
       aria-label={`${user?.displayName ?? 'Üye'} profili`}
       className={cn(
         'tile-ring relative flex h-full w-full cursor-pointer items-center justify-center overflow-hidden rounded-lg',
-        speaking && 'tile-speaking',
+        intro ? 'tile-intro' : speaking && 'tile-speaking',
       )}
       style={{ background: `color-mix(in srgb, ${user?.avatarColor ?? '#5865f2'} 35%, var(--color-bg-rail))` }}
       // Kutucuğa tıklamak profil kartını kutucuğun ortasının yanında açar (yeniden tıklamak kapatır)
@@ -631,7 +632,7 @@ function ParticipantTile({ state, compact }: { state: VoiceState; compact?: bool
         }
       }}
     >
-      <Avatar user={user} size={compact ? 44 : 80} speaking={speaking} decoration={user?.avatarDecoration} />
+      <Avatar user={user} size={compact ? 44 : 80} speaking={speaking} intro={intro} decoration={user?.avatarDecoration} />
       <div
         data-stage-chrome
         className={cn(

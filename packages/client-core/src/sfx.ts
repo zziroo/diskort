@@ -518,7 +518,7 @@ export const OTHERS_QUIET_MS = 1500;
  *
  * Kişisel giriş sesi: `push('userJoin', url)` giren kişinin giriş sesi adresini (bkz. introSoundUrl) taşır.
  * Çalınacak ses "userJoin" olursa ve bekleyen bir adres varsa `play('userJoin')` yerine `playIntro(url)`
- * çağrılır. Aynı anda (OTHERS_BATCH_MS içinde) birden çok kişi girerse ilk gelen adres çalınır: sesler üst
+ * çağrılır; istemci önce genel "biri girdi" sesini, hemen ardından giriş sesini çalar (Discord sırası). Aynı anda (OTHERS_BATCH_MS içinde) birden çok kişi girerse ilk gelen adres çalınır: sesler üst
  * üste binmez, tek ses kuralı bozulmaz; sonrakiler genel ses gibi yutulur. `playIntro` verilmezse ya da
  * adres null ise (sunucu bilmiyor, kişinin sesi yok, dinleyici başkalarının giriş seslerini kapatmış) genel
  * katılma sesi çalar. Kendi girişin bu kapıdan geçmez (bağlanınca quiet() çağrılır); kendi giriş sesini

@@ -153,12 +153,24 @@
   transition-duration: 90ms;
 }
 
+/* Giriş sesi çalan kullanıcı: aynı halka, sarı (konuşma halkasının önüne geçer) */
+.intro-ring {
+  box-shadow:
+    0 0 0 2px var(--color-bg-side),
+    0 0 0 4px var(--color-warn);
+  transition-duration: 90ms;
+}
+
 .tile-ring {
   box-shadow: inset 0 0 0 0 rgb(35 165 90 / 0);
   transition: box-shadow 260ms var(--ease-out);
 }
 .tile-speaking {
   box-shadow: inset 0 0 0 2px var(--color-ok);
+  transition-duration: 90ms;
+}
+.tile-intro {
+  box-shadow: inset 0 0 0 2px var(--color-warn);
   transition-duration: 90ms;
 }
 

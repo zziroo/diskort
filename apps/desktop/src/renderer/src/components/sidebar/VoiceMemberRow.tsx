@@ -114,6 +114,7 @@ export function VoiceMemberRow({ state, inMyChannel }: { state: VoiceState; inMy
   const user = useGuild((s) => s.users[state.userId]);
   const color = useChannelMemberColor(state.userId, state.channelId);
   const speaking = useVoice((s) => inMyChannel && s.speaking[state.userId] === true);
+  const intro = useVoice((s) => inMyChannel && s.introPlayingUserId === state.userId);
   const localMuted = useSettings((s) => s.localMutes[state.userId] === true);
   const selfId = useSession((s) => s.user?.id);
   const openContextMenu = useUi((s) => s.openContextMenu);
@@ -171,9 +172,9 @@ export function VoiceMemberRow({ state, inMyChannel }: { state: VoiceState; inMy
       // Yayın yapıyorsa üstünde bekleyince "Şimdi Yayın Yapıyor" kartı; yapmıyor ama oyun oynuyorsa "Oynuyor" kartı
       {...(state.streaming ? streamCardHandlers(state) : playing ? activityCardHandlers(state) : {})}
     >
-      <Avatar user={user} size={24} speaking={speaking} />
+      <Avatar user={user} size={24} speaking={speaking} intro={intro} />
       <span
-        className={cn('flex-1 truncate text-sm transition-colors duration-200', speaking && 'text-text-head')}
+        className={cn('flex-1 truncate text-sm transition-colors duration-200', (speaking || intro) && 'text-text-head')}
         style={color ? { color } : undefined}
       >
         {user?.displayName ?? '…'}

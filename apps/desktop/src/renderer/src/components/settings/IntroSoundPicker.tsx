@@ -13,8 +13,8 @@ import { Modal } from '../ui/Modal';
 import { Slider } from '../ui/Slider';
 
 const ACCEPT = 'audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm';
-/** Bu süreden kısa (yuvarlama payıyla) ses kırpılmadan yüklenir */
-const DIRECT_MAX_S = INTRO_SOUND_MAX_SECONDS + 0.05;
+/** Giriş sesinin en kısa uzunluğu (sunucudaki INTRO_SOUND_MIN_SECONDS ile aynı) */
+const MIN_LENGTH_S = 0.3;
 /** Dalga biçimindeki çubuk sayısı */
 const BARS = 96;
 /** Bu süreden uzun ses çözülmez (PCM'e açılınca bellek şişer) */
@@ -50,8 +50,9 @@ function formatTime(s: number): string {
 
 /**
  * Giriş sesi: kullanıcının yüklediği kısa ses (en fazla INTRO_SOUND_MAX_SECONDS); ses kanalına girince
- * kanaldakiler (kendisi dahil) genel katılma sesi yerine bunu duyar. Uzun dosyada başlangıç noktası seçilir,
- * kırpma, ses yüksekliği eşitleme ve MP3'e çevirme sunucuda yapılır.
+ * kanaldakiler (kendisi dahil) genel katılma sesinin hemen ardından bunu duyar. Düzenleyicide çalınacak kesitin
+ * başlangıcı ve uzunluğu seçilir (kısa dosya da kısaltılabilir); kırpma, ses yüksekliği eşitleme ve MP3'e çevirme
+ * sunucuda yapılır.
  */
 export function IntroSoundPicker({ user }: { user: User }) {
   const input = useRef<HTMLInputElement>(null);
@@ -76,10 +77,10 @@ export function IntroSoundPicker({ user }: { user: User }) {
     [],
   );
 
-  const upload = async (file: File, start = 0): Promise<boolean> => {
+  const upload = async (file: File, clip: { start?: number; duration?: number } = {}): Promise<boolean> => {
     setBusy('upload');
     try {
-      await uploadIntroSound(localFile(file), { start });
+      await uploadIntroSound(localFile(file), clip);
       toast('Giriş sesi güncellendi.', 'success');
       return true;
     } catch (err) {
@@ -110,7 +111,8 @@ export function IntroSoundPicker({ user }: { user: User }) {
       buffer = null;
     }
     setBusy(null);
-    if (!buffer || buffer.duration <= DIRECT_MAX_S) {
+    // Çözülemeyen ya da en kısa uzunluktan kısa ses doğrudan gider (sunucu kendi kurallarıyla kırpar/reddeder)
+    if (!buffer || buffer.duration < MIN_LENGTH_S) {
       await upload(file);
       return;
     }
@@ -197,8 +199,8 @@ export function IntroSoundPicker({ user }: { user: User }) {
         </div>
       </div>
       <p className="mt-2 text-xs text-text-muted">
-        MP3, WAV, OGG, M4A… En fazla {INTRO_SOUND_MAX_SECONDS} saniye; uzunsa başlangıcı seçersin. Kanala girince herkes
-        duyar.
+        MP3, WAV, OGG, M4A… En fazla {INTRO_SOUND_MAX_SECONDS} saniye; çalınacak kısmı ve uzunluğu seçersin. Kanala
+        girince herkes katılma sesinin ardından duyar.
       </p>
       <input
         ref={input}
@@ -218,8 +220,8 @@ export function IntroSoundPicker({ user }: { user: User }) {
             buffer={editor.value.buffer}
             uploading={busy === 'upload'}
             onCancel={() => setEditing(null)}
-            onUpload={async (start) => {
-              if (await upload(editor.value!.file, start)) setEditing(null);
+            onUpload={async (clip) => {
+              if (await upload(editor.value!.file, clip)) setEditing(null);
             }}
           />
         )}
@@ -228,7 +230,10 @@ export function IntroSoundPicker({ user }: { user: User }) {
   );
 }
 
-/** Uzun seste giriş sesi olacak INTRO_SOUND_MAX_SECONDS saniyelik kesitin başlangıcını seçme penceresi */
+/**
+ * Giriş sesi olacak kesiti seçme penceresi: başlangıç ve uzunluk (MIN_LENGTH_S – INTRO_SOUND_MAX_SECONDS).
+ * Dalga biçimine tıklamak ya da üstünde sürüklemek kesiti oraya taşır.
+ */
 function IntroSoundEditor({
   file,
   buffer,
@@ -240,14 +245,18 @@ function IntroSoundEditor({
   buffer: AudioBuffer;
   uploading: boolean;
   onCancel: () => void;
-  onUpload: (start: number) => Promise<void>;
+  onUpload: (clip: { start: number; duration: number }) => Promise<void>;
 }) {
   const duration = buffer.duration;
-  const maxStart = Math.max(0, Math.min(duration - INTRO_SOUND_MAX_SECONDS, 3600));
+  const maxLength = Math.min(INTRO_SOUND_MAX_SECONDS, duration);
+  const minLength = Math.min(MIN_LENGTH_S, maxLength);
+  const [length, setLength] = useState(maxLength);
   const [start, setStart] = useState(0);
+  const maxStart = Math.max(0, Math.min(duration - length, 3600));
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
   const playToken = useRef(0);
+  const dragging = useRef(false);
   const peaks = useMemo(() => wavePeaks(buffer, BARS), [buffer]);
 
   const stop = (): void => {
@@ -269,6 +278,14 @@ function IntroSoundEditor({
     setStart(clamp(Math.round(value * 10) / 10, 0, maxStart));
   };
 
+  const chooseLength = (value: number): void => {
+    stop();
+    const next = clamp(Math.round(value * 10) / 10, minLength, maxLength);
+    setLength(next);
+    // Kesit sesin sonunu aşmasın
+    setStart((s) => clamp(s, 0, Math.max(0, duration - next)));
+  };
+
   const listen = (): void => {
     if (playing) {
       stop();
@@ -277,29 +294,29 @@ function IntroSoundEditor({
     playingRef.current = true;
     setPlaying(true);
     const token = ++playToken.current;
-    previewIntroClip(buffer, start, () => {
+    previewIntroClip(buffer, start, length, () => {
       if (token !== playToken.current) return; // eski kaynağın bitişi yenisini sıfırlamasın
       playingRef.current = false;
       setPlaying(false);
     });
   };
 
-  // Dalga biçimine tıklayınca kesit tıklanan yerin ortasına gelir
-  const onWavePointer = (e: ReactPointerEvent<HTMLDivElement>): void => {
+  // Dalga biçimine tıklayınca (ve sürükledikçe) kesit imlecin ortasına gelir
+  const moveTo = (e: ReactPointerEvent<HTMLDivElement>): void => {
     const rect = e.currentTarget.getBoundingClientRect();
     const at = ((e.clientX - rect.left) / rect.width) * duration;
-    choose(at - INTRO_SOUND_MAX_SECONDS / 2);
+    choose(at - length / 2);
   };
 
   const from = start / duration;
-  const to = Math.min(1, (start + INTRO_SOUND_MAX_SECONDS) / duration);
+  const to = Math.min(1, (start + length) / duration);
 
   return createPortal(
     // Ayarlar penceresinin üstünde açılsın
     <div className="relative z-[60]">
       <Modal
         title="Giriş sesini seç"
-        subtitle={`Ses ${formatTime(duration)} uzunluğunda; çalınacak ${INTRO_SOUND_MAX_SECONDS} saniyeyi seç.`}
+        subtitle={`Ses ${formatTime(duration)} uzunluğunda; çalınacak kısmı seç (en fazla ${INTRO_SOUND_MAX_SECONDS} saniye).`}
         onClose={() => !uploading && onCancel()}
         className="w-[480px]"
         footer={
@@ -311,7 +328,7 @@ function IntroSoundEditor({
               disabled={uploading}
               onClick={() => {
                 stop();
-                void onUpload(start);
+                void onUpload({ start, duration: length });
               }}
             >
               {uploading ? 'Yükleniyor…' : 'Yükle'}
@@ -323,8 +340,21 @@ function IntroSoundEditor({
           {file.name}
         </div>
         <div
-          className="relative flex h-16 cursor-pointer items-center gap-px overflow-hidden rounded-md bg-bg-deep px-1"
-          onPointerDown={onWavePointer}
+          className="relative flex h-16 cursor-pointer touch-none items-center gap-px overflow-hidden rounded-md bg-bg-deep px-1"
+          onPointerDown={(e) => {
+            dragging.current = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            moveTo(e);
+          }}
+          onPointerMove={(e) => {
+            if (dragging.current) moveTo(e);
+          }}
+          onPointerUp={() => {
+            dragging.current = false;
+          }}
+          onPointerCancel={() => {
+            dragging.current = false;
+          }}
           role="presentation"
         >
           {peaks.map((p, i) => {
@@ -354,18 +384,31 @@ function IntroSoundEditor({
           >
             {playing ? <Square size={14} /> : <Play size={14} className="ml-0.5" />}
           </button>
-          <Slider
-            className="flex-1"
-            aria-label="Başlangıç"
-            min={0}
-            max={Math.round(maxStart * 10)}
-            step={1}
-            value={Math.round(start * 10)}
-            onValueChange={(v) => choose(v / 10)}
-          />
-          <span className="shrink-0 text-xs text-text-muted tabular-nums">
-            {formatTime(start)} – {formatTime(Math.min(duration, start + INTRO_SOUND_MAX_SECONDS))}
-          </span>
+          <div className="grid flex-1 grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2">
+            <span className="text-xs text-text-muted">Başlangıç</span>
+            <Slider
+              aria-label="Başlangıç"
+              min={0}
+              max={Math.round(maxStart * 10)}
+              step={1}
+              value={Math.round(start * 10)}
+              disabled={maxStart <= 0}
+              onValueChange={(v) => choose(v / 10)}
+            />
+            <span className="text-xs text-text-muted">Uzunluk</span>
+            <Slider
+              aria-label="Uzunluk"
+              min={Math.round(minLength * 10)}
+              max={Math.round(maxLength * 10)}
+              step={1}
+              value={Math.round(length * 10)}
+              disabled={maxLength <= minLength}
+              onValueChange={(v) => chooseLength(v / 10)}
+            />
+          </div>
+        </div>
+        <div className="mt-2 text-right text-xs text-text-muted tabular-nums">
+          {formatTime(start)} – {formatTime(Math.min(duration, start + length))} ({length.toFixed(1)} sn)
         </div>
       </Modal>
     </div>,

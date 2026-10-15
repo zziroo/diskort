@@ -13,6 +13,8 @@ import type { Store } from './db.js';
 export const INTRO_SOUND_HASH = AVATAR_HASH;
 /** İstemcinin seçebileceği en geç başlangıç noktası (saniye) */
 export const INTRO_SOUND_MAX_START = 3600;
+/** İstemcinin seçebileceği en kısa klip süresi (saniye); sondaki 0,3 sn'lik kısılma sığsın diye */
+export const INTRO_SOUND_MIN_SECONDS = 0.3;
 /** Dönüştürülmüş sesin en büyük boyutu: 5 sn × 96 kbps ≈ 60 KB; bunun çok üstü bozuk çıktı demektir */
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MIN_OUTPUT_BYTES = 1000;
@@ -21,23 +23,23 @@ const TRANSCODE_TIMEOUT_MS = 20_000;
 /** Veritabanında karşılığı olmayan dosyalar için bekleme süresi (yarım kalan işlem, eski yedek) */
 const ORPHAN_GRACE_MS = 60 * 60_000;
 
-/** Yüklenen sesi `startSec`'ten başlayarak en fazla INTRO_SOUND_MAX_SECONDS saniyelik MP3'e çevirir. */
-export type IntroSoundTranscode = (input: Buffer, startSec: number) => Promise<Buffer>;
+/** Yüklenen sesi `startSec`'ten başlayarak `durationSec` saniyelik (en çok INTRO_SOUND_MAX_SECONDS) MP3'e çevirir. */
+export type IntroSoundTranscode = (input: Buffer, startSec: number, durationSec: number) => Promise<Buffer>;
 
 /**
  * Varsayılan dönüştürücü: ffmpeg (yol FFMPEG_PATH, yoksa PATH'teki ffmpeg). Girdi geçici dosyaya yazılır:
  * MP4/M4A'da "moov" bölümü dosyanın sonunda olabilir ve borudan (stdin) okununca bulunamaz. Ses 48 kHz mono,
- * ses yüksekliği eşitlenmiş (loudnorm), son 0,3 sn'de kısılan 96 kbps MP3 olur; üst veriler (ID3 etiketleri,
+ * ses yüksekliği eşitlenmiş (loudnorm, hedef -20 LUFS: istemciler zaten kısık çalar, yeni yüklemeler daha sessiz gelir), klibin son 0,3 sn'sinde kısılan 96 kbps MP3 olur; üst veriler (ID3 etiketleri,
  * kapak resmi) atılır. TRANSCODE_TIMEOUT_MS'de bitmezse süreç öldürülür.
  */
 export function ffmpegTranscode(ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg'): IntroSoundTranscode {
-  return async (input, startSec) => {
+  return async (input, startSec, durationSec) => {
     const work = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'diskort-intro-'));
     const inFile = path.join(work, 'input');
     const outFile = path.join(work, 'output.mp3');
     try {
       await fs.promises.writeFile(inFile, input);
-      const fadeStart = INTRO_SOUND_MAX_SECONDS - 0.3;
+      const fadeStart = Math.max(0, durationSec - 0.3);
       const args = [
         '-hide_banner', '-loglevel', 'error', '-nostdin',
         // Girdi güvenilmez: m3u8 gibi çalma listeleri ffmpeg'e http adresleri indirtebilir (SSRF);
@@ -46,10 +48,10 @@ export function ffmpegTranscode(ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg'
         '-format_whitelist', 'mp3,wav,ogg,mov,mp4,m4a,matroska,webm,aac,flac,aiff',
         '-ss', startSec.toFixed(3),
         '-i', inFile,
-        '-t', String(INTRO_SOUND_MAX_SECONDS),
+        '-t', durationSec.toFixed(3),
         '-vn', '-sn', '-dn', '-map_metadata', '-1',
         '-ac', '1', '-ar', '48000',
-        '-af', `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=${fadeStart}:d=0.3`,
+        '-af', `loudnorm=I=-20:TP=-1.5:LRA=11,afade=t=out:st=${fadeStart.toFixed(3)}:d=0.3`,
         '-c:a', 'libmp3lame', '-b:a', '96k',
         '-f', 'mp3', '-y', outFile,
       ];
@@ -96,6 +98,14 @@ export function parseIntroStart(value: unknown): number | null {
   return Number.isFinite(n) && n >= 0 && n <= INTRO_SOUND_MAX_START ? n : null;
 }
 
+/** `duration` sorgu değerini doğrular: boşsa INTRO_SOUND_MAX_SECONDS, değilse 0,3..5 arası sonlu sayı; geçersizse null. */
+export function parseIntroDuration(value: unknown): number | null {
+  if (value === undefined || value === '') return INTRO_SOUND_MAX_SECONDS;
+  if (typeof value !== 'string' || !/^\d+(\.\d+)?$/.test(value)) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= INTRO_SOUND_MIN_SECONDS && n <= INTRO_SOUND_MAX_SECONDS ? n : null;
+}
+
 /**
  * Kişisel giriş sesleri: yüklenen ses (MP3, WAV, OGG, M4A, WebM, AAC, FLAC; ne olduğuna ffmpeg bakar)
  * istenen başlangıç noktasından en fazla 5 sn'lik, ses yüksekliği eşitlenmiş 48 kHz mono MP3'e çevrilir ve
@@ -118,15 +128,18 @@ export class IntroSoundService {
   }
 
   /** Gövdeyi okur, dönüştürür ve kullanıcının giriş sesi yapar; eskisini siler. */
-  async upload(userId: string, body: Readable, declaredSize: number | null, startSec = 0): Promise<User> {
+  async upload(userId: string, body: Readable, declaredSize: number | null, startSec = 0, durationSec = INTRO_SOUND_MAX_SECONDS): Promise<User> {
     if (!Number.isFinite(startSec) || startSec < 0 || startSec > INTRO_SOUND_MAX_START) {
       throw new UploadError(400, 'invalid_start', 'Başlangıç noktası geçersiz.');
+    }
+    if (!Number.isFinite(durationSec) || durationSec < INTRO_SOUND_MIN_SECONDS || durationSec > INTRO_SOUND_MAX_SECONDS) {
+      throw new UploadError(400, 'invalid_duration', 'Süre geçersiz.');
     }
     const input = await readLimited(body, declaredSize, INTRO_SOUND_MAX_BYTES, 'Ses dosyası');
     return this.serial(async () => {
       let output: Buffer;
       try {
-        output = await this.transcode(input, startSec);
+        output = await this.transcode(input, startSec, durationSec);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
           this.log?.warn({ err: String(err) }, 'ffmpeg bulunamadı; giriş sesi işlenemiyor');

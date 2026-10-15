@@ -37,7 +37,7 @@ import { Dimensions, PermissionsAndroid, PixelRatio, Platform } from 'react-nati
 import { create } from 'zustand';
 import { VoiceService } from '../../modules/voice-service';
 import { soundCue, type SoundEvent } from '../haptics';
-import { introSoundsEnabled, playIntroSound, stopIntroSound } from '../sounds';
+import { INTRO_AFTER_CUE_MS, introSoundsEnabled, playIntroSound, stopIntroSound } from '../sounds';
 import { getSettings, useSettings } from '../stores/settings';
 import { toast } from '../stores/ui';
 import { MicGate, SILENT_LEVEL, type GateConfig, type MicLevel } from './micGate';
@@ -102,6 +102,8 @@ interface VoiceStore {
   status: VoiceStatus;
   /** Konuşan kullanıcılar */
   speaking: Record<string, true>;
+  /** Giriş sesi şu an çalan kullanıcı (avatarında konuşma halkası yerine sarı halka) */
+  introPlayingUserId: string | null;
   /** Kanalda yayın yapan kullanıcılar */
   streams: Record<string, true>;
   /** Yayınında ses de olan kullanıcılar */
@@ -128,6 +130,7 @@ export type VoiceQuality = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown';
 
 const IDLE: Omit<VoiceStore, 'channelId' | 'status'> = {
   speaking: {},
+  introPlayingUserId: null,
   streams: {},
   streamAudio: {},
   watching: null,
@@ -226,11 +229,16 @@ class MobileVoiceClient {
   private readonly gate = new MicGate((micLevel) => useVoice.setState({ micLevel }));
   /** Başkalarının kanal olaylarının sesleri (bağlanınca sel olmasın, art arda gelenler tek ses) */
   // Kapıdan yalnızca başkalarının olayları (userJoin, userStream…) geçer; hepsi SoundEvent
-  // Biri girince (sesi varsa) kendi giriş sesi çalar, yoksa genel "biri girdi" sesi
+  // Biri girince önce genel "biri girdi" sesi, sesi varsa ardından kendi giriş sesi (Discord'daki gibi)
   private readonly channelSounds = new ChannelSoundGate(
     (name) => soundCue(name as SoundEvent),
-    (url) => playIntroSound(url),
+    (url) => {
+      soundCue('userJoin');
+      this.playIntro(url, this.introOwners.get(url));
+    },
   );
+  /** Giriş sesi adresi → sahibi (kapı yalnızca adresi taşır; halka için kimin sesi olduğu buradan bulunur) */
+  private readonly introOwners = new Map<string, string>();
   /** Bağlantı birkaç saniyede geri gelmezse "koptu" sesi; geri gelince "geri geldi" */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lostSoundPlayed = false;
@@ -398,10 +406,10 @@ class MobileVoiceClient {
       // kesiliyordu
       this.channelSounds.quiet();
       if (!opts.silent) {
-        // Kendi giriş sesin varsa genel "katıldın" sesi yerine o çalar (kanaldakiler de onu duyar)
+        // Kendi giriş sesin varsa genel "katıldın" sesinin ardından o çalar (kanaldakiler de onu duyar)
         const own = introSoundsEnabled() ? introSoundUrl(useSession.getState().user) : null;
-        if (own) playIntroSound(own, { own: true });
-        else soundCue('join');
+        soundCue('join');
+        if (own) this.playIntro(own, useSession.getState().user?.id, true);
       }
       // Konuşma izni yoksa (ya da sunucuda susturulduysa) yalnızca dinlenir; izin gelince açılır
       if (micGranted && !this.micMuted()) await room.localParticipant.setMicrophoneEnabled(true, captureOptions());
@@ -781,8 +789,10 @@ class MobileVoiceClient {
       })
       .on(RoomEvent.ParticipantConnected, (p) => {
         if (this.room !== room) return;
-        // Girenin giriş sesi (yoksa, kapalıysa ya da seviye 0'sa null: genel "biri girdi" sesi)
-        this.channelSounds.push('userJoin', introSoundsEnabled() ? introSoundUrl(useGuild.getState().users[p.identity]) : null);
+        // Girenin giriş sesi (yoksa, kapalıysa ya da seviye 0'sa null: yalnızca genel "biri girdi" sesi)
+        const intro = introSoundsEnabled() ? introSoundUrl(useGuild.getState().users[p.identity]) : null;
+        if (intro) this.introOwners.set(intro, p.identity);
+        this.channelSounds.push('userJoin', intro);
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         useVoice.setState((s) => streamGone(s, p.identity));
@@ -883,6 +893,23 @@ class MobileVoiceClient {
   }
 
   /**
+   * Genel katılma sesinden INTRO_AFTER_CUE_MS sonra giriş sesini çalar; çaldığı sürece sahibinin
+   * avatarında giriş halkası yanar (introPlayingUserId).
+   */
+  private playIntro(url: string, userId: string | undefined, own = false): void {
+    playIntroSound(url, {
+      own,
+      delayMs: INTRO_AFTER_CUE_MS,
+      onStart: () => {
+        if (userId) useVoice.setState({ introPlayingUserId: userId });
+      },
+      onEnd: () => {
+        if (userId && useVoice.getState().introPlayingUserId === userId) useVoice.setState({ introPlayingUserId: null });
+      },
+    });
+  }
+
+  /**
    * Odayı kapatır, ses oturumunu ve ön plan servisini durdurur. Kapatmalar sırayla yapılır: önceki
    * kapatma (ör. yavaş kapanan oda) yeni katılmadan sonra bitip yeni bağlantının ses oturumunu ve ön
    * plan servisini durdurmasın; servissiz kalan ses arka planda Android tarafından kısıtlanır.
@@ -893,6 +920,7 @@ class MobileVoiceClient {
     this.room = null;
     this.channelSounds.cancel();
     stopIntroSound();
+    this.introOwners.clear();
     this.clearReconnectTimer();
     this.gate.detach();
     // DPDFNet yeniden denemesi ayrılış sırasında modeli yükleyip mikrofonu yeniden açmasın

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { avatarUrl, streamPreviewHeaders, streamPreviewUrl, useChannelMemberColor, useGuild } from '@diskort/client-core';
@@ -46,12 +46,15 @@ function TileFrame({
   width,
   height,
   edge,
+  edgeColor,
   dark,
   children,
 }: {
   width: number;
   height: number;
   edge?: Animated.Value;
+  /** Kenar rengi (verilmezse konuşma yeşili); yalnızca renk değişir, kalınlık sabit */
+  edgeColor?: string;
   dark?: boolean;
   children: ReactNode;
 }) {
@@ -73,7 +76,7 @@ function TileFrame({
       ]}
     >
       {children}
-      {edge && <Animated.View pointerEvents="none" style={[styles.tileEdge, { opacity: edge }]} />}
+      {edge && <Animated.View pointerEvents="none" style={[styles.tileEdge, { opacity: edge }, edgeColor ? { borderColor: edgeColor } : null]} />}
     </Animated.View>
   );
 }
@@ -94,8 +97,14 @@ export const MemberTile = memo(function MemberTile({ state, width, height, selfI
   const user = useGuild((s) => s.users[state.userId]);
   const color = useChannelMemberColor(state.userId, state.channelId);
   const speaking = useVoice((s) => Boolean(s.speaking[state.userId]));
+  // Giriş sesi çalarken halka ve kenar sarı (konuşmanın önüne geçer)
+  const intro = useVoice((s) => s.introPlayingUserId === state.userId);
+  const lit = speaking || intro;
+  // Sönüş sırasında kenar rengi son haliyle kalsın
+  const lastIntro = useRef(false);
+  if (lit) lastIntro.current = intro;
   // Konuşma kenarı: açılışı hızlı, sönüşü yavaş (kısa sessizliklerde titremez)
-  const edge = useTimingTo(speaking ? 1 : 0, speaking ? 90 : 280);
+  const edge = useTimingTo(lit ? 1 : 0, lit ? 90 : 280);
   const self = state.userId === selfId;
   const { avatar, stage } = stageFor(height);
   return (
@@ -105,9 +114,9 @@ export const MemberTile = memo(function MemberTile({ state, width, height, selfI
       accessibilityLabel={`${user?.displayName ?? 'Üye'}${speaking ? ', konuşuyor' : ''}${state.streaming ? ', yayında' : ''}`}
       accessibilityHint="Ses seviyesi ve seçenekler için uzun bas"
     >
-      <TileFrame width={width} height={height} edge={edge}>
+      <TileFrame width={width} height={height} edge={edge} edgeColor={lastIntro.current ? colors.warn : undefined}>
         <View style={[styles.stage, { width: stage, height: stage }]}>
-          <SpeakingRing speaking={speaking} size={avatar}>
+          <SpeakingRing speaking={speaking} intro={intro} size={avatar}>
             {/* Dekorasyon sabit resimdir (konuşurken de): katılımcı kadar oynatıcı sesle yarışmasın */}
             <Avatar user={user} size={avatar} decoration={user?.avatarDecoration} />
           </SpeakingRing>

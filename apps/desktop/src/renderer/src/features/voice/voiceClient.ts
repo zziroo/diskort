@@ -115,6 +115,7 @@ const PROTO_SOURCE = { microphone: 2, screenShare: 3 } as const;
 const RESET_ROOM_STATE = {
   micAllowed: true,
   speaking: {},
+  introPlayingUserId: null,
   streams: {},
   watching: {},
   focusedStream: null,
@@ -247,8 +248,10 @@ class VoiceClient {
   /** Başkalarının kanal olaylarının sesleri (bağlanınca sel olmasın, art arda gelenler tek ses) */
   private readonly channelSounds = new ChannelSoundGate(
     (name) => playSound(name),
-    (url) => void playIntroSound(url),
+    (url) => this.playIntro(url, this.introOwners.get(url) ?? null, false),
   );
+  /** Kapıya verilen giriş sesi adreslerinin sahipleri (adres → kullanıcı; çalarken halkası yansın diye) */
+  private readonly introOwners = new Map<string, string>();
   /** Bağlantı kısa süre içinde geri gelmezse "koptu" sesi; geri gelince "geri geldi" */
   private reconnectTimer: number | null = null;
   private lostSoundPlayed = false;
@@ -377,9 +380,10 @@ class VoiceClient {
         const waited = new Promise((resolve) => setTimeout(resolve, JOIN_SOUND_MAX_WAIT_MS));
         void Promise.race([micReady.catch(() => undefined), waited]).then(() => {
           if (seq !== this.joinSeq || this.room !== room) return;
-          // Kendi giriş sesin varsa (ve giriş sesleri açıksa) genel "katıldın" sesi yerine o çalar
-          const own = introSoundsEnabled() ? introSoundUrl(useSession.getState().user) : null;
-          if (own) void playIntroSound(own, { fallback: 'join', own: true });
+          // Kendi giriş sesin varsa (ve giriş sesleri açıksa) genel "katıldın" sesinin hemen ardından o çalar
+          const me = useSession.getState().user;
+          const own = introSoundsEnabled() ? introSoundUrl(me) : null;
+          if (own && me) this.playIntro(own, me.id, true);
           else playSound('join');
         });
       }
@@ -462,7 +466,31 @@ class VoiceClient {
    */
   private introFor(userId: string): string | null {
     if (!introSoundsEnabled()) return null;
-    return introSoundUrl(useGuild.getState().users[userId]);
+    const url = introSoundUrl(useGuild.getState().users[userId]);
+    if (url) {
+      // Adres kullanıcı kimliğini ve içerik özetini taşır (kişiye özgü); liste büyümesin diye son 32 adres tutulur
+      this.introOwners.delete(url);
+      this.introOwners.set(url, userId);
+      if (this.introOwners.size > 32) this.introOwners.delete(this.introOwners.keys().next().value!);
+    }
+    return url;
+  }
+
+  /**
+   * Giriş sesini genel katılma sesinin ardından çalar (başkası için "userJoin", kendin için "join"); ses
+   * duyulduğu sürece o kişinin avatarında giriş sesi halkası yanar.
+   */
+  private playIntro(url: string, userId: string | null, own: boolean): void {
+    void playIntroSound(url, {
+      own,
+      lead: own ? 'join' : 'userJoin',
+      onStart: () => {
+        if (userId) setVoice({ introPlayingUserId: userId });
+      },
+      onEnd: () => {
+        if (userId && useVoice.getState().introPlayingUserId === userId) setVoice({ introPlayingUserId: null });
+      },
+    });
   }
 
   private async teardownRoom(): Promise<void> {
