@@ -1,7 +1,7 @@
 // Dosya ekleri (Android ve iOS): dosya/resim seçme, yükleme (yerel dosyayı ham gövde olarak) ve gelen dosyayı
 // indirip telefondaki uygun uygulamayla açma.
-import type { Attachment } from '@diskort/shared';
-import { attachmentUrl, safeDecodeURIComponent, type LocalFile, type UploadRequest, type UploadResponse } from '@diskort/client-core';
+import { INTRO_SOUND_MAX_BYTES, type Attachment } from '@diskort/shared';
+import { attachmentUrl, formatBytes, safeDecodeURIComponent, type LocalFile, type UploadRequest, type UploadResponse } from '@diskort/client-core';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
@@ -95,6 +95,21 @@ export async function pickBanner(): Promise<LocalFile | null> {
   if (result.canceled || !result.assets[0]) return null;
   const a = result.assets[0];
   return withSize({ name: a.fileName ?? baseName(a.uri), type: a.mimeType ?? 'image/jpeg', uri: a.uri });
+}
+
+/**
+ * Giriş sesi için tek ses dosyası seçtirir (sistemin dosya seçicisi). Kırpmayı, ses yüksekliğini ve MP3'e
+ * çevirmeyi sunucu yapar (ilk INTRO_SOUND_MAX_SECONDS saniye). Çok büyük dosyada hata fırlatır.
+ */
+export async function pickIntroSound(): Promise<LocalFile | null> {
+  const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*'], copyToCacheDirectory: true });
+  if (result.canceled || !result.assets[0]) return null;
+  const a = result.assets[0];
+  const file = await withSize({ name: a.name, size: a.size, type: a.mimeType ?? 'application/octet-stream', uri: a.uri });
+  if (file.size > INTRO_SOUND_MAX_BYTES) {
+    throw new Error(`Ses dosyası çok büyük (en fazla ${formatBytes(INTRO_SOUND_MAX_BYTES)}).`);
+  }
+  return file;
 }
 
 /** Herhangi bir dosya seçer (sistemin dosya seçicisi). */

@@ -4,6 +4,7 @@
 // Çıkış aygıtı: sesler seçili çıkış aygıtından (Ayarlar → Ses ve Görüntü → Çıkış Aygıtı) çalınır. Aygıt değişimi
 // (setSinkId) bitmeden çalınan ses eskiden kayboluyordu (ilk ses genelde "katıldın" sesiydi); artık
 // aygıt hazır olana dek beklenir.
+import { INTRO_SOUND_MAX_SECONDS } from '@diskort/shared';
 import {
   CALL_SOUND_REPEAT_MS,
   OTHERS_SOUNDS,
@@ -16,6 +17,7 @@ import {
 } from '@diskort/client-core';
 import { getSettings, useSettings } from '../stores/settings';
 import { resolveOutputSink } from '../features/voice/outputSink';
+import { createPromiseLru } from './promiseLru';
 
 export type { SoundName } from '@diskort/client-core';
 
@@ -137,7 +139,7 @@ function allowed(name: SoundName): boolean {
 }
 
 /**
- * Sesi çalar. `preview`: ayarlardaki dinleme düğmesi (açık/kapalı ayarlarına bakılmaz).
+ * Sesi çalar. `own`: kendi girişin (sağırlaştırma kontrolü atlanır; kendi eylemin hep sesli). `preview`: ayarlardaki dinleme düğmesi (açık/kapalı ayarlarına bakılmaz).
  */
 export function playSound(name: SoundName, opts: { preview?: boolean } = {}): void {
   if (!opts.preview && !allowed(name)) return;
@@ -153,6 +155,134 @@ export function playSound(name: SoundName, opts: { preview?: boolean } = {}): vo
       src.start(ac.currentTime + 0.005);
     })
     .catch(() => undefined);
+}
+
+// ---------- Kişisel giriş sesleri ----------
+
+/** Çözülmüş giriş sesleri (adres → ses); adresler değişmez (içerik özeti adreste), en son kullanılan 16 tanesi tutulur */
+const introBuffers = createPromiseLru<AudioBuffer>(16, async (url) => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`giriş sesi alınamadı: HTTP ${res.status}`);
+  return sharedAudioContext().decodeAudioData(await res.arrayBuffer());
+});
+
+/** Çalan giriş sesi (aynı anda tek giriş sesi çalar; yenisi eskisini susturur) */
+let intro: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+/** Her başlatma/durdurmada artar: indirme ya da çözme bitene dek başka bir ses başladıysa eski sonuç çalınmaz */
+let introGen = 0;
+/** Bitişte yumuşak kısılma (sunucu da kısar; önizlemede kesit ortadan kesildiği için gerekli) */
+const INTRO_FADE_S = 0.25;
+
+/** Giriş seslerinin seviyesi: dinleme düğmeleri ayar kapalıyken (0) de duyulsun diye tam seviyeye düşer */
+const introVolume = (preview: boolean): number => {
+  const v = getSettings().introSoundVolume;
+  return preview && v <= 0 ? 1 : v;
+};
+
+/**
+ * Giriş sesleri çalınabilir mi (seslerin açık olması ve seviyenin 0 olmaması). Kapalıysa giriş sesi yerine genel
+ * katılma sesi çalınır (ses kanalı bunu kapıya null adres vererek sağlar).
+ */
+export function introSoundsEnabled(): boolean {
+  const s = getSettings();
+  return s.sounds && s.introSoundVolume > 0;
+}
+
+function startIntro(ac: AudioContext, buf: AudioBuffer, gainValue: number, offset: number, duration: number, onEnd?: () => void): void {
+  stopIntroNodes();
+  const gain = ac.createGain();
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  src.connect(gain).connect(ac.destination);
+  const at = ac.currentTime + 0.005;
+  const length = Math.max(0.05, Math.min(duration, buf.duration - offset));
+  gain.gain.setValueAtTime(gainValue, at);
+  // Kesitin sonunda kısılarak biter (önizlemede pencere sesin ortasında kapanır, tık sesi olmasın)
+  const fadeAt = at + Math.max(0, length - INTRO_FADE_S);
+  gain.gain.setValueAtTime(gainValue, fadeAt);
+  gain.gain.linearRampToValueAtTime(0.0001, at + length);
+  const current = { src, gain };
+  src.onended = () => {
+    src.disconnect();
+    gain.disconnect();
+    if (intro === current) intro = null;
+    onEnd?.();
+  };
+  intro = current;
+  src.start(at, offset, length);
+}
+
+function stopIntroNodes(): void {
+  const current = intro;
+  intro = null;
+  if (!current) return;
+  try {
+    // Kısa kısılma: aniden kesilen ses tık yapar
+    const t = current.gain.context.currentTime;
+    current.gain.gain.cancelScheduledValues(t);
+    current.gain.gain.setTargetAtTime(0, t, 0.015);
+    current.src.stop(t + 0.08);
+  } catch {
+    // zaten bitmiş
+  }
+}
+
+/**
+ * Kişisel giriş sesini (bkz. introSoundUrl) seçili çıkış aygıtından çalar; çalan önceki giriş sesini susturur.
+ * Ayarlar (sesler kapalı, giriş sesi seviyesi 0) ya da sağırlaştırma giriş sesine izin vermiyorsa, ya da ses
+ * alınamaz/çözülemezse yerine `fallback` (varsayılan genel "biri girdi") sesi çalınır; o da kendi kurallarına
+ * uyar. `preview`: ayarlardaki dinleme düğmesi (ayarlara bakılmaz, yedek ses çalmaz). Ses çaldıysa true döner.
+ */
+export async function playIntroSound(
+  url: string,
+  opts: { preview?: boolean; own?: boolean; fallback?: SoundName; onEnd?: () => void } = {},
+): Promise<boolean> {
+  const preview = opts.preview === true;
+  const fallback = opts.fallback ?? 'userJoin';
+  if (!preview && (!introSoundsEnabled() || (!opts.own && selfDeafened()))) {
+    playSound(fallback);
+    return false;
+  }
+  const gen = ++introGen;
+  stopIntroNodes();
+  try {
+    const [ac, buf] = await Promise.all([ready(), introBuffers.get(url)]);
+    if (gen !== introGen) return false; // bu arada başka bir giriş sesi başladı ya da kanaldan çıkıldı
+    startIntro(ac, buf, introVolume(preview), 0, INTRO_SOUND_MAX_SECONDS + 0.5, opts.onEnd);
+    return true;
+  } catch {
+    if (gen === introGen && !preview) playSound(fallback);
+    return false;
+  }
+}
+
+/**
+ * Yüklenmeden önceki sesin seçilen kesitini (başlangıç `start`, en fazla INTRO_SOUND_MAX_SECONDS) dinletir;
+ * giriş sesiyle aynı yoldan çalar (çalan giriş sesini susturur), sonunda kısılarak biter.
+ */
+export function previewIntroClip(buf: AudioBuffer, start: number, onEnd?: () => void): void {
+  const gen = ++introGen;
+  stopIntroNodes();
+  void ready()
+    .then((ac) => {
+      if (gen !== introGen) {
+        onEnd?.(); // bu arada başka bir ses başladı ya da durduruldu
+        return;
+      }
+      startIntro(ac, buf, introVolume(true), Math.max(0, start), INTRO_SOUND_MAX_SECONDS, onEnd);
+    })
+    .catch(() => onEnd?.());
+}
+
+/** Çalan (ya da indirilmekte olan) giriş sesini susturur: kanaldan çıkınca, bağlantı kopunca, dinleme bitince */
+export function stopIntroSound(): void {
+  introGen++;
+  stopIntroNodes();
+}
+
+/** Seçilen ses dosyasını çözer (giriş sesi düzenleyicisi: süre ve dinleme için) */
+export function decodeAudioFile(data: ArrayBuffer): Promise<AudioBuffer> {
+  return sharedAudioContext().decodeAudioData(data);
 }
 
 // ---------- Arama sesleri (döngülü) ----------

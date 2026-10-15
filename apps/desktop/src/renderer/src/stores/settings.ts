@@ -61,6 +61,11 @@ export interface Settings {
   notificationSound: boolean;
   /** Bas-konuş tuşuna basınca ve bırakınca kısa ses */
   pttSounds: boolean;
+  /**
+   * Başkalarının (ve kendi) giriş sesinin seviyesi (0–1); 0 = kapalı: giriş sesi yerine genel "biri girdi"
+   * sesi çalar. Seslerin kapalı olması ve sağırlaştırma da giriş seslerini susturur (bkz. lib/sfx.ts).
+   */
+  introSoundVolume: number;
   /** Arayüz teması (bkz. apps/desktop/src/shared/themes.ts; varsayılan Siyah) */
   theme: ThemeId;
   /** Kanal/konuşma listesinin genişliği (px); sohbetle arasındaki çizgi sürüklenerek değişir */
@@ -104,6 +109,7 @@ const defaults: Settings = {
   sounds: true,
   notificationSound: true,
   pttSounds: false,
+  introSoundVolume: 1,
   theme: DEFAULT_THEME,
   sidebarWidth: SIDEBAR_WIDTH.default,
   selfMute: false,
@@ -138,6 +144,7 @@ function sanitize(saved: Partial<Settings>): Partial<Settings> {
     const v = s[key];
     if (v !== undefined) s[key] = clampVolume(v);
   }
+  if (s.introSoundVolume !== undefined) s.introSoundVolume = Math.min(1, clampVolume(s.introSoundVolume));
   if (s.screenPreset !== undefined && !SCREEN_PRESET_IDS.includes(s.screenPreset)) s.screenPreset = defaults.screenPreset;
   if (s.sidebarWidth !== undefined) s.sidebarWidth = clampSidebarWidth(s.sidebarWidth);
   if (s.theme !== undefined && !isThemeId(s.theme)) s.theme = defaults.theme;

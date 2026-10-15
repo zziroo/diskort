@@ -364,11 +364,14 @@ export {
   avatarUrl,
   bannerUrl,
   formatBytes,
+  introSoundUrl,
   removeAvatar,
   removeBanner,
+  removeIntroSound,
   updateProfileLook,
   uploadAvatar,
   uploadBanner,
+  uploadIntroSound,
 } from './uploads';
 export {
   EMOJI_CATEGORIES,

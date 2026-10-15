@@ -117,6 +117,7 @@ export const api = {
   updateMe: (body: UpdateMeRequest) => request<User>('PATCH', '/api/me', body),
   removeAvatar: () => request<User>('DELETE', '/api/me/avatar'),
   removeBanner: () => request<User>('DELETE', '/api/me/banner'),
+  removeIntroSound: () => request<User>('DELETE', '/api/me/intro-sound'),
   changePassword: (body: ChangePasswordRequest) => request<AuthResponse>('POST', '/api/me/password', body),
   deleteAccount: (body: DeleteAccountRequest) => request<void>('DELETE', '/api/me', body),
   registerPushToken: (body: PushTokenRequest) => request<void>('POST', '/api/me/push-tokens', body),

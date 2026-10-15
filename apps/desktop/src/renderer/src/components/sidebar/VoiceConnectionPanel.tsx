@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type Ref } from 'react';
 import {
   AudioWaveform,
   LayoutGrid,
   MicOff,
   MonitorCog,
+  Music2,
   PhoneOff,
   Radio,
   ScreenShare,
@@ -16,7 +17,7 @@ import { voice } from '../../features/voice/voiceClient';
 import { cn } from '../../lib/utils';
 import { Permission } from '@diskort/shared';
 import { channelById, dmTitle, useCan, useGuild, useSession } from '@diskort/client-core';
-import { useSettings } from '../../stores/settings';
+import { getSettings, useSettings } from '../../stores/settings';
 import { useUi } from '../../stores/ui';
 import { useVoice } from '../../stores/voice';
 import { useConnectionStats } from '../../stores/connectionStats';
@@ -54,9 +55,24 @@ const QUALITY_TEXT: Record<LinkQuality, string> = {
   unknown: 'Bağlantı bilgisi',
 };
 
+/** Giriş sesleri düğmeyle kapatılınca seviyesi; yeniden açınca bu seviyeye döner (uygulama ömrü boyunca) */
+let introVolumeBeforeOff = 1;
+
+/** Giriş seslerini kapatır (seviye 0) ya da önceki seviyesine geri açar */
+function toggleIntroSounds(): void {
+  const { introSoundVolume, set } = getSettings();
+  if (introSoundVolume > 0) {
+    introVolumeBeforeOff = introSoundVolume;
+    set({ introSoundVolume: 0 });
+  } else {
+    set({ introSoundVolume: introVolumeBeforeOff > 0 ? introVolumeBeforeOff : 1 });
+  }
+}
+
 /**
  * Discord'daki gibi ses bağlantısı kartı (yalnızca ses kanalındayken): bağlantı kalitesi, kanal / sunucu,
- * gürültü engelleme ve bağlantıyı kesme; altında kamera, ekran paylaşımı, sahne ve yayın ayarları.
+ * gürültü engelleme ve bağlantıyı kesme; altında kamera, ekran paylaşımı, sahne, giriş sesleri ve yayın ayarları.
+ * Sağ tık (üst kısımda ya da giriş sesleri düğmesinde): giriş sesleri seviyesi.
  * Alttaki kullanıcı paneliyle birlikte tek yuvarlak kart gibi görünür (üst yarısı).
  */
 export function VoiceConnectionPanel() {
@@ -86,6 +102,8 @@ export function VoiceConnectionPanel() {
   const noiseFallback = useVoice((s) => s.noiseFallback);
   const openModal = useUi((s) => s.openModal);
   const setView = useUi((s) => s.setView);
+  const openContextMenu = useUi((s) => s.openContextMenu);
+  const introOff = useSettings((s) => s.introSoundVolume <= 0);
   const [infoOpen, setInfoOpen] = useState(false);
   const [noiseOpen, setNoiseOpen] = useState(false);
   const labelRef = useRef<HTMLButtonElement>(null);
@@ -106,11 +124,20 @@ export function VoiceConnectionPanel() {
   const tile = connected ? QUALITY_TILE[quality] : 'bg-warn/15';
   const noiseLabel = `Gürültü engelleme: ${noiseSummary(noise, noiseStrength, noiseFallback)}`;
   const shareBlocked = !sharing && !canStream;
+  const openIntroMenu = (e: MouseEvent): void => {
+    e.preventDefault();
+    openContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      introVolume: true,
+      items: [{ label: 'Ses Ayarları', onClick: () => openModal({ type: 'settings', section: 'notifications' }) }],
+    });
+  };
 
   return (
     <div className="anim-rise-in px-2 pt-2 pb-1.5">
       {sharing && selfId && <OwnStreamRow userId={selfId} />}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" onContextMenu={openIntroMenu}>
         <span
           className={cn(
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors duration-300',
@@ -166,7 +193,7 @@ export function VoiceConnectionPanel() {
           <span className="truncate">Mikrofon testi: odada susturuldun</span>
         </div>
       )}
-      <div className="mt-2 grid grid-cols-4 gap-1.5">
+      <div className="mt-2 grid grid-cols-5 gap-1.5">
         <ActionButton label="Kamera · Yakında" disabled>
           <Video size={20} />
         </ActionButton>
@@ -182,6 +209,15 @@ export function VoiceConnectionPanel() {
         </ActionButton>
         <ActionButton label={dmName !== null ? 'Aramayı Aç' : 'Ses Sahnesini Aç'} onClick={() => setView({ kind: 'voice' })}>
           <LayoutGrid size={20} className="ico-grow" />
+        </ActionButton>
+        <ActionButton
+          label={introOff ? 'Giriş sesleri kapalı' : 'Giriş sesleri'}
+          onClick={toggleIntroSounds}
+          onContextMenu={openIntroMenu}
+        >
+          <SwapIcon swapKey={introOff ? 'off' : 'on'} motion="ico-lift">
+            <IntroSoundIcon off={introOff} />
+          </SwapIcon>
         </ActionButton>
         <ActionButton label="Yayın Ayarları" onClick={() => openModal({ type: 'settings', section: 'stream' })}>
           <MonitorCog size={20} className="ico-tilt" />
@@ -306,12 +342,14 @@ function ActionButton({
   disabled,
   active,
   onClick,
+  onContextMenu,
   children,
 }: {
   label: string;
   disabled?: boolean;
   active?: boolean;
   onClick?: () => void;
+  onContextMenu?: (e: MouseEvent) => void;
   children: ReactNode;
 }) {
   return (
@@ -329,8 +367,36 @@ function ActionButton({
             : 'press bg-bg-active text-text-normal hover:bg-control hover:text-text-head',
       )}
       onClick={disabled ? undefined : onClick}
+      onContextMenu={onContextMenu}
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * Giriş sesleri simgesi; kapalıyken üstü çizili (lucide'de Music2'nin kapalı hâli yok, çizgi lucide'in "Off"
+ * simgeleriyle aynı yoldan çizilir).
+ */
+function IntroSoundIcon({ off }: { off: boolean }) {
+  return (
+    <span className="relative flex h-5 w-5">
+      <Music2 size={20} className={cn(off && 'opacity-60')} />
+      {off && (
+        <svg
+          className="absolute inset-0"
+          width={20}
+          height={20}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          aria-hidden
+        >
+          <path d="m2 2 20 20" />
+        </svg>
+      )}
+    </span>
   );
 }

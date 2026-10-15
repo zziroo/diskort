@@ -133,6 +133,108 @@ export function previewSound(name: MobileSoundName): void {
   start(name);
 }
 
+/**
+ * Kişisel giriş sesleri (kanala girenin yüklediği en fazla INTRO_SOUND_MAX_SECONDS saniyelik MP3, sunucudan
+ * akıtılır). Aynı anda tek bir tane çalar: yenisi başlayınca öncekisi kesilir. Oynatıcı her ses için yeniden
+ * kurulur ve çalış bitince (ya da kesilince) bırakılır; ses dosyaları önbelleğe alınmaz.
+ */
+let intro: { player: ExpoAudio.AudioPlayer; timer: ReturnType<typeof setTimeout>; started: boolean } | null = null;
+
+/** Ses bu süre içinde çalmaya başlamazsa (yavaş ağ, bozuk dosya) genel katılma sesine dönülür */
+const INTRO_START_TIMEOUT_MS = 2500;
+/** Bitiş olayı hiç gelmezse oynatıcı en geç bu sürede bırakılır */
+const INTRO_MAX_LIFETIME_MS = 15_000;
+
+/**
+ * Giriş sesleri çalınabilir mi (yerel modül var, sesler açık, giriş sesi seviyesi 0 değil). Değilse çağıran
+ * ChannelSoundGate'e null verir ve genel katılma sesi çalar (o da ayarlara göre).
+ */
+export function introSoundsEnabled(): boolean {
+  const s = getSettings();
+  return audio !== null && s.sounds && s.introSoundVolume > 0;
+}
+
+/** Çalan giriş sesini keser ve oynatıcısını bırakır */
+export function stopIntroSound(): void {
+  if (!intro) return;
+  const { player: p, timer } = intro;
+  intro = null;
+  clearTimeout(timer);
+  try {
+    p.pause();
+  } catch {
+    // oynatıcı kapatılmış olabilir: önemli değil
+  }
+  try {
+    p.remove();
+  } catch {
+    // önemli değil
+  }
+}
+
+/**
+ * Bir giriş sesini çalar (çalan giriş sesini keser). `own`: kendi girişin (sağırken de çalar, hata olursa
+ * genel "katıldın" sesi); değilse başkasının girişi (sağırken çalmaz, hata olursa "biri girdi" sesi).
+ * `preview`: profil ayarlarındaki dinleme düğmesi; ses ayarlarına bakılmaz, tam seviyede çalar, hatada
+ * yerine bir şey çalınmaz.
+ */
+export function playIntroSound(url: string, opts: { preview?: boolean; own?: boolean } = {}): void {
+  if (!audio) return;
+  const fallback: MobileSoundName | null = opts.preview ? null : opts.own ? 'join' : 'userJoin';
+  if (!opts.preview) {
+    const s = getSettings();
+    if (!s.sounds) return;
+    if (!opts.own && deafened()) return;
+    if (s.introSoundVolume <= 0) {
+      if (fallback) start(fallback);
+      return;
+    }
+  }
+  stopIntroSound();
+  const fail = (p: ExpoAudio.AudioPlayer): void => {
+    // Yalnızca hâlâ çalan giriş sesi buysa (bu arada yenisi başlamadıysa) genel sese dönülür
+    if (intro?.player !== p) return;
+    const started = intro.started;
+    stopIntroSound();
+    if (!started && fallback && allowed(fallback)) start(fallback);
+  };
+  let p: ExpoAudio.AudioPlayer;
+  try {
+    p = audio.createAudioPlayer({ uri: url }, { keepAudioSessionActive: Platform.OS === 'ios' });
+  } catch {
+    if (fallback && allowed(fallback)) start(fallback);
+    return;
+  }
+  const current = {
+    player: p,
+    started: false,
+    timer: setTimeout(() => fail(p), INTRO_START_TIMEOUT_MS),
+  };
+  intro = current;
+  try {
+    p.volume = opts.preview ? 1 : Math.min(1, Math.max(0, getSettings().introSoundVolume));
+    p.addListener('playbackStatusUpdate', (status) => {
+      if (intro !== current) return;
+      if (status.error) {
+        fail(p);
+      } else if (status.didJustFinish) {
+        stopIntroSound();
+      } else if (status.playing && !current.started) {
+        // Çalmaya başladı: zaman aşımı yerine en uzun ömür sınırı
+        current.started = true;
+        clearTimeout(current.timer);
+        current.timer = setTimeout(() => {
+          if (intro === current) stopIntroSound();
+        }, INTRO_MAX_LIFETIME_MS);
+      }
+    });
+    // Yükleme bitmeden çağrılabilir: hazır olunca çalar
+    p.play();
+  } catch {
+    fail(p);
+  }
+}
+
 /** Döngüdeki arama sesi (aynı anda tek bir tane) */
 let looping: { name: CallSoundName; timer: ReturnType<typeof setInterval> } | null = null;
 

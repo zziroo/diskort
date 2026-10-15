@@ -490,6 +490,11 @@ export const MIGRATIONS: string[] = [
   ) WITHOUT ROWID;
   CREATE INDEX IF NOT EXISTS friendships_by_b ON friendships(user_b);
   `,
+  // 27: kişisel giriş sesi. intro_sound_hash: <DATA_DIR>/intro-sounds/<özet>.mp3 (bkz. introSounds.ts); boş
+  // başlar. Yalnızca ekleme yapar; eski sürüme dönülürse sütun yok sayılır.
+  `
+  ALTER TABLE users ADD COLUMN intro_sound_hash TEXT;
+  `,
 ];
 
 type Param = string | number | null;
@@ -518,6 +523,7 @@ interface UserRow {
   sessions_valid_after: number;
   avatar_hash: string | null;
   banner_hash: string | null;
+  intro_sound_hash: string | null;
   theme_primary: string | null;
   theme_accent: string | null;
   profile_effect: string | null;
@@ -870,6 +876,7 @@ export class Store {
       avatarColor: effectiveAvatarColor(r),
       avatarUrl: r.avatar_hash ? `/api/avatars/${r.id}/${r.avatar_hash}.webp` : null,
       bannerUrl: r.banner_hash ? `/api/banners/${r.id}/${r.banner_hash}.webp` : null,
+      introSoundUrl: r.intro_sound_hash ? `/api/intro-sounds/${r.id}/${r.intro_sound_hash}.mp3` : null,
       profileTheme: r.theme_primary && r.theme_accent ? { primary: r.theme_primary, accent: r.theme_accent } : null,
       // Eski kozmetiklerin alanları (0.8.x istemciler okur) her zaman null: eski istemciler tanımadıkları
       // efekt kimliğinde çöker, set efekti bu yüzden ayrı alanda gider. Alanlar gönderilmeseydi de aynı
@@ -1096,6 +1103,28 @@ export class Store {
       this.run('UPDATE users SET banner_hash = ? WHERE id = ?', hash, userId);
       return { user: this.getUser(userId)!, previous: row.h };
     });
+  }
+
+  /** Kullanıcının şu anki giriş sesinin özeti (yoksa ya da kullanıcı yoksa null). */
+  getIntroSoundHash(userId: string): string | null {
+    return this.one<{ h: string | null }>('SELECT intro_sound_hash AS h FROM users WHERE id = ?', userId)?.h ?? null;
+  }
+
+  /** Giriş sesini değiştirir ya da kaldırır (null); önceki özet diskten silinmek üzere döner. Kullanıcı yoksa null. */
+  setIntroSound(userId: string, hash: string | null): { user: User; previous: string | null } | null {
+    return this.tx(() => {
+      const row = this.one<{ h: string | null }>('SELECT intro_sound_hash AS h FROM users WHERE id = ?', userId);
+      if (!row) return null;
+      this.run('UPDATE users SET intro_sound_hash = ? WHERE id = ?', hash, userId);
+      return { user: this.getUser(userId)!, previous: row.h };
+    });
+  }
+
+  /** Kullanılan tüm giriş sesi özetleri (artık dosyaların temizliği için) */
+  introSoundHashes(): Set<string> {
+    return new Set(
+      this.all<{ h: string }>('SELECT intro_sound_hash AS h FROM users WHERE intro_sound_hash IS NOT NULL').map((r) => r.h),
+    );
   }
 
   /** Kullanıcının şu anki profil fotoğrafının özeti (yoksa ya da kullanıcı yoksa null). */

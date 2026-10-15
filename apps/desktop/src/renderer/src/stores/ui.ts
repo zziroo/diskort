@@ -55,6 +55,8 @@ export interface ContextMenuState {
   y: number;
   /** Özel içerik (ör. ses seviyesi kaydırıcısı) veya basit menü öğeleri */
   userId?: string;
+  /** Giriş sesleri seviyesi kaydırıcısı (ses bağlantısı kartı) */
+  introVolume?: boolean;
   items?: ContextMenuItem[];
 }
 

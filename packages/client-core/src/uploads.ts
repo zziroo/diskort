@@ -1,4 +1,4 @@
-import { AVATAR_MAX_BYTES, type AnimatedDecoration, type ApiErrorBody, type Attachment, type CosmeticSetId, type ProfileTheme, type User } from '@diskort/shared';
+import { AVATAR_MAX_BYTES, INTRO_SOUND_MAX_BYTES, type AnimatedDecoration, type ApiErrorBody, type Attachment, type CosmeticSetId, type ProfileTheme, type User } from '@diskort/shared';
 import { api, ApiError, clientFeatureHeaders, normalizeServerUrl } from './api';
 import { env, type LocalFile, type UploadRequest, type UploadResponse } from './env';
 import { useGuild } from './guild';
@@ -15,6 +15,13 @@ export const avatarUrl = (user: Pick<User, 'avatarUrl'> | null | undefined): str
 /** Profil afişinin tam adresi; yoksa null. */
 export const bannerUrl = (user: Pick<User, 'bannerUrl'> | null | undefined): string | null =>
   user?.bannerUrl ? normalizeServerUrl(env().serverUrl()) + user.bannerUrl : null;
+
+/**
+ * Kişisel giriş sesinin tam adresi (en fazla 5 sn MP3; jeton gerekmez, adres içerik değişince değişir);
+ * yoksa (ya da sunucu bu özelliği bilmiyorsa) null.
+ */
+export const introSoundUrl = (user: Pick<User, 'introSoundUrl'> | null | undefined): string | null =>
+  user?.introSoundUrl ? normalizeServerUrl(env().serverUrl()) + user.introSoundUrl : null;
 
 const decimal = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 });
 
@@ -63,7 +70,7 @@ export async function sendFile<T>(
   const res = await (env().upload ?? xhrUpload)({
     url: base + path,
     headers: {
-      // Profil fotoğrafı ve afiş yüklemeleri kullanıcıyı döndürür
+      // Profil fotoğrafı, afiş ve giriş sesi yüklemeleri kullanıcıyı döndürür
       ...clientFeatureHeaders(),
       Authorization: `Bearer ${token ?? ''}`,
       'Content-Type': MIME.test(file.type) ? file.type : 'application/octet-stream',
@@ -123,6 +130,41 @@ export async function uploadBanner(file: LocalFile, signal: AbortSignal = new Ab
     throw new ApiError(413, 'too_large', `Resim çok büyük (en fazla ${formatBytes(AVATAR_MAX_BYTES)}).`);
   }
   const user = await sendFile<User>('/api/me/banner', file, 200, 'Afiş yüklenemedi', () => undefined, signal);
+  applyOwnUser(user);
+  return user;
+}
+
+/**
+ * Kişisel giriş sesini yükler ve güncellenen kullanıcıyı oturuma yazar. Sunucu sesi `start` saniyesinden
+ * (varsayılan 0) başlayarak en fazla INTRO_SOUND_MAX_SECONDS saniyeye kırpar, ses yüksekliğini eşitler ve
+ * MP3'e çevirir. Okunamayan dosyada ApiError 400 'unsupported', sık değişiklikte 429 'rate_limited'.
+ */
+export async function uploadIntroSound(
+  file: LocalFile,
+  opts: { start?: number } = {},
+  signal: AbortSignal = new AbortController().signal,
+): Promise<User> {
+  if (file.size > INTRO_SOUND_MAX_BYTES) {
+    throw new ApiError(413, 'too_large', `Ses dosyası çok büyük (en fazla ${formatBytes(INTRO_SOUND_MAX_BYTES)}).`);
+  }
+  // Sunucu yalnızca düz ondalık sayı kabul eder (üslü gösterim yok); milisaniyeye yuvarlanır
+  const raw = opts.start ?? 0;
+  const start = Number.isFinite(raw) && raw > 0 ? Math.round(raw * 1000) / 1000 : 0;
+  const user = await sendFile<User>(
+    `/api/me/intro-sound?start=${start.toFixed(3)}`,
+    file,
+    200,
+    'Giriş sesi yüklenemedi',
+    () => undefined,
+    signal,
+  );
+  applyOwnUser(user);
+  return user;
+}
+
+/** Kişisel giriş sesini kaldırır (genel katılma sesine dönülür). */
+export async function removeIntroSound(): Promise<User> {
+  const user = await api.removeIntroSound();
   applyOwnUser(user);
   return user;
 }

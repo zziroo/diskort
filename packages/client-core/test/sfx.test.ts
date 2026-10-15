@@ -177,6 +177,70 @@ describe('arayüz sesleri', () => {
     }
   });
 
+  it('giriş sesi: girenin adresi varsa genel ses yerine o çalar; aynı anda girenlerden ilki', () => {
+    vi.useFakeTimers();
+    try {
+      const played: string[] = [];
+      const gate = new ChannelSoundGate(
+        (n) => played.push(n),
+        (url) => played.push(`intro:${url}`),
+      );
+      gate.push('userJoin', 'https://x/a.mp3');
+      gate.push('userJoin', 'https://x/b.mp3');
+      vi.advanceTimersByTime(100);
+      expect(played).toEqual(['intro:https://x/a.mp3']);
+
+      // Adresi olmayan giriş genel sesi çalar; aynı yığındaki sonraki adres yine kullanılır
+      vi.advanceTimersByTime(400);
+      gate.push('userJoin', null);
+      gate.push('userJoin', 'https://x/c.mp3');
+      vi.advanceTimersByTime(100);
+      expect(played).toEqual(['intro:https://x/a.mp3', 'intro:https://x/c.mp3']);
+
+      vi.advanceTimersByTime(400);
+      gate.push('userJoin');
+      vi.advanceTimersByTime(100);
+      expect(played.at(-1)).toBe('userJoin');
+
+      // Önce çıkış geldiyse (aynı öncelik) çıkış duyulur; adres sonraki yığına taşınmaz
+      vi.advanceTimersByTime(400);
+      gate.push('userLeave');
+      gate.push('userJoin', 'https://x/d.mp3');
+      vi.advanceTimersByTime(100);
+      expect(played.at(-1)).toBe('userLeave');
+      vi.advanceTimersByTime(400);
+      gate.push('userStreamStart');
+      vi.advanceTimersByTime(100);
+      expect(played.at(-1)).toBe('userStreamStart');
+
+      // İptal ve sessizlik bekleyen adresi de siler
+      vi.advanceTimersByTime(400);
+      gate.push('userJoin', 'https://x/e.mp3');
+      gate.cancel();
+      vi.advanceTimersByTime(100);
+      gate.quiet(0);
+      gate.push('userJoin');
+      vi.advanceTimersByTime(100);
+      expect(played.at(-1)).toBe('userJoin');
+      expect(played).not.toContain('intro:https://x/e.mp3');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('giriş sesi çalıcısı verilmezse adres yok sayılır (eski kullanım)', () => {
+    vi.useFakeTimers();
+    try {
+      const played: string[] = [];
+      const gate = new ChannelSoundGate((n) => played.push(n));
+      gate.push('userJoin', 'https://x/a.mp3');
+      vi.advanceTimersByTime(100);
+      expect(played).toEqual(['userJoin']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('WAV başlığı: 48 kHz, mono, 16 bit', () => {
     const wav = encodeWav(new Float32Array([0, 0.5, -0.5]));
     const view = new DataView(wav.buffer);

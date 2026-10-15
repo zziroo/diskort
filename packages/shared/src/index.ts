@@ -45,6 +45,13 @@ export interface User {
    * WebP). Profil kartının üstünde; yoksa null (tema rengi ya da avatarColor gösterilir). Eski sunucularda yok.
    */
   bannerUrl?: string | null;
+  /**
+   * Kişisel giriş sesi: sunucu köküne göre adres (/api/intro-sounds/<kullanıcı>/<özet>.mp3; en fazla
+   * INTRO_SOUND_MAX_SECONDS saniye, 48 kHz mono MP3). Kullanıcı ses kanalına girince kanaldakiler (kendisi
+   * dahil) genel katılma sesi yerine bunu duyar. Kimlik doğrulaması istemez ve içerik değişince adres de
+   * değişir (süresiz önbelleklenebilir). Yoksa null; eski sunucularda hiç gelmez.
+   */
+  introSoundUrl?: string | null;
   /** Profil teması: kartın iki rengi (üstten alta degrade). Yoksa null: varsayılan kart */
   profileTheme?: ProfileTheme | null;
   /**
@@ -1187,6 +1194,10 @@ export const isVideoAttachment = (a: Pick<Attachment, 'contentType'>): boolean =
   INLINE_VIDEO_TYPES.includes(a.contentType);
 /** Yüklenen profil fotoğrafının en büyük boyutu (PNG, JPEG, WebP ya da GIF; sunucu küçültür) */
 export const AVATAR_MAX_BYTES = 8 * 1024 * 1024;
+/** Yüklenen giriş sesinin en büyük boyutu (MP3, WAV, OGG, M4A, WebM, AAC, FLAC; sunucu kırpar ve MP3'e çevirir) */
+export const INTRO_SOUND_MAX_BYTES = 8 * 1024 * 1024;
+/** Giriş sesinin en uzun süresi (saniye): sunucu yüklenen sesin bu kadarını (başlangıç noktasından) saklar */
+export const INTRO_SOUND_MAX_SECONDS = 5;
 /** "Yazıyor…" göstergesinin geçerlilik süresi; istemci bu aralıkta en fazla bir kez bildirir */
 export const TYPING_TIMEOUT_MS = 8000;
 

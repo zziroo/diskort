@@ -515,17 +515,29 @@ export const OTHERS_QUIET_MS = 1500;
 /**
  * Başkalarının kanal olaylarının (biri girdi/çıktı, yayına başladı/bitirdi) sesleri: kanala girer girmez
  * ya da yeniden bağlanınca gelen olay seli susturulur, art arda gelenler tek sese iner.
+ *
+ * Kişisel giriş sesi: `push('userJoin', url)` giren kişinin giriş sesi adresini (bkz. introSoundUrl) taşır.
+ * Çalınacak ses "userJoin" olursa ve bekleyen bir adres varsa `play('userJoin')` yerine `playIntro(url)`
+ * çağrılır. Aynı anda (OTHERS_BATCH_MS içinde) birden çok kişi girerse ilk gelen adres çalınır: sesler üst
+ * üste binmez, tek ses kuralı bozulmaz; sonrakiler genel ses gibi yutulur. `playIntro` verilmezse ya da
+ * adres null ise (sunucu bilmiyor, kişinin sesi yok, dinleyici başkalarının giriş seslerini kapatmış) genel
+ * katılma sesi çalar. Kendi girişin bu kapıdan geçmez (bağlanınca quiet() çağrılır); kendi giriş sesini
+ * istemci ayrıca çalar.
  */
 export class ChannelSoundGate {
   private quietUntil = 0;
   private lastAt = -Infinity;
   private pending: SoundName | null = null;
+  /** Bekleyen girişlerden ilkinin giriş sesi adresi */
+  private pendingIntro: string | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly play: (name: SoundName) => void;
+  private readonly playIntro: ((url: string) => void) | undefined;
   private readonly now: () => number;
 
-  constructor(play: (name: SoundName) => void, now: () => number = Date.now) {
+  constructor(play: (name: SoundName) => void, playIntro?: (url: string) => void, now: () => number = Date.now) {
     this.play = play;
+    this.playIntro = playIntro;
     this.now = now;
   }
 
@@ -535,11 +547,13 @@ export class ChannelSoundGate {
     this.cancel();
   }
 
-  push(name: SoundName): void {
+  /** Olayı sıraya koyar; `intro` yalnızca "userJoin" için anlamlıdır (girenin giriş sesi adresi). */
+  push(name: SoundName, intro?: string | null): void {
     if (this.now() < this.quietUntil) return;
     if (this.pending === null || (OTHERS_PRIORITY[name] ?? 0) > (OTHERS_PRIORITY[this.pending] ?? 0)) {
       this.pending = name;
     }
+    if (name === 'userJoin' && intro && this.pendingIntro === null) this.pendingIntro = intro;
     this.timer ??= setTimeout(() => this.flush(), OTHERS_BATCH_MS);
   }
 
@@ -548,16 +562,20 @@ export class ChannelSoundGate {
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
     this.pending = null;
+    this.pendingIntro = null;
   }
 
   private flush(): void {
     const name = this.pending;
+    const intro = this.pendingIntro;
     this.timer = null;
     this.pending = null;
+    this.pendingIntro = null;
     const now = this.now();
     if (!name || now < this.quietUntil || now - this.lastAt < OTHERS_MIN_GAP_MS) return;
     this.lastAt = now;
-    this.play(name);
+    if (name === 'userJoin' && intro && this.playIntro) this.playIntro(intro);
+    else this.play(name);
   }
 }
 

@@ -23,6 +23,7 @@ import {
   describeTransport,
   errorMessage,
   gateway,
+  introSoundUrl,
   linkQuality,
   outboundDelta,
   parseTransportStats,
@@ -42,7 +43,14 @@ import {
   type TransportStats,
 } from '@diskort/client-core';
 import { bridge } from '../../lib/bridge';
-import { playSound, prepareSounds, sharedAudioContext } from '../../lib/sfx';
+import {
+  introSoundsEnabled,
+  playIntroSound,
+  playSound,
+  prepareSounds,
+  sharedAudioContext,
+  stopIntroSound,
+} from '../../lib/sfx';
 import { getSettings, useSettings, type Settings } from '../../stores/settings';
 import { setVoice, useVoice, type MicLevel } from '../../stores/voice';
 import {
@@ -237,7 +245,10 @@ class VoiceClient {
   private prefetched: { channelId: string; at: number; response: Promise<VoiceJoinResponse> } | null = null;
   private readonly audioSink: HTMLDivElement;
   /** Başkalarının kanal olaylarının sesleri (bağlanınca sel olmasın, art arda gelenler tek ses) */
-  private readonly channelSounds = new ChannelSoundGate((name) => playSound(name));
+  private readonly channelSounds = new ChannelSoundGate(
+    (name) => playSound(name),
+    (url) => void playIntroSound(url),
+  );
   /** Bağlantı kısa süre içinde geri gelmezse "koptu" sesi; geri gelince "geri geldi" */
   private reconnectTimer: number | null = null;
   private lostSoundPlayed = false;
@@ -365,7 +376,11 @@ class VoiceClient {
         // (geri bildirim #24); mikrofon hazır olunca, en geç JOIN_SOUND_MAX_WAIT_MS sonra çalınır.
         const waited = new Promise((resolve) => setTimeout(resolve, JOIN_SOUND_MAX_WAIT_MS));
         void Promise.race([micReady.catch(() => undefined), waited]).then(() => {
-          if (seq === this.joinSeq && this.room === room) playSound('join');
+          if (seq !== this.joinSeq || this.room !== room) return;
+          // Kendi giriş sesin varsa (ve giriş sesleri açıksa) genel "katıldın" sesi yerine o çalar
+          const own = introSoundsEnabled() ? introSoundUrl(useSession.getState().user) : null;
+          if (own) void playIntroSound(own, { fallback: 'join', own: true });
+          else playSound('join');
         });
       }
       await micReady;
@@ -441,8 +456,18 @@ class VoiceClient {
     this.deviceChangeTimer = null;
   }
 
+  /**
+   * Girenin giriş sesi adresi; giriş sesleri kapalıysa (sesler kapalı, seviye 0) null: genel "biri girdi" sesi
+   * çalar. Kullanıcılar deposu sunucu üyelerini ve konuşma katılımcılarını tanır (DM aramalarında da bulunur).
+   */
+  private introFor(userId: string): string | null {
+    if (!introSoundsEnabled()) return null;
+    return introSoundUrl(useGuild.getState().users[userId]);
+  }
+
   private async teardownRoom(): Promise<void> {
     this.channelSounds.cancel();
+    stopIntroSound();
     this.clearReconnectTimer();
     this.scheduleReupgrade(null);
     this.clearAutoRetry();
@@ -1084,9 +1109,9 @@ class VoiceClient {
         track.detach().forEach((el) => el.remove());
         this.bumpTracks();
       })
-      .on(RoomEvent.ParticipantConnected, () => {
+      .on(RoomEvent.ParticipantConnected, (p) => {
         this.applyVolumes();
-        if (room === this.room) this.channelSounds.push('userJoin');
+        if (room === this.room) this.channelSounds.push('userJoin', this.introFor(p.identity));
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         this.serverSpeaking.delete(p.identity);

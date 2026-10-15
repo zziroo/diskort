@@ -207,9 +207,14 @@ async function normalize(input: Buffer, size: Size): Promise<Buffer> {
   }
 }
 
-/** Gövdeyi en fazla `max` bayt olacak şekilde belleğe okur. */
-export async function readLimited(body: Readable, declaredSize: number | null, max: number): Promise<Buffer> {
-  const tooLarge = new UploadError(413, 'too_large', `Resim çok büyük (en fazla ${max / 1024 / 1024} MB).`);
+/** Gövdeyi en fazla `max` bayt olacak şekilde belleğe okur; `noun` hata iletilerindeki ad ("Resim", "Ses dosyası"). */
+export async function readLimited(
+  body: Readable,
+  declaredSize: number | null,
+  max: number,
+  noun = 'Resim',
+): Promise<Buffer> {
+  const tooLarge = new UploadError(413, 'too_large', `${noun} çok büyük (en fazla ${max / 1024 / 1024} MB).`);
   if (declaredSize !== null && declaredSize > max) throw tooLarge;
   const chunks: Buffer[] = [];
   let size = 0;
@@ -223,7 +228,7 @@ export async function readLimited(body: Readable, declaredSize: number | null, m
     }
   } catch (err) {
     if (err instanceof UploadError) throw err;
-    throw new UploadError(400, 'upload_failed', 'Resim yüklenemedi, bağlantı kesildi.');
+    throw new UploadError(400, 'upload_failed', `${noun} yüklenemedi, bağlantı kesildi.`);
   }
   if (size === 0) throw new UploadError(400, 'empty_file', 'Dosya boş.');
   return Buffer.concat(chunks, size);

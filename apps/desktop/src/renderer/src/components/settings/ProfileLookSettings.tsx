@@ -27,6 +27,7 @@ import {
   useStatus,
 } from '@diskort/client-core';
 import { confirmDialog } from '../../lib/dialog';
+import { IntroSoundPicker } from './IntroSoundPicker';
 import { PresenceProvider, usePresence } from '../../lib/motion';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/ui';
@@ -143,6 +144,7 @@ export function ProfileLookSettings({ user }: { user: User }) {
     <div className="flex flex-wrap-reverse items-start gap-x-8">
       <div className="min-w-[260px] flex-1">
         <BannerPicker user={preview} />
+        <IntroSoundPicker user={preview} />
 
         <SectionTitle>Profil Teması</SectionTitle>
         <p className="mb-3 text-sm text-text-muted">Profil kartının zemini: yukarıdan aşağıya iki renk.</p>

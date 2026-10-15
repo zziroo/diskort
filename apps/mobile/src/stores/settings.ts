@@ -39,6 +39,11 @@ interface MobileSettings {
   haptics: boolean;
   /** Sesli sohbet sesleri: katıl/ayrıl, sustur, sağırlaştır, yayın, biri girdi/çıktı (bkz. sounds.ts) */
   sounds: boolean;
+  /**
+   * Giriş seslerinin seviyesi (0..1): kanala girenin kendi yüklediği kısa ses (bkz. sounds.ts playIntroSound).
+   * 0 = kapalı, onun yerine genel katılma sesi çalar.
+   */
+  introSoundVolume: number;
   /** Uygulama açıkken bahsedilince ve direkt mesaj gelince ses (Rahatsız Etmeyin durumunda çalmaz) */
   notificationSound: boolean;
   set: (patch: Partial<Omit<MobileSettings, 'set'>>) => void;
@@ -63,6 +68,7 @@ export const useSettings = create<MobileSettings>()(
       vadThresholdDb: -50,
       haptics: true,
       sounds: true,
+      introSoundVolume: 1,
       notificationSound: true,
       set: (patch) => set(patch),
     }),

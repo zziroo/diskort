@@ -21,6 +21,9 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     HOST=127.0.0.1 \
     PORT=3000
+# Kişisel giriş sesleri için ses dönüştürme (ffmpeg): yüklenen ses kırpılır, ses yüksekliği eşitlenir ve
+# MP3'e çevrilir (bkz. src/introSounds.ts). Debian paketi; yalnızca çalışma aşamasında gerekir.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 # Paket tek dosyadır; yalnızca yerel (native) modüller ayrıca kurulur: şifreleme (argon2) ve profil
 # fotoğrafları için resim işleme (sharp; libvips dahil hazır derlenmiş linux-x64/arm64 glibc paketiyle
 # gelir, derleme gerekmez). Sürümler apps/server/package.json ve pnpm-lock.yaml ile aynı olmalı.

@@ -113,8 +113,12 @@ export function VoiceSettings() {
 export function SoundSettings() {
   const sounds = useSettings((s) => s.sounds);
   const notificationSound = useSettings((s) => s.notificationSound);
+  const introVolume = useSettings((s) => s.introSoundVolume);
   const set = useSettings((s) => s.set);
   const [listOpen, setListOpen] = useState(false);
+  // Giriş sesi seviyesi sürüklenirken yüzde anında güncellenir; bırakınca kaydedilir
+  const [introPreview, setIntroPreview] = useState<number | null>(null);
+  const introPercent = Math.round((introPreview ?? introVolume) * 100);
   // Eski APK'larda (expo-audio yok) ses çalınamaz; ayarlar gösterilmez
   if (!soundsAvailable()) return null;
   return (
@@ -128,6 +132,28 @@ export function SoundSettings() {
           if (v) soundCue('unmute');
         }}
       />
+      {sounds && (
+        <View style={styles.choiceBlock}>
+          <View style={styles.sliderHead}>
+            <Text style={styles.label}>Giriş sesleri</Text>
+            <Text style={styles.sliderValue}>{introPercent === 0 ? 'Kapalı' : `%${introPercent}`}</Text>
+          </View>
+          <Slider
+            value={introVolume}
+            min={0}
+            max={1}
+            step={0.05}
+            accessibilityLabel="Giriş seslerinin seviyesi"
+            accessibilityText={(v) => (v <= 0 ? 'Kapalı' : `Yüzde ${Math.round(v * 100)}`)}
+            onChange={setIntroPreview}
+            onChangeEnd={(v) => {
+              setIntroPreview(null);
+              set({ introSoundVolume: Math.round(v * 100) / 100 });
+            }}
+          />
+          <Text style={styles.description}>Kanala girenlerin kendi yüklediği kısa ses. 0 = kapalı</Text>
+        </View>
+      )}
       <ToggleRow
         label="Bildirim sesi"
         description="Uygulama açıkken senden bahsedilince ya da direkt mesaj gelince. Rahatsız Etmeyin durumunda çalmaz."
@@ -344,6 +370,8 @@ const styles = createStyles(() => ({
   listToggleText: { color: colors.muted, fontSize: 14, fontWeight: '500' },
   soundRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
   soundLabel: { color: colors.text, fontSize: 14.5 },
+  sliderHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sliderValue: { color: colors.muted, fontSize: 14, fontVariant: ['tabular-nums'] },
   // Kaydırıcıyla hizalı olsun diye iki yanda başparmak payı bırakılır
   meter: { height: 22, justifyContent: 'center', marginHorizontal: THUMB_PAD, marginTop: 6 },
   meterTrack: { height: 8, borderRadius: 4, backgroundColor: colors.control, overflow: 'hidden' },

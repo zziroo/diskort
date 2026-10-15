@@ -26,6 +26,7 @@ import { registerAdminStatsRoutes } from './routes/adminStats.js';
 import { registerTelemetryRoutes } from './routes/telemetry.js';
 import { AttachmentService } from './attachments.js';
 import { AvatarService } from './avatars.js';
+import { IntroSoundService, type IntroSoundTranscode } from './introSounds.js';
 import { AuthService } from './auth.js';
 import { ClientVersionPolicy } from './clientVersion.js';
 import type { Config } from './config.js';
@@ -63,6 +64,7 @@ import { registerUdidRoutes } from './routes/udid.js';
 import { registerIosDeviceRoutes } from './routes/iosDevices.js';
 import { IosDeviceService } from './iosDevices.js';
 import { registerAvatarRoutes } from './routes/avatars.js';
+import { registerIntroSoundRoutes } from './routes/introSounds.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerDmRoutes } from './routes/dms.js';
 import { registerDownloadRoutes } from './routes/download.js';
@@ -91,6 +93,10 @@ export interface BuildOptions {
   attachmentsDir?: string;
   /** Profil fotoğraflarının klasörü (varsayılan: <DATA_DIR>/avatars) */
   avatarsDir?: string;
+  /** Giriş seslerinin klasörü (varsayılan: <DATA_DIR>/intro-sounds) */
+  introSoundsDir?: string;
+  /** Testler için sahte ses dönüştürücü (varsayılan: ffmpeg) */
+  introSoundTranscode?: IntroSoundTranscode;
   /** Etkinlik (oyun) ikonlarının klasörü (varsayılan: <DATA_DIR>/activity-icons) */
   activityIconsDir?: string;
   /** Kozmetik paketlerinin klasörü (varsayılan: <DATA_DIR>/cosmetic-packs) */
@@ -209,6 +215,12 @@ export async function buildApp(
     app.log,
   );
   const avatars = new AvatarService(store, opts.avatarsDir ?? path.join(config.dataDir, 'avatars'), app.log);
+  const introSounds = new IntroSoundService(
+    store,
+    opts.introSoundsDir ?? path.join(config.dataDir, 'intro-sounds'),
+    opts.introSoundTranscode,
+    app.log,
+  );
   const embedMedia = new EmbedMediaService(
     opts.embedMediaDir ?? path.join(config.dataDir, 'embed-media'),
     config.jwtSecret,
@@ -325,6 +337,7 @@ export async function buildApp(
     push,
     attachments,
     avatars,
+    introSounds,
     activityIcons,
     cosmeticPacks,
     gifs,
@@ -352,6 +365,7 @@ export async function buildApp(
   const sweep = (): void => {
     attachments.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'dosya eki temizliği başarısız'));
     avatars.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'profil fotoğrafı temizliği başarısız'));
+    introSounds.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'giriş sesi temizliği başarısız'));
     embedMedia.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'önizleme resmi temizliği başarısız'));
     try {
       linkPreviews?.sweep();
@@ -512,6 +526,7 @@ export async function buildApp(
   registerAttachmentRoutes(app, ctx);
   registerEmbedRoutes(app, ctx);
   registerAvatarRoutes(app, ctx);
+  registerIntroSoundRoutes(app, ctx);
   registerActivityIconRoutes(app, ctx);
   registerCosmeticRoutes(app, ctx);
   registerGifRoutes(app, ctx);

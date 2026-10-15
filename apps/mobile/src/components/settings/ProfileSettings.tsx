@@ -14,18 +14,22 @@ import {
 import {
   cosmeticPacks,
   errorMessage,
+  introSoundUrl,
   PROFILE_THEME_PRESETS,
   profileGradient,
   refreshCosmeticPacks,
   removeAvatar,
   removeBanner,
+  removeIntroSound,
   updateProfileLook,
   uploadAvatar,
   uploadBanner,
+  uploadIntroSound,
   useCosmeticManifest,
   useSession,
 } from '@diskort/client-core';
-import { pickAvatar, pickBanner } from '../../attachments';
+import { pickAvatar, pickBanner, pickIntroSound } from '../../attachments';
+import { playIntroSound, soundsAvailable } from '../../sounds';
 import { toast } from '../../stores/ui';
 import { colors, createStyles, font, radius, space } from '../../theme';
 import { Avatar, PresenceAvatar } from '../Avatar';
@@ -45,6 +49,8 @@ export function ProfileSettings() {
   const user = useSession((s) => s.user);
   const photo = useProfilePhoto();
   const banner = useProfileBanner();
+  const intro = useIntroSound();
+  const introUrl = introSoundUrl(user);
   const look = useProfileLook();
   // Hareketli setler yalnızca Skia'lı uygulamada sunulur (yoksa gösterilemez)
   const animated = useHasSkia();
@@ -128,6 +134,41 @@ export function ProfileSettings() {
                 busy={banner.busy === 'remove'}
                 disabled={banner.busy !== null}
                 onPress={() => void banner.remove()}
+              />
+            </View>
+          ) : null}
+        </View>
+      </Card>
+
+      <SectionTitle>Giriş Sesi</SectionTitle>
+      <Card style={styles.pad}>
+        <Text style={styles.hint}>MP3, WAV, OGG, M4A… İlk 5 saniyesi alınır. Kanala girince herkes duyar.</Text>
+        <View style={styles.buttons}>
+          <View style={styles.button}>
+            <Button
+              title={introUrl ? 'Değiştir' : 'Ses seç'}
+              busy={intro.busy === 'upload'}
+              disabled={intro.busy !== null}
+              onPress={() => void intro.change()}
+            />
+          </View>
+          {introUrl && soundsAvailable() ? (
+            <View style={styles.button}>
+              <Button
+                title="Dinle"
+                variant="secondary"
+                onPress={() => playIntroSound(introUrl, { preview: true })}
+              />
+            </View>
+          ) : null}
+          {introUrl ? (
+            <View style={styles.button}>
+              <Button
+                title="Kaldır"
+                variant="secondary"
+                busy={intro.busy === 'remove'}
+                disabled={intro.busy !== null}
+                onPress={() => void intro.remove()}
               />
             </View>
           ) : null}
@@ -451,6 +492,52 @@ function useProfileBanner() {
     try {
       await removeBanner();
       toast('Afiş kaldırıldı.');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return { busy, change, remove };
+}
+
+/**
+ * Kişisel giriş sesi: dosya seçicisinden bir ses seçilir, sunucu ilk 5 saniyesini alır (telefonda başlangıç
+ * noktası seçilmez). Kaldırmadan önce onay sorulur.
+ */
+function useIntroSound() {
+  const [busy, setBusy] = useState<'upload' | 'remove' | null>(null);
+
+  const change = async (): Promise<void> => {
+    const file = await pickIntroSound().catch((err: unknown) => {
+      toast(errorMessage(err), 'error');
+      return null;
+    });
+    if (!file) return;
+    setBusy('upload');
+    try {
+      await uploadIntroSound(file);
+      toast('Giriş sesi güncellendi.');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: 'Giriş sesi kaldırılsın mı?',
+      message: 'Kanala girince yeniden genel katılma sesi çalar.',
+      confirmLabel: 'Kaldır',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy('remove');
+    try {
+      await removeIntroSound();
+      toast('Giriş sesi kaldırıldı.');
     } catch (err) {
       toast(errorMessage(err), 'error');
     } finally {

@@ -206,7 +206,18 @@ function MicTestControls() {
 }
 
 /** Giriş/çıkış ses seviyesi (%0–200; alt paneldeki mikrofon/kulaklık menülerindekiyle aynı ayar) */
-function VolumeSlider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function VolumeSlider({
+  label,
+  value,
+  onChange,
+  max = MAX_VOLUME,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  /** Üst sınır (çarpan); varsayılan %200 */
+  max?: number;
+}) {
   const percent = Math.round(value * 100);
   return (
     <div>
@@ -218,7 +229,7 @@ function VolumeSlider({ label, value, onChange }: { label: string; value: number
         className="w-full"
         aria-label={label}
         min={0}
-        max={MAX_VOLUME * 100}
+        max={max * 100}
         value={percent}
         onValueChange={(v) => onChange(v / 100)}
       />
@@ -409,6 +420,16 @@ export function SoundSettings() {
           checked={s.pttSounds}
           onChange={(pttSounds) => s.set({ pttSounds })}
         />
+        {/* Ses bağlantısı kartındaki giriş sesleri düğmesi ve sağ tık menüsüyle aynı ayar */}
+        <div>
+          <VolumeSlider
+            label="Giriş sesleri"
+            max={1}
+            value={s.introSoundVolume}
+            onChange={(introSoundVolume) => s.set({ introSoundVolume })}
+          />
+          <p className="mt-1.5 text-xs text-text-muted">Kanala girenlerin kendi yüklediği kısa ses. 0 = kapalı</p>
+        </div>
       </div>
       <SectionTitle>Sesleri Dinle</SectionTitle>
       <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">

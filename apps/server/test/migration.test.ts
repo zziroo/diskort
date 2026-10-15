@@ -451,6 +451,8 @@ describe('göç 14: çoklu sunucu', () => {
           profile_frame: null,
           // göç 22: isim plakası boş başlar
           nameplate: null,
+          // göç 27: giriş sesi boş başlar
+          intro_sound_hash: null,
         })),
       );
 
@@ -718,7 +720,7 @@ describe('göç 23: eski kozmetikler kaldırıldı', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(26);
+      expect(MIGRATIONS.length).toBe(27);
       expect(
         store.db.prepare('SELECT id, profile_effect, avatar_decoration, profile_frame, nameplate FROM users ORDER BY id').all(),
       ).toEqual(
@@ -794,7 +796,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(26);
+      expect(MIGRATIONS.length).toBe(27);
       // Var olan mesajlar olduğu gibi; türleri yok (sıradan mesaj biçimi değişmez)
       expect(store.db.prepare('SELECT id, channel_id, author_id, content, created_at FROM messages ORDER BY id').all()).toEqual(before);
       const old = store.getMessage(Number((before[0] as { id: number }).id))!;
@@ -826,7 +828,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
       // Göç tekrar çalıştırılamaz (sütun ekler) ama açılışta tekrar çalışmaz
       store.close();
       const again = new Store(file);
-      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 26 });
+      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 27 });
       again.close();
     } finally {
       try {
@@ -850,7 +852,7 @@ describe('göç 26: arkadaşlar', () => {
 
     const store = new Store(file);
     try {
-      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 26 });
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 27 });
       const [a, b] = userIds as [string, string];
       const permissions = new PermissionService(store);
       expect(store.listFriends(a)).toEqual({ friends: [], incoming: [], outgoing: [] });

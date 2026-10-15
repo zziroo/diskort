@@ -3,12 +3,18 @@
 //   docker compose exec api node dist/admin-cli.js list [--json]
 //   docker compose exec api node dist/admin-cli.js grant <kullanıcı adı>
 //   docker compose exec api node dist/admin-cli.js revoke <kullanıcı adı>
+//   docker compose exec api node dist/admin-cli.js intro-sound-remove <kullanıcı adı | kimlik>
 //
 // Hesap yöneticiliği hesabın kendi bayrağıdır (users.is_admin), hiçbir sunucuya bağlı değildir: geri
 // bildirimleri yönetir, sıfırlama kodu üretir, hesap siler, hesap daveti oluşturur. Son yönetici
 // çıkarılamaz. Veritabanını doğrudan açar (<DATA_DIR>/diskort.db; ya da --db <dosya>); sunucu çalışırken
 // de güvenlidir (WAL) ve yetki denetimleri bayrağı her istekte okuduğundan değişiklik hemen geçerlidir.
 // Açık uygulamalardaki arayüz (Ayarlar > Yönetim) yeniden bağlanınca güncellenir.
+//
+// intro-sound-remove: uygunsuz kişisel giriş sesini kaldırır (sütunu boşaltır, <veri klasörü>/intro-sounds'taki
+// dosyayı siler). Araç sunucunun gateway'ine bağlı değildir: ses adresi hemen 404 döner, ama açık
+// istemciler kullanıcının yeni hâlini sonraki USER_UPDATE'te ya da yeniden bağlanınca alır. Anında yayılsın
+// isteniyorsa yönetici uç noktası kullanılır: DELETE /api/users/<kimlik>/intro-sound.
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -16,6 +22,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 /** users.is_admin'in doğruluk kaynağı olduğu şema (göç 17) */
 const MIN_SCHEMA = 17;
+/** users.intro_sound_hash'in geldiği şema (göç 27) */
+const INTRO_SOUND_SCHEMA = 27;
 
 const USAGE = `Kullanım: node dist/admin-cli.js <komut> [seçenekler]
 
@@ -23,6 +31,8 @@ Komutlar:
   list [--json]              Hesap yöneticileri
   grant <kullanıcı adı>      Hesap yöneticisi yapar
   revoke <kullanıcı adı>     Hesap yöneticiliğini alır (son yönetici alınamaz)
+  intro-sound-remove <kullanıcı adı | kimlik>
+                             Kişisel giriş sesini kaldırır (dosyası da silinir)
 
 Seçenek:  --db <dosya>  (varsayılan: $DATA_DIR/diskort.db)`;
 
@@ -34,6 +44,7 @@ interface UserRow {
   display_name: string;
   is_admin: number;
   created_at: number;
+  intro_sound_hash?: string | null;
 }
 
 function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, string | true> } {
@@ -78,9 +89,12 @@ function main(argv: string[]): void {
       db.prepare('SELECT * FROM users WHERE is_admin = 1 ORDER BY created_at, rowid').all() as unknown as UserRow[];
     const find = (): UserRow => {
       if (!username) throw new CliError('Kullanıcı adı ver (ör. grant ziroo).');
-      const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username.replace(/^@/, '').toLowerCase()) as
-        | UserRow
-        | undefined;
+      const byId = db.prepare('SELECT * FROM users WHERE id = ?').get(username) as UserRow | undefined;
+      const row =
+        byId ??
+        (db.prepare('SELECT * FROM users WHERE username = ?').get(username.replace(/^@/, '').toLowerCase()) as
+          | UserRow
+          | undefined);
       if (!row) throw new CliError(`"${username}" adlı hesap yok.`);
       return row;
     };
@@ -124,6 +138,27 @@ function main(argv: string[]): void {
           throw err;
         }
         console.log(`@${user.username} artık hesap yöneticisi değil.`);
+        return;
+      }
+      case 'intro-sound-remove': {
+        if (version < INTRO_SOUND_SCHEMA) {
+          throw new CliError(`Veritabanı şeması ${version}: giriş sesleri şema ${INTRO_SOUND_SCHEMA} ile gelir.`);
+        }
+        const user = find();
+        const hash = user.intro_sound_hash ?? null;
+        if (!hash) {
+          console.log(`@${user.username} kullanıcısının giriş sesi yok.`);
+          return;
+        }
+        db.prepare('UPDATE users SET intro_sound_hash = NULL WHERE id = ?').run(user.id);
+        // Dosya veritabanının yanındaki intro-sounds klasöründe (<DATA_DIR>/intro-sounds); silinemezse
+        // sunucunun temizlik görevi bir saat sonra siler
+        if (/^[0-9a-f]{32}$/.test(hash)) {
+          fs.rmSync(path.join(path.dirname(dbFile), 'intro-sounds', `${hash}.mp3`), { force: true });
+        }
+        console.log(
+          `@${user.username} kullanıcısının giriş sesi kaldırıldı. Açık uygulamalar yeniden bağlanınca güncellenir.`,
+        );
         return;
       }
       default:

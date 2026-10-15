@@ -8,6 +8,7 @@ import type { AuthLog } from './authLog.js';
 import type { DailyCounters } from './counters.js';
 import type { AttachmentService } from './attachments.js';
 import type { AvatarService } from './avatars.js';
+import type { IntroSoundService } from './introSounds.js';
 import type { AuthService } from './auth.js';
 import type { ClientVersionPolicy } from './clientVersion.js';
 import type { Config } from './config.js';
@@ -48,6 +49,8 @@ export interface AppContext {
   push: PushService;
   attachments: AttachmentService;
   avatars: AvatarService;
+  /** Kişisel giriş sesleri (<DATA_DIR>/intro-sounds) */
+  introSounds: IntroSoundService;
   /** Etkinlik (oyun) ikonları */
   activityIcons: ActivityIconStore;
   /** Yayınlanmış kozmetik paketleri (komut satırından yayınlanır; burada yalnızca okunur) */

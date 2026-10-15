@@ -4,6 +4,7 @@ import {
   ChannelSoundGate,
   errorMessage,
   gateway,
+  introSoundUrl,
   reportClientError,
   reportVoiceLog,
   setStreamVolume,
@@ -36,6 +37,7 @@ import { Dimensions, PermissionsAndroid, PixelRatio, Platform } from 'react-nati
 import { create } from 'zustand';
 import { VoiceService } from '../../modules/voice-service';
 import { soundCue, type SoundEvent } from '../haptics';
+import { introSoundsEnabled, playIntroSound, stopIntroSound } from '../sounds';
 import { getSettings, useSettings } from '../stores/settings';
 import { toast } from '../stores/ui';
 import { MicGate, SILENT_LEVEL, type GateConfig, type MicLevel } from './micGate';
@@ -224,7 +226,11 @@ class MobileVoiceClient {
   private readonly gate = new MicGate((micLevel) => useVoice.setState({ micLevel }));
   /** Başkalarının kanal olaylarının sesleri (bağlanınca sel olmasın, art arda gelenler tek ses) */
   // Kapıdan yalnızca başkalarının olayları (userJoin, userStream…) geçer; hepsi SoundEvent
-  private readonly channelSounds = new ChannelSoundGate((name) => soundCue(name as SoundEvent));
+  // Biri girince (sesi varsa) kendi giriş sesi çalar, yoksa genel "biri girdi" sesi
+  private readonly channelSounds = new ChannelSoundGate(
+    (name) => soundCue(name as SoundEvent),
+    (url) => playIntroSound(url),
+  );
   /** Bağlantı birkaç saniyede geri gelmezse "koptu" sesi; geri gelince "geri geldi" */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lostSoundPlayed = false;
@@ -391,7 +397,12 @@ class MobileVoiceClient {
       // Katılma sesi bağlantı ve ses oturumu (görüşme kipi) kurulduktan sonra: önce çalınca kip değişirken
       // kesiliyordu
       this.channelSounds.quiet();
-      if (!opts.silent) soundCue('join');
+      if (!opts.silent) {
+        // Kendi giriş sesin varsa genel "katıldın" sesi yerine o çalar (kanaldakiler de onu duyar)
+        const own = introSoundsEnabled() ? introSoundUrl(useSession.getState().user) : null;
+        if (own) playIntroSound(own, { own: true });
+        else soundCue('join');
+      }
       // Konuşma izni yoksa (ya da sunucuda susturulduysa) yalnızca dinlenir; izin gelince açılır
       if (micGranted && !this.micMuted()) await room.localParticipant.setMicrophoneEnabled(true, captureOptions());
       // Mikrofon açılırken ayrılındı ya da başka kanala geçildi: bu oda artık kapatıldı
@@ -768,8 +779,10 @@ class MobileVoiceClient {
       .on(RoomEvent.TrackUnmuted, (pub, p) => {
         if (pub.source === Track.Source.ScreenShareAudio && !p.isLocal) this.applyVolumes();
       })
-      .on(RoomEvent.ParticipantConnected, () => {
-        if (this.room === room) this.channelSounds.push('userJoin');
+      .on(RoomEvent.ParticipantConnected, (p) => {
+        if (this.room !== room) return;
+        // Girenin giriş sesi (yoksa, kapalıysa ya da seviye 0'sa null: genel "biri girdi" sesi)
+        this.channelSounds.push('userJoin', introSoundsEnabled() ? introSoundUrl(useGuild.getState().users[p.identity]) : null);
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         useVoice.setState((s) => streamGone(s, p.identity));
@@ -879,6 +892,7 @@ class MobileVoiceClient {
     const room = this.room;
     this.room = null;
     this.channelSounds.cancel();
+    stopIntroSound();
     this.clearReconnectTimer();
     this.gate.detach();
     // DPDFNet yeniden denemesi ayrılış sırasında modeli yükleyip mikrofonu yeniden açmasın
