@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sunucudaki Diskort yedeklerini bu bilgisayara indirir (Mac karşılığı; Windows'ta scripts/pull-db-backups.ps1):
 # en son veritabanı yedeği (60 gün tutulur), dosya eklerinin, profil fotoğraflarının ve geri bildirim ekran
-# görüntülerinin aynası. Böylece sunucu tamamen kaybolsa bile bir kopya burada kalır.
+# görüntülerinin aynası. Böylece sunucu tamamen kaybolsa bile bir kopya burada kalır. Aynı sunucudaki Tussle'ın
+# gece yedeğini de indirir (~/Yedekler/Tussle, 14 gün: Tussle gizlilik sayfası yedekleri en çok 14 gün tutar).
 # launchd her gün 12:00'de çalıştırır (net.ziroo.diskort-yedek). Elle: bash scripts/pull-db-backups.sh
 #
 # Sunucuya ~/.ssh/config'teki `vps` alias'ıyla bağlanır (anahtar, kullanıcı, zaman aşımı orada).
@@ -10,6 +11,8 @@ set -euo pipefail
 SERVER="${DISKORT_BACKUP_SERVER:-vps}"
 DEST="${DISKORT_BACKUP_DEST:-$HOME/Yedekler/Diskort}"
 KEEP_DAYS="${DISKORT_BACKUP_KEEP_DAYS:-60}"
+TUSSLE_DEST="${TUSSLE_BACKUP_DEST:-$HOME/Yedekler/Tussle}"
+TUSSLE_KEEP_DAYS=14   # Tussle gizlilik sayfasındaki söz; artırma
 REMOTE_ROOT=/var/backups/diskort
 SSH=(ssh -o BatchMode=yes "$SERVER")
 SCP=(scp -q -o BatchMode=yes)
@@ -59,18 +62,25 @@ mirror() {
   echo "$label: ${#remote_files[@]} dosya, yeni ${#missing[@]}, silinen $removed"
 }
 
-# 1) En son veritabanı yedeği (latest.db.gz symlink'inin hedefi; adı tarih taşır)
-name="$(remote "readlink $REMOTE_ROOT/latest.db.gz")"
-[ -n "$name" ] || fail "latest.db.gz bulunamadı"
-target="$DEST/$name"
-if [ -e "$target" ]; then
-  status="zaten vardı"
-else
-  "${SCP[@]}" "$SERVER:$REMOTE_ROOT/$name" "$target.part"
-  gzip -t "$target.part" || { rm -f "$target.part"; fail "$name bozuk indi"; }
-  mv "$target.part" "$target"
-  status="indirildi ($(( $(stat -f %z "$target") / 1024 )) KB)"
-fi
+# Sunucudaki latest.db.gz'nin hedefini (adı tarih taşır) yoksa indirir, gzip'ini doğrular; "<ad> <durum>" yazar.
+pull_latest() {
+  local remote_root="$1" dest="$2" name target
+  mkdir -p "$dest"
+  name="$(remote "readlink $remote_root/latest.db.gz")"
+  [ -n "$name" ] || fail "$remote_root/latest.db.gz bulunamadı"
+  target="$dest/$name"
+  if [ -e "$target" ]; then
+    echo "$name zaten vardı"
+  else
+    "${SCP[@]}" "$SERVER:$remote_root/$name" "$target.part"
+    gzip -t "$target.part" || { rm -f "$target.part"; fail "$name bozuk indi"; }
+    mv "$target.part" "$target"
+    echo "$name indirildi ($(( $(stat -f %z "$target") / 1024 )) KB)"
+  fi
+}
+
+# 1) En son veritabanı yedeği
+db="$(pull_latest "$REMOTE_ROOT" "$DEST")"
 find "$DEST" -maxdepth 1 -name 'diskort-*.db.gz' -mtime +"$KEEP_DAYS" -delete
 
 # 2) Ekler, profil fotoğrafları, geri bildirim görüntüleri (sunucudaki günlük kopyanın aynası)
@@ -78,5 +88,10 @@ a="$(mirror "$REMOTE_ROOT/attachments" "$DEST/ekler" '^[0-9a-f]{32}$' 'ekler')"
 b="$(mirror "$REMOTE_ROOT/avatars" "$DEST/profil-fotograflari" '^[0-9a-f]{32}\.webp$' 'profil fotoğrafları')"
 c="$(mirror "$REMOTE_ROOT/feedback" "$DEST/geri-bildirim" '^[0-9a-f]{32}\.webp$' 'geri bildirim görüntüleri')"
 
-echo "$(now) TAMAM  $name $status; $a; $b; $c" >>"$LOG"
-echo "TAMAM: $name $status; $a; $b; $c"
+# 3) Tussle veritabanı yedeği. Dosyanın zamanı indiği an (sunucuda alınıştan ~8 saat sonra), bu yüzden
+# indirilişinden 13 gün sonra silinir; böylece hiçbir kopya alınışından 14 gün sonra burada durmaz.
+t="$(pull_latest /var/backups/tussle "$TUSSLE_DEST")"
+find "$TUSSLE_DEST" -maxdepth 1 -name 'tussle-*.db.gz' -mmin +"$(((TUSSLE_KEEP_DAYS - 1) * 1440))" -delete
+
+echo "$(now) TAMAM  $db; $a; $b; $c; tussle $t" >>"$LOG"
+echo "TAMAM: $db; $a; $b; $c; tussle $t"

@@ -112,6 +112,7 @@ Sunucu, Google'ın FCM HTTP v1 arayüzüne doğrudan gönderir. Firebase → Pro
 | Veritabanı | `diskort-backup.timer`, her gece 04:00 → `infra/backup-db.sh` (tutarlı kopya + bütünlük kontrolü) | `/var/backups/diskort/` (`latest.db.gz` en yenisi) | 14 gün |
 | Dosya ekleri, profil fotoğrafları, geri bildirim görüntüleri | Aynı zamanlayıcı → `infra/backup-attachments.sh` (sabit bağlantıyla, ek yer kaplamaz) | `/var/backups/diskort/` | silinen dosya 30 gün daha |
 | Sunucu dışı kopya | Windows Görev Zamanlayıcı → [`scripts/pull-db-backups.ps1`](../scripts/pull-db-backups.ps1), her gün 12:00 | `OneDrive\Yedekler\Diskort` | 60 gün |
+| Sunucu dışı kopya (Mac) | launchd `net.ziroo.diskort-yedek` → [`scripts/pull-db-backups.sh`](../scripts/pull-db-backups.sh), her gün 12:00; aynı sunucudaki Tussle'ın gece yedeğini de çeker | `~/Yedekler/Diskort`, Tussle `~/Yedekler/Tussle` | 60 gün; Tussle 14 gün (gizlilik sayfası) |
 
 Notlar:
 
