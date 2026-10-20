@@ -187,6 +187,8 @@ pnpm typecheck
 
 ### Kodda nereye bakmalı?
 
+Kod haritası: [docs/kod-haritasi.md](docs/kod-haritasi.md), önce onu oku.
+
 | Konu | Yer |
 |---|---|
 | Ses motoru (bağlanma, yayın, yeniden bağlanma) | [`apps/desktop/src/renderer/src/features/voice/voiceClient.ts`](apps/desktop/src/renderer/src/features/voice/voiceClient.ts) |

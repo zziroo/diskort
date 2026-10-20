@@ -1,0 +1,316 @@
+# Kod haritası: Diskort
+<!-- kod-haritasi: include=apps,packages,scripts,tools,infra exclude=apps/mobile/assets,apps/desktop/resources,apps/web/assets,apps/desktop/build -->
+_Güncelleme: 2026-10-20 (3ddcc48). Bakım: yapıyı değiştiren commit'te güncelle; `node ~/.claude/skills/kod-haritasi/harita.mjs kontrol`._
+
+## Genel bakış
+- pnpm monorepo, Discord benzeri sesli sohbet. Katmanlar: `apps/server` (Fastify + SQLite + WebSocket gateway; ses LiveKit'te) ← `packages/shared` (tipler, yetkiler, sözleşmeler) → `packages/client-core` (iki istemcinin ortak çekirdeği: API, gateway, durum, ses telemetrisi) → `apps/desktop` (Electron) ve `apps/mobile` (Expo/React Native, Kotlin yerel modüller). `apps/web`: indirme sayfası ve yönetim paneli (`apps/web/admin.js`).
+- Veri akışı: istemci REST ile yazar, sunucu gateway olayıyla herkese yayar, istemci çekirdeği durumu günceller; ses/görüntü doğrudan LiveKit'e, sunucu yalnız jeton verir ve webhook'la durumu izler.
+- Altyapı ve dağıtım: `infra/` (docker-compose, Caddy, LiveKit, yedek betikleri), `scripts/` (sürüm, iOS, kozmetik paket üretimi), `tools/udp-probe` (hat testi). Belgeler `docs/*.md`, özet `README.md`.
+- Kök komutlar: `pnpm dev:desktop`, `pnpm dev:desktop2` (ikinci istemci), `pnpm dev:server`, `pnpm dev:livekit`, `pnpm typecheck`, `pnpm test`; paket bazında `pnpm --filter @diskort/<paket> test`.
+
+**Sunucu ve ortak**
+- Sunucu: Node 22.12+ (imaj ve CI Node 24), Fastify + `node:sqlite` (WAL) + @fastify/websocket; tek süreç, tek SQLite dosyası (`<DATA_DIR>/diskort.db`).
+- Çalıştırma: `pnpm dev:livekit` (`scripts/livekit-dev.mjs`, `infra/livekit.dev.yaml`) + `pnpm dev:server` (tsx watch `apps/server/src/index.ts`); ilk açılışta konsola ilk yönetici davet kodu düşer (`ensureBootstrapInvite`).
+- Derleme: `pnpm --filter @diskort/server build` (tsup; girişler `apps/server/tsup.config.ts`: index + 3 CLI). Tip: `pnpm typecheck`. Test: `pnpm --filter @diskort/server test` (vitest, `apps/server/vitest.config.ts` 30 sn sınır).
+- `packages/shared` derlenmez, TS kaynağı doğrudan kullanılır (`main: src/index.ts`); sunucu paketine tsup gömer. Kendi test betiği yok.
+- Kurulum, güncelleme, ayarlar, yedek: `docs/sunucu-kurulumu.md`; yönetim aracı ve panel: `docs/yonetim.md`.
+
+**İstemci çekirdeği ve masaüstü**
+- Çalıştırma: `pnpm dev:livekit`, `pnpm dev:server`, `pnpm dev:desktop` (electron-vite, renderer :5173); ikinci istemci `pnpm dev:desktop2` (`scripts/dev-second-client.mjs`, `DISKORT_PROFILE`).
+- Test: `pnpm --filter @diskort/client-core test`, `pnpm --filter @diskort/desktop test` (ikisi de `vitest run`); tip: `pnpm --filter @diskort/desktop typecheck` (node + web tsconfig ayrı).
+- Paket: `pnpm --filter @diskort/desktop dist:win` (electron-builder, `apps/desktop/electron-builder.yml`); yayın akışı: `docs/surumler-ve-guncellemeler.md`, imza: `docs/kod-imzalama.md`.
+- `packages/client-core` derlenmez: `main` doğrudan `packages/client-core/src/index.ts`; React/zustand peer, masaüstü `apps/desktop/electron.vite.config.ts` içinde `dedupe` ile tek kopya.
+- Geliştirme bayrakları (`apps/desktop/src/main/index.ts`): `DISKORT_FAKE_MEDIA`, `DISKORT_FAKE_AUDIO_FILE`, `DISKORT_DEBUG_PORT`; geliştirme profili `userData` + `-dev`.
+
+**Mobil ve web**
+- Mobil: Expo 57 + React Native 0.86, expo-router (dosya tabanlı), zustand, LiveKit RN; giriş `apps/mobile/index.ts` (önce `apps/mobile/src/setup.ts`, sonra router). Ortak mantık client-core'dan gelir (`configureClient` çağrısı `apps/mobile/src/setup.ts`).
+- Komutlar (`apps/mobile/package.json`): `pnpm --filter @diskort/mobile test` (vitest), `pnpm --filter @diskort/mobile typecheck`, `pnpm --filter @diskort/mobile prebuild` (yalnız Android, `--clean`), `pnpm --filter @diskort/mobile android` (`expo run:android`; yerel derleme OTA almaz).
+- Kotlin birim testleri: prebuild sonrası apps/mobile/android içinde `./gradlew :noise-filter:testReleaseUnitTest` (CI: `.github/workflows/android.yml`).
+- Web (`apps/web`): derlemesiz düz HTML/JS/CSS; Caddy `/srv/web`'den sunar (`infra/docker-compose.yml`, `infra/caddy/diskort.caddy`). Yönetim paneli belgesi: `docs/yonetim.md`.
+
+## Alanlar
+
+### Sunucu ve ortak
+- Giriş: `apps/server/src/index.ts` (`loadConfig`, `buildApp`, 30 sn'lik LiveKit eşitlemesi `reconcile`) → `apps/server/src/app.ts` `buildApp`: bütün servisleri kurar, `AppContext` doldurur, rotaları kaydeder, zamanlayıcılar ve `onClose` kancaları.
+- Ortak bağlam: `apps/server/src/context.ts` `AppContext`, `sendError`, `parseBody` (zod), `forbidden`, `afterPermissionChange`.
+- Ayarlar: `apps/server/src/config.ts` `loadConfig` (ortam değişkenleri; geliştirmede `DEV_JWT_SECRET` gibi varsayılanlar, üretimde `required`).
+- Veritabanı: `apps/server/src/db.ts` `Store` (tüm SQL burada), `MIGRATIONS`; ayrı göç metinleri `apps/server/src/feedbackStore.ts` `FEEDBACK_MIGRATION`, `apps/server/src/voiceHistory.ts` `ADMIN_HISTORY_MIGRATION`.
+- Kimlik: `apps/server/src/auth.ts` `AuthService` (argon2, HS256 JWT 30 gün, `requireUser`, `requireMember`, `requireGuildPermission`, `requireInstanceAdmin`).
+- Yetki: `apps/server/src/permissions.ts` `PermissionService` (`inChannel`, `canView`, `viewersOf`, `isDm`); hesap `packages/shared/src/permissions.ts` `hasPermission`, `Permission`. Belge: `docs/roller-ve-yetkiler.md`.
+- Gateway (WebSocket `/gateway`): `apps/server/src/gateway.ts` `Gateway`, `Coalescer`; durum/etkinlik birleştirme `apps/server/src/presence.ts` `StatusStore`, `mergeActivities`.
+- REST: `apps/server/src/routes/` her dosya bir `register…Routes(app, ctx)`; ör. `apps/server/src/routes/messages.ts` `registerMessageRoutes`, `createRateLimiter`.
+- Ses: `apps/server/src/voiceState.ts` `VoiceStateStore` (bellekte, olay yayar), `apps/server/src/livekit.ts` `LiveKitService`, `apps/server/src/voiceModeration.ts` `VoiceModeration` (`sources` = LiveKit yayın izinleri, sunucu susturma `setServerFlags`), `apps/server/src/routes/voice.ts` `registerVoiceRoutes`.
+- Sunucu/üye rotaları: `apps/server/src/routes/guilds.ts` `registerGuildRoutes` (kanallar, roller, üyeler; üye ses moderasyonu `voiceSchema`, `MUTE_MEMBERS` denetimi burada).
+- DM ve aramalar: `apps/server/src/dmCalls.ts` `DmCallService`, `apps/server/src/privateCalls.ts` `PrivateCallIds`, `apps/server/src/routes/dms.ts`; belge `docs/direkt-mesajlar.md`.
+- Dosyalar: `apps/server/src/attachments.ts` `AttachmentService`, `apps/server/src/avatars.ts` `AvatarService`, `apps/server/src/introSounds.ts` (ffmpeg), `apps/server/src/fileInfo.ts` `inspectImage`.
+- Önizleme/GIF: `apps/server/src/linkPreviews.ts` `LinkPreviewService`, `apps/server/src/safeFetch.ts` `safeFetch` (SSRF koruması), `apps/server/src/embedMedia.ts`, `apps/server/src/gifs.ts` `GifService`.
+- Bildirim: `apps/server/src/push.ts` `PushService` (FCM), `apps/server/src/apns.ts` `createApns`.
+- Sürümler: `apps/server/src/releases.ts` `ReleaseService` (GitHub yoklar), `apps/server/src/clientVersion.ts` `ClientVersionPolicy`, `apps/server/src/ota.ts` `OtaService`, `apps/server/src/routes/updates.ts`, `apps/server/src/routes/download.ts`; belge `docs/surumler-ve-guncellemeler.md`.
+- Kozmetik: `apps/server/src/cosmeticPacks.ts` `CosmeticPackStore`, `apps/server/src/cosmeticCompat.ts` `withoutPackCosmetics`, sözleşme `packages/shared/src/cosmetics.ts`; belge `docs/kozmetik-paketleri.md`.
+- Geri bildirim: `apps/server/src/feedback.ts`, `apps/server/src/feedbackStore.ts` `FeedbackStore`, `apps/server/src/routes/feedback.ts`; belge `docs/geri-bildirim.md`.
+- iPhone: `apps/server/src/routes/udid.ts`, `apps/server/src/iosDevices.ts` `IosDeviceService` (onayda ios.yml başlatır); belge `docs/ios.md`.
+- Yönetim paneli verisi: `apps/server/src/dashboard.ts` `DashboardService`, `apps/server/src/apiStats.ts` `ApiStats`, `apps/server/src/infraStats.ts` `InfraMonitor` (Caddy/TURN ölçümleri `CaddyStats`), `apps/server/src/systemStats.ts` `SystemMonitor`, `apps/server/src/routes/adminStats.ts`; arayüz `apps/web/admin.js`.
+- Bağlantı teşhisi: `apps/server/src/netSeconds.ts` `SecondSampler`, `apps/server/src/netProbe.ts` `ProbeEngine`, `apps/server/src/netOutages.ts` `OutageLog`, `apps/server/src/freezeDiagnosis.ts` `FreezeCorrelator`, `apps/server/src/telemetry.ts` `VoiceTelemetryStore`, `apps/server/src/clientTrace.ts` `ClientTraceStore`, `apps/server/src/traceRequests.ts`.
+- Hat testi: `apps/server/src/lineTest/` (`apps/server/src/lineTest/protocol.ts` UDP biçimi, `apps/server/src/lineTest/udpServer.ts` `LineTestServer`, `apps/server/src/lineTest/service.ts` `LineTestService`), rotalar `apps/server/src/routes/lineTest.ts`; istemci aracı `tools/udp-probe/probe.mjs` (`tools/udp-probe/README.md`).
+- CLI (imajda `node dist/<ad>.js`): `apps/server/src/admin-cli.ts` (hesap yöneticisi, giriş sesi kaldırma), `apps/server/src/cosmetics-cli.ts` (paket yayını), `apps/server/src/feedback-cli.ts`.
+- Ortak tipler: `packages/shared/src/index.ts` (modeller `Message`, istekler `CreateMessageRequest`, `VoiceModerationRequest`; gateway mesajları, sabitler) + konu dosyaları `packages/shared/src/presence.ts`, `packages/shared/src/search.ts` `foldSearchText`, `packages/shared/src/telemetry.ts`, `packages/shared/src/voiceTrace.ts`, `packages/shared/src/feedback.ts`, `packages/shared/src/activity.ts`.
+- Altyapı: `infra/docker-compose.yml` (livekit, api, caddy; host ağı), `apps/server/Dockerfile`, `infra/caddy/diskort.caddy` (site), `infra/Caddyfile` (tek başına kurulum + TURN/TLS), `infra/livekit.yaml`, `infra/setup-vps.sh`, yedek `infra/backup-db.sh`, `infra/backup-attachments.sh`, `infra/restore-db.sh`, zamanlayıcı `infra/systemd/diskort-backup.timer`.
+- Betikler: `scripts/release-win.mjs`, `scripts/win-update-info.mjs` (imzalı exe için latest.yml), `scripts/ios-provisioning.mjs` + `scripts/ios-provisioning-lib.mjs`, `scripts/ios-devices-crypto.mjs`, `scripts/pull-db-backups.sh` (Mac yedek aynası; Windows eşi `scripts/pull-db-backups.ps1`), `scripts/dev-second-client.mjs`.
+- Kozmetik çizim aracı: `scripts/cosmetic-render/render.mjs` (gizli Electron'da kare kare çizer, WebP/AVIF/video), `scripts/cosmetic-render/pack.mjs` `buildBundle` (yayın paketi), `scripts/cosmetic-render/video.mjs`, set ayarları `scripts/cosmetic-render/sets/`.
+- CI: `.github/workflows/ci.yml` (main push + PR: typecheck + test), `.github/workflows/release.yml` (`v*` etiketi → taslak sürüm), `.github/workflows/android.yml`, `.github/workflows/ios.yml`, `.github/workflows/dpdfnet-olcum.yml`.
+
+### İstemci çekirdeği ve masaüstü
+#### Ortak istemci çekirdeği (`packages/client-core/src/`)
+- Giriş: `packages/client-core/src/index.ts` her şeyi dışa açar; kozmetik döngüleri ayrı giriş `packages/client-core/src/cosmeticLoops/index.ts` (`COSMETIC_LOOP_SHADERS`, telefon paketine girmesin diye).
+- Platform seam: `packages/client-core/src/configure.ts` `configureClient` → `packages/client-core/src/env.ts` `ClientEnvironment` (storage, `serverUrl`, `notifyError`, `onMention`, `onDirectMessage`, `onUpdateRequired`, `upload`); çekirdek her yerde `env()` ile okur.
+- REST: `packages/client-core/src/api.ts` `api` (tüm uçlar tek nesnede), `request`, `ApiError`, `CLIENT_FEATURES` (sunucuya `X-Diskort-Features`).
+- Gateway: `packages/client-core/src/gateway.ts` `GatewayClient` → tekil `gateway` (`connect`, `resume`, `setIdle`, `setActivities`, `setWatching`, `send`, `on`); olayları önce `useGuild` deposuna uygular, sonra dinleyicilere dağıtır.
+- Oturum: `packages/client-core/src/session.ts` `useSession` (persist `diskort-session`, `skipHydration`; `onSessionEnded`).
+- Ana durum: `packages/client-core/src/guild.ts` `useGuild` (sunucular, kanallar, üyeler, ses durumları, DM, arkadaşlar, okundu) + `applyEvent`; seçiciler `membersOf`, `channelById`, `isUnread`.
+- Mesajlar: `packages/client-core/src/messages.ts` `useMessages` (kanal başına sayfa, bekleyen gönderim, yükleme, tepki, okundu, yazıyor); yan dosyalar `packages/client-core/src/replies.ts` `startReply`, `packages/client-core/src/pins.ts` `usePins`, `packages/client-core/src/reactions.ts` `useReactionUsers`, `packages/client-core/src/uploads.ts` `uploadFile`, `packages/client-core/src/markdown.ts` `parseMarkdown`, `packages/client-core/src/composer.ts` `registerComposer`, `packages/client-core/src/search.ts` `runSearch`, `packages/client-core/src/gifs.ts` `searchGifs`, `packages/client-core/src/linkEmbeds.ts` `visibleLinkEmbeds`.
+- DM / arkadaş / arama: `packages/client-core/src/dms.ts` `useDmList`, `packages/client-core/src/friends.ts` `useFriends`, `packages/client-core/src/dmCalls.ts` `useIncomingCalls` (sözleşme `docs/direkt-mesajlar.md`).
+- Yetki: `packages/client-core/src/permissions.ts` `can`, `useCan`, `permissionsOf` (hesap `packages/shared/src/permissions.ts`; model `docs/roller-ve-yetkiler.md`); `packages/client-core/src/permissionInfo.ts` `PERMISSION_GROUPS` (arayüz metinleri), `packages/client-core/src/moderation.ts` `memberActions`.
+- Varlık/durum: `packages/client-core/src/presence.ts` `useStatus`, `packages/client-core/src/activity.ts` `setActivities`, `packages/client-core/src/activityView.ts` `presenceSubline`, `packages/client-core/src/profileContext.ts` `contextOfChannel`.
+- Ses yardımcıları (platformsuz): `packages/client-core/src/connectionStats.ts` `parseTransportStats`, `packages/client-core/src/voiceTelemetry.ts` `voiceTelemetry`, `packages/client-core/src/voiceTrace.ts` `VoiceTraceRecorder`, `packages/client-core/src/voiceTraceUpload.ts` `voiceTrace`, `packages/client-core/src/speechLevel.ts` `SpeechLevelHistogram`, `packages/client-core/src/streamAudio.ts` `setStreamVolume`, `packages/client-core/src/streamPreview.ts` `uploadStreamPreview`, `packages/client-core/src/serverClock.ts` `serverClock`.
+- Arayüz sesleri (tek tanım): `packages/client-core/src/sfx.ts` `SOUND_NAMES`, `renderSound`, `ChannelSoundGate`.
+- Ayar yapısı (iki platform ortak): `packages/client-core/src/settingsSections.ts` `SETTINGS_GROUPS`, `searchSettings`; sunucu ayarları `packages/client-core/src/guildSettings.ts` `GUILD_SETTINGS_SECTIONS`.
+- Kozmetik: `packages/client-core/src/cosmeticPacks.ts` `useCosmeticManifest`, `refreshCosmeticPacks`, `selectableCosmeticSets` (bkz. `docs/kozmetik-paketleri.md`); `packages/client-core/src/cosmeticShaders/index.ts` `COSMETIC_SHADERS` ve `packages/client-core/src/cosmeticLoops/` yalnız çevrimdışı çizim betiğinde kullanılır.
+- Geri bildirim / hata: `packages/client-core/src/feedback.ts` `submitFeedback` (`docs/geri-bildirim.md`), `packages/client-core/src/errors.ts` `reportClientError`.
+
+#### Masaüstü ana süreç (`apps/desktop/src/main/`)
+- `apps/desktop/src/main/index.ts`: profil, tek örnek kilidi, davet protokolü (`registerProtocol`, `openInvite`), Chromium anahtarları, izinler (`ALLOWED_PERMISSIONS`), ekran seçimi (`setupDisplayMedia`), pencere (`createWindow`), tepsi (`createTray`), IPC (`registerIpc`), boşta güncelleme (`startIdleInstaller`).
+- Güncelleme: `apps/desktop/src/main/updater.ts` `UpdateManager`; açılış kapısı `apps/desktop/src/main/startup.ts` `runStartupGate`; açılış penceresi `apps/desktop/src/main/splash.ts` `Splash`.
+- Global kısayol: `apps/desktop/src/main/hotkeys.ts` `HotkeyManager` (uiohook-napi); boşta: `apps/desktop/src/main/idle.ts` `IdleMonitor`.
+- Oyun etkinliği (yalnız Windows): `apps/desktop/src/main/activity/index.ts` `ActivityMonitor`, `registerActivityIpc`; tarama `apps/desktop/src/main/activity/scanner.ts` `ActivityScanner`, sınıflama `apps/desktop/src/main/activity/classify.ts` `detectGames`, kütüphaneler `apps/desktop/src/main/activity/libraries.ts` `parseVdf`.
+- Çökme: `apps/desktop/src/main/crashReport.ts` `registerCrashReporting`, `apps/desktop/src/main/crashStore.ts` `CrashStore`; diğer IPC modülleri `apps/desktop/src/main/feedback.ts` `registerFeedbackIpc`, `apps/desktop/src/main/lineTest.ts` `registerLineTestIpc`.
+- Köprü sözleşmesi: `apps/desktop/src/shared/bridge.ts` `DiskortBridge`; preload `apps/desktop/src/preload/index.ts` (`contextBridge`, `window.diskort`); renderer erişimi `apps/desktop/src/renderer/src/lib/bridge.ts` `bridge` (tarayıcıda null).
+- Tema: `apps/desktop/src/shared/themes.ts` `THEME_PALETTES`, `windowColors`; pencere rengi `apps/desktop/src/main/windowTheme.ts` `WINDOW_COLORS`; renderer `apps/desktop/src/renderer/src/lib/theme.ts` `installTheme`.
+
+#### Masaüstü renderer (`apps/desktop/src/renderer/src/`)
+- Giriş: `apps/desktop/src/renderer/src/main.tsx` (önce platform.ts, `installTheme`, `installTurnPortRewrite`); `apps/desktop/src/renderer/src/platform.ts` `configureClient` (bildirim, ses, `onUpdateRequired`); `apps/desktop/src/renderer/src/App.tsx` `App` (güncelleme / `MainLayout` / `AuthScreen`).
+- Yerleşim ve görünüm: `apps/desktop/src/renderer/src/components/MainLayout.tsx` `MainLayout`; görünüm durumu `apps/desktop/src/renderer/src/stores/ui.ts` `useUi`, `View`; `apps/desktop/src/renderer/src/lib/mainView.ts` `resolveView`.
+- Depolar: `apps/desktop/src/renderer/src/stores/settings.ts` `useSettings` (persist `diskort-settings`), `apps/desktop/src/renderer/src/stores/voice.ts` `useVoice`, `apps/desktop/src/renderer/src/stores/connectionStats.ts` `useConnectionStats`, `apps/desktop/src/renderer/src/stores/update.ts` `useUpdate`.
+- Ses motoru: `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` `voice` (LiveKit `Room`); mikrofon zinciri `apps/desktop/src/renderer/src/features/voice/micProcessor.ts` `MicProcessor`; gürültü düşüş merdiveni `apps/desktop/src/renderer/src/features/voice/denoiserHealth.ts` `DENOISER_LADDER`; DPDFNet `apps/desktop/src/renderer/src/features/voice/denoise/` + `apps/desktop/src/renderer/src/features/voice/dpdfnet/dsp.js` `StftFramer`; kapı `apps/desktop/src/renderer/src/features/voice/gate-worklet.js`.
+- Ekran paylaşımı: `apps/desktop/src/renderer/src/features/voice/screenPresets.ts` `SCREEN_PRESETS`, `apps/desktop/src/renderer/src/features/voice/hardwareEncoder.ts` `prepareHardwareEncoder`, `apps/desktop/src/renderer/src/features/voice/streamPreviewUploader.ts` `StreamPreviewUploader`.
+- Metin: `apps/desktop/src/renderer/src/components/text/` (`TextChannelView`, `MessageList`, `MessageItem`, `Composer`); markdown çizimi `apps/desktop/src/renderer/src/features/messages/markdown.tsx` `renderMarkdown`.
+- Kenar çubuğu / ses arayüzü: `apps/desktop/src/renderer/src/components/sidebar/` (`VoiceConnectionPanel`, `UserPanel`, `AudioMenus`); sahne `apps/desktop/src/renderer/src/components/stage/VoiceStage.tsx` `VoiceStage`, yayın `apps/desktop/src/renderer/src/components/stage/StreamView.tsx` `StreamView`.
+- Ayarlar: `apps/desktop/src/renderer/src/components/settings/SettingsModal.tsx` `SettingsModal`; sunucu ayarları `apps/desktop/src/renderer/src/components/serverSettings/ServerSettingsModal.tsx` `ServerSettingsModal`.
+- DM ve aramalar: `apps/desktop/src/renderer/src/components/dms/`, `apps/desktop/src/renderer/src/features/calls/useCallEffects.ts` `useCallEffects`, `apps/desktop/src/renderer/src/lib/calls.ts` `joinDmCall`.
+- Kozmetik oynatıcı: `apps/desktop/src/renderer/src/components/cosmetics/Cosmetics.tsx` `AvatarDecoration`, `Nameplate`; dosya seçimi `apps/desktop/src/renderer/src/components/cosmetics/pieces.ts` `resolvePiece` (yalnız `<img>`, gerçek zamanlı çizim yok).
+- Masaüstü entegrasyonu: `apps/desktop/src/renderer/src/features/desktop/useDesktopIntegration.ts` `useDesktopIntegration` (boşta, etkinlik, davet, kısayol, tepsi, indirme, güncelleyici durumu).
+- Üye sağ tık menüsü (sustur, taşı, roller): `apps/desktop/src/renderer/src/lib/memberMenu.ts` `memberMenuItems`; mobil karşılığı `apps/mobile/src/components/MemberSheet.tsx` `MemberSheet`.
+- Ortak UI: `apps/desktop/src/renderer/src/components/ui/` (`Modal`, `PanelMenu`, `Select`, `Tooltip`), denetimler `apps/desktop/src/renderer/src/components/ui/controls.tsx` `Toggle`.
+
+### Mobil ve web
+- Açılış/kurulum: `apps/mobile/src/setup.ts` → `clientReady` (güvenli depo, bildirim/hata geri çağrıları, `registerGlobals`, `setupSounds`); kök yerleşim `apps/mobile/src/app/_layout.tsx` → `RootLayout`, `ErrorBoundary`, `CrashContext`.
+- Ekranlar (expo-router): `apps/mobile/src/app/` — her dosya bir rota; ana ekran `apps/mobile/src/app/index.tsx` → `HomeScreen` (`NavShell` + `LeftPanel` + `ChannelChat`). Derin bağlantı (davet) `apps/mobile/src/app/+native-intent.ts` → `redirectSystemPath`.
+- Gezinme durumu: `apps/mobile/src/stores/nav.ts` → `useNav`, `showChat`, `openChat`, `setPanelOpen`; ayarlar `apps/mobile/src/stores/settings.ts` → `useSettings`, `NoiseMode`, `DEFAULT_SERVER_URL`; toast `apps/mobile/src/stores/ui.ts` → `toast`.
+- Sohbet: `apps/mobile/src/components/ChannelChat.tsx`, `apps/mobile/src/components/Composer.tsx`, `apps/mobile/src/components/MessageRow.tsx` → `MessageRow`, `apps/mobile/src/components/Markdown.tsx`; kanal paneli (medya/dosya/bağlantı/üye) `apps/mobile/src/components/channelPanel/` → `usePaged`.
+- Ses istemcisi: `apps/mobile/src/voice/voice.ts` → `MobileVoiceClient` (tekil `voice`), durum `useVoice`; düğme işlemleri + dokunma geri bildirimi `apps/mobile/src/voice/actions.ts` → `joinVoice`, `leaveVoice`, `toggleMute`; mikrofon kapısı `apps/mobile/src/voice/micGate.ts` → `MicGate`; bağlantı paneli `apps/mobile/src/voice/connectionStats.ts` → `useConnectionStats`.
+- Ses arayüzü: `apps/mobile/src/app/voice.tsx` → `VoiceScreen`; `apps/mobile/src/components/VoiceTiles.tsx` → `MemberTile`, `StreamTile`; alt çubuk `apps/mobile/src/components/VoiceBar.tsx` → `VoiceBar`; ses ayarları `apps/mobile/src/components/VoiceSettings.tsx` → `VoiceSettings`.
+- Gürültü filtresi JS tarafı: `apps/mobile/src/voice/noiseFilter.ts` → `prepareNoiseFilter`, `releaseNoiseFilter`, `effectiveNoiseMode`, `webrtcNoiseSuppression`; ısı `apps/mobile/src/voice/thermal.ts` → `readThermal`.
+- Yerel modüller (yalnız Android, `requireOptionalNativeModule`): `apps/mobile/modules/voice-service/` → `VoiceForegroundService` (ön plan servisi + bildirim düğmeleri, olay `onAction`); `apps/mobile/modules/noise-filter/` → `NoiseFilterModule`, `DpdfnetProcessor`; `apps/mobile/modules/crash-reporter/` → `CrashStore`; `apps/mobile/modules/gallery/` → `GalleryModule`.
+- Güncelleme: `apps/mobile/src/update/updater.ts` → `updateOnLaunch`, `checkForUpdate`, `applyOta`, `installUpdate`, `useAppUpdate`; arayüz `apps/mobile/src/components/UpdateScreen.tsx` → `UpdateScreen`, `apps/mobile/src/components/UpdateBanner.tsx` → `UpdateBanner`. Sürüm sabitleri `apps/mobile/src/version.ts` → `APP_VERSION`, `NATIVE_VERSION`.
+- Kozmetik oynatıcı (Skia): `apps/mobile/src/components/cosmetics/` → `CardEffect`, `AnimatedDecoration`, `NameplateBackground`, `createSkiaDriver`, `createPlayback`, `createPackCache`, `pieceSource`, `initSkia`. Davranış: `docs/kozmetik-paketleri.md` ("Telefonda").
+- Çökme raporları: `apps/mobile/src/crashReports.ts` → `reportPendingNativeCrashes`, `noteCrashContext`, `parseCrashReport`; yerel tombstone ayrıştırma `apps/mobile/src/tombstone.ts` → `parseTombstone`.
+- Bildirimler: `apps/mobile/src/notifications.ts` → `registerForPush`, `channelFromResponse`, `dismissChannelNotifications`; gelen DM araması `apps/mobile/src/components/IncomingCall.tsx` → `IncomingCallHost`, `CallSounds`.
+- Sesler/titreşim: `apps/mobile/src/sounds.ts` → `setupSounds`, `playIntroSound`; `apps/mobile/src/haptics.ts` → `soundCue`, `feedback`; wav'lar apps/mobile/assets/sounds altında.
+- Tema/stil: `apps/mobile/src/theme.ts` → `palettes`, `THEME_NAMES`, `createStyles`, `useTheme`, `colors`; ortak UI `apps/mobile/src/components/ui.tsx` → `Button`, `Field`, `SwitchRow`; alt sayfa `apps/mobile/src/components/BottomSheet.tsx` → `BottomSheet`; hareket `apps/mobile/src/motion.ts`.
+- Ayarlar: `apps/mobile/src/app/settings.tsx` → `SettingsScreen`; bölümler `apps/mobile/src/app/ayarlar/[bolum].tsx` → `PAGES`, `settingsSection`; içerik `apps/mobile/src/components/settings/`. Sunucu ayarları: `apps/mobile/src/app/sunucu-ayarlari/` + `apps/mobile/src/components/serverSettings/common.tsx` → `SECTION_INFO`, `openServerSettings`.
+- Ekler/medya: `apps/mobile/src/attachments.ts` → `uploadFromDevice`, `pickMedia`, `saveToGallery`; video `apps/mobile/src/video.ts` → `hasNativeVideo`.
+- Yapılandırma: `apps/mobile/app.config.ts` (izinler, `runtimeVersion`, `updates`, eklenti sırası); eklentiler `apps/mobile/plugins/`; Metro `apps/mobile/metro.config.js` → `SINGLETONS`.
+- Betikler: `apps/mobile/scripts/runtime-version.mjs` (yerel parmak izi), `apps/mobile/scripts/ota-manifest.mjs` (OTA bildirimi + imza), `apps/mobile/scripts/generate-sounds.mjs` (sesleri client-core tanımından üretir), `apps/mobile/scripts/check-ios-project.sh` → `check`.
+- Web: indirme sayfası `apps/web/index.html` + `apps/web/app.js` → `detectOS`, `PLATFORM_INFO`; yönetim paneli `apps/web/admin.html` + `apps/web/admin.js`; iPhone kaydı `apps/web/udid.html` + `apps/web/udid.js`; ayrıca `apps/web/privacy.html`, `apps/web/code-signing.html` (bkz. `docs/kod-imzalama.md`), tek stil `apps/web/styles.css`.
+
+## Şunu yapmak için
+
+### Sunucu ve ortak
+- **Yeni REST ucu:**
+  1. Tipler: `packages/shared/src/index.ts` REST bölümü (ör. `AuthResponse` yanına).
+  2. Rota: `apps/server/src/routes/` altında dosya, `export function register…Routes(app, ctx)`; korumalar `apps/server/src/auth.ts` `requireUser` / `requireGuildPermission`; gövde `apps/server/src/context.ts` `parseBody`.
+  3. Kayıt: `apps/server/src/app.ts` `buildApp` sonundaki `register…` listesi; yeni servis gerekiyorsa `apps/server/src/context.ts` `AppContext` + `buildApp` içinde kurulum.
+  4. Sıklık sınırı: `apps/server/src/routes/messages.ts` `createRateLimiter`.
+  5. `/api/*` dışında bir yol ise `infra/caddy/diskort.caddy` içindeki `@api` eşleyicisine ekle.
+  6. Test: `apps/server/test/helpers.ts` `startServer` (`req`, `member`).
+- **DB şeması değişikliği:** `apps/server/src/db.ts` `MIGRATIONS` dizisinin SONUNA yeni metin ekle (eskileri asla değiştirme; "// N:" yorumu = şema sürümü, `user_version` = `MIGRATIONS` uzunluğu). Göçler `migrate` içinde yabancı anahtar denetimi kapalıyken, her biri `tx` içinde çalışır. Yöntemleri ilgili `// ----------` bölümüne yaz; test `apps/server/test/migration.test.ts`.
+  - DB'yi doğrudan açan CLI'lar şema sürümüne bakar: `apps/server/src/admin-cli.ts` `MIN_SCHEMA`, `INTRO_SOUND_SCHEMA`.
+- **Gateway olayı (sunucu → istemci):** `packages/shared/src/index.ts` `GatewayServerMessage` birleşimine ekle → `apps/server/src/gateway.ts` `dispatchChannel` (kanalı görenler) / `sendToGuild` / `sendToUsers` / `broadcast` ile gönder → istemcide `packages/client-core/src/gateway.ts` (ör. `UPDATE_AVAILABLE` dalı).
+  - İstemci → sunucu: `packages/shared/src/index.ts` `GatewayClientMessage` + `apps/server/src/gateway.ts` `handle` içindeki `switch`; sık gelenler `Coalescer` ile sınırlanır.
+  - Eski istemci almamalıysa: `packages/shared/src/index.ts` `CLIENT_FEATURE_DM` benzeri sabit → `apps/server/src/gateway.ts` `identifyMessage` oturum bayrağı → `packages/client-core/src/api.ts` `CLIENT_FEATURES`.
+  - Test: `apps/server/test/helpers.ts` `connectGateway` (`events`, `settle`).
+- **Yeni yetki:** `packages/shared/src/permissions.ts` `Permission` (yeni bit) + `ALL_PERMISSIONS` + gruplar (`TEXT_CHANNEL_PERMISSIONS` vb.) → var olan rollere dağıtmak için göç (örnek: `apps/server/src/db.ts` göç 18, `PIN_MESSAGES`) → denetim `apps/server/src/permissions.ts` `can` → `docs/roller-ve-yetkiler.md` tablosu.
+- **Yetki etkileyen değişiklik sonrası:** önce `gateway.visibility()` al, sonra `apps/server/src/context.ts` `afterPermissionChange` (görünürlük + LiveKit izinleri).
+- **Yeni ortam ayarı:** `apps/server/src/config.ts` `Config` + `loadConfig` → üretimde etkili olması için `infra/docker-compose.yml` api `environment` listesine de ekle → `docs/sunucu-kurulumu.md` Ayarlar tablosu.
+- **admin-cli komutu:** `apps/server/src/admin-cli.ts` `USAGE` + komut dalı (DB'yi `DatabaseSync` ile doğrudan açar, gateway'e bağlı değil); `docs/yonetim.md` Komut satırı.
+- **Kozmetik paketi yayınlamak:** çiz `node scripts/cosmetic-render/render.mjs --set <ad> --pack`, yayınla `apps/server/src/cosmetics-cli.ts` `publish` (stdin); ayrıntı `docs/kozmetik-paketleri.md`. Paket doğrulaması `apps/server/src/cosmeticPacks.ts` `parseBundle`, `inspectPackFile`.
+- **Yeni kozmetik set kimliği/parça:** `packages/shared/src/cosmetics.ts` `COSMETIC_SETS`, `COSMETIC_PIECES`; set ayarı `scripts/cosmetic-render/sets/buz.mjs` örnek.
+- **Sürüm yayınlamak / deploy:** `docs/surumler-ve-guncellemeler.md` (etiket → `.github/workflows/release.yml`); sunucu güncelleme `docs/sunucu-kurulumu.md` Güncelleme. Windows elle: `scripts/release-win.mjs`; SignPath sonrası `scripts/win-update-info.mjs`.
+- **Panelde yeni ölçüm:** uçlar `apps/server/src/routes/adminStats.ts` (`/api/admin/infra` → `apps/server/src/infraStats.ts` `snapshot`); veri `apps/server/src/routes/adminStats.ts` `registerAdminStatsRoutes` ya da `apps/server/src/dashboard.ts` `DashboardService`, arayüz `apps/web/admin.js`.
+
+### İstemci çekirdeği ve masaüstü
+- Yeni ayar bölümü: `packages/client-core/src/settingsSections.ts` `SettingsSectionId` + `SETTINGS_GROUPS` (mobil de görür, `platforms` ile sınırla) → `apps/desktop/src/renderer/src/stores/ui.ts` `SettingsSection` → `apps/desktop/src/renderer/src/components/settings/SettingsModal.tsx` `SectionContent` + yeni bileşen `apps/desktop/src/renderer/src/components/settings/`.
+- Yeni kalıcı masaüstü ayarı: `apps/desktop/src/renderer/src/stores/settings.ts` `Settings` + varsayılan; ses motoru etkileniyorsa `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` `onSettingsChanged`.
+- Yeni mesaj özelliği (istemci): tip `packages/shared/src/index.ts` → uç `packages/client-core/src/api.ts` `api` → durum ve gateway olayı `packages/client-core/src/messages.ts` `useMessages` (alttaki `gateway.on` bloğu) → çizim `apps/desktop/src/renderer/src/components/text/MessageItem.tsx` `MessageItem`, yazma `apps/desktop/src/renderer/src/components/text/Composer.tsx` `Composer`; mobil karşılığı ayrı yazılır.
+- Yeni gateway olayı: depoya uygulanacaksa `packages/client-core/src/guild.ts` `applyEvent`; oturum/sürüm türü olaylar `packages/client-core/src/gateway.ts` `handle`.
+- Mikrofon zinciri değişikliği: `apps/desktop/src/renderer/src/features/voice/micProcessor.ts` `build` (kaynak → gürültü engelleyici → `createGain` → `diskort-gate` → gönderim + dinleme kolu); kapı parametreleri `GateConfig`, worklet `apps/desktop/src/renderer/src/features/voice/gate-worklet.js`; LiveKit'e takılma `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` `openMic`, `publishMic`.
+- Yeni gürültü modeli: `apps/desktop/src/renderer/src/features/voice/denoiserHealth.ts` `Denoiser`, `DENOISER_LADDER`; menü metni `apps/desktop/src/renderer/src/components/sidebar/AudioMenus.tsx` `NOISE_LABELS`; ayar türü `apps/desktop/src/renderer/src/stores/settings.ts` `NoiseMode`.
+- Yeni arayüz sesi: `packages/client-core/src/sfx.ts` `SOUND_NAMES`, `SOUND_LABELS`, `SPECS` → masaüstü kendiliğinden üretir (`apps/desktop/src/renderer/src/lib/sfx.ts` `playSound`) → telefon için `apps/mobile/scripts/generate-sounds.mjs` çalıştır ve `apps/mobile/src/sounds.ts` `FILES` ekle.
+- Yeni IPC kanalı: `apps/desktop/src/shared/bridge.ts` `DiskortBridge` → `apps/desktop/src/preload/index.ts` (`ipcRenderer.invoke`/`listen`) → `apps/desktop/src/main/index.ts` `registerIpc` (ya da modülün `register*Ipc`) → renderer'da `bridge?.` ile (null olabilir).
+- Yeni global kısayol: `apps/desktop/src/shared/bridge.ts` `HotkeyAction` → `apps/desktop/src/main/hotkeys.ts` `HotkeyManager` → `apps/desktop/src/renderer/src/features/desktop/useDesktopIntegration.ts` (olay → `voice`) → `apps/desktop/src/renderer/src/components/settings/SettingsModal.tsx` `KeybindsSection`.
+- Otomatik güncelleme: `apps/desktop/src/main/updater.ts` `UpdateManager`, `apps/desktop/src/main/startup.ts` `runStartupGate`, `apps/desktop/src/main/index.ts` `startIdleInstaller`; arayüz `apps/desktop/src/renderer/src/components/UpdateRequired.tsx` `UpdateReadyBar`; adresler `apps/desktop/src/shared/distribution.ts` `UPDATE_FEED_URL`.
+- Yeni tema: `apps/desktop/src/shared/themes.ts` `THEME_IDS`, `THEME_PALETTES` (test `apps/desktop/test/themes.test.ts`).
+- i18n yok: metinler kod içinde Türkçe; ortak etiketler client-core'da (`packages/client-core/src/permissionInfo.ts` `PERMISSION_GROUPS`, `packages/client-core/src/sfx.ts` `SOUND_LABELS`).
+
+### Mobil ve web
+- Yeni ekran: `apps/mobile/src/app/<ad>.tsx` (default export) → `apps/mobile/src/app/_layout.tsx` içinde `Stack.Protected` altına `Stack.Screen` ekle (başlık/animasyon) → gezinme router.push ile (typedRoutes açık, yol tipli).
+- Yeni ayar bölümü: id client-core'da (`settingsSection`) → `apps/mobile/src/app/ayarlar/[bolum].tsx` → `PAGES` ve koşullu içerik; bileşen `apps/mobile/src/components/settings/`.
+- Yeni sunucu ayarı bölümü: `apps/mobile/src/components/serverSettings/common.tsx` → `SECTION_INFO`; bölüm bileşeni aynı klasöre; yönlendirme `apps/mobile/src/app/sunucu-ayarlari/[bolum].tsx` → `ServerSettingsSectionScreen`.
+- Yerel Kotlin modülüne fonksiyon: Kotlin `Function`/`AsyncFunction` (ör. `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/NoiseFilterModule.kt` → `getThermal`) → TS bildirimi `apps/mobile/modules/noise-filter/src/NoiseFilterModule.ts` içinde **isteğe bağlı** (`setVideoActive?` gibi) → çağıran JS varlığını denetler. Yeni APK gerekir (parmak izi değişir).
+- Yeni yerel modül: `apps/mobile/modules/<ad>/` (`expo-module.config.json`, `index.ts`, src/*Module.ts içinde requireOptionalNativeModule, android/.../*Module.kt); örnek en küçük: `apps/mobile/modules/gallery/`.
+- Gürültü filtresi: JS karar/yedek `apps/mobile/src/voice/noiseFilter.ts`; yerel eşikler `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/DpdfnetBudget.kt` → `judgeWindow`, `retryDelayMs`; 12 sa yavaş kaydı `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/SlowMemory.kt`; DSP `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/DpdfnetDsp.kt`; model betikleri `apps/mobile/modules/noise-filter/scripts/optimize_model.py` (CI: `.github/workflows/dpdfnet-olcum.yml`).
+- Ses istemcisi davranışı: `apps/mobile/src/voice/voice.ts` → `join`/`leave`/`bind`/`teardown`; düğme tepkisi `apps/mobile/src/voice/actions.ts`.
+- OTA / APK / IPA sürümü: süreç `docs/surumler-ve-guncellemeler.md` ve `docs/ios.md`; sürüm `apps/mobile/package.json` (masaüstüyle aynı); uygulama içi akış `apps/mobile/src/update/updater.ts` → `resolveRequiredUpdate`, `setBeforeReload`.
+- Config plugin: `apps/mobile/plugins/` altına yeni with*.js (örnek `apps/mobile/plugins/withAbiSplits.js`, işaretle idempotent) → `apps/mobile/app.config.ts` `plugins` listesine ekle; iOS ayarı ise `apps/mobile/plugins/withIos.js` + `apps/mobile/scripts/check-ios-project.sh`.
+- Kozmetik oynatıcı: parça seçimi `apps/mobile/src/components/cosmetics/packSource.ts` → `playableKinds`; yerleşim `apps/mobile/src/components/cosmetics/packLayout.ts` → `decorationLook`; paylaşımlı oynatıcı `apps/mobile/src/components/cosmetics/packPlayer.ts`; kare sürücüsü `apps/mobile/src/components/cosmetics/packDriver.ts`; önbellek `apps/mobile/src/components/cosmetics/packCache.ts` + `apps/mobile/src/components/cosmetics/packFiles.ts` → `watchPackFiles`. Paket biçimi `docs/kozmetik-paketleri.md`.
+- Yeni arayüz sesi: tanım client-core'da → `node apps/mobile/scripts/generate-sounds.mjs` → `apps/mobile/src/sounds.ts` → `MOBILE_SOUND_NAMES`.
+- Yeni tema: `apps/mobile/src/theme.ts` → `palettes`, `THEME_LABELS` (masaüstündeki temalarla aynı ad/renk).
+- Yönetim paneline sekme: `apps/web/admin.html` (`data-tab` düğmesi + bölüm) → `apps/web/admin.js` → `LOADERS` (sekmeye özel uç) ya da 5 sn özeti `render`; uç sunucuda (server bölümü).
+
+## Büyük dosyaların içi
+
+### Sunucu ve ortak
+- `apps/server/src/db.ts` (3159): başta `SEARCH_MIGRATION` (FTS5, ı→i katlama) ve `MIGRATIONS`; satır dönüştürücüler (`toMessage`, `toChannel`, `toInvite`); `Store` yapıcı + `migrate`, `tx`, `run` (her yazma `permissionCache` siler).
+  - `Store` bölümleri (`// ---------- Ad ----------`): Kullanıcılar, Hesap yöneticileri, Üyelikler, Roller ve yetkiler (`permissionData`), Davetler (`ensureBootstrapInvite`), Sunucular ve kanallar (`ensureGuild`), Direkt mesajlar, Engellemeler, Arkadaşlar, Kullanıcı durumu, Bildirim jetonları, Mesajlar (`searchMessages`, `createMessage`), Sabitlenmiş mesajlar (`listPins`, `addReaction`), Arama kayıtları, Bağlantı önizleme önbelleği, Dosya ekleri (`lastMessageIds`, `readStates`).
+- `apps/server/src/gateway.ts` (895): sel sabitleri + `Coalescer`; `Session` arayüzü (özellik bayrakları `dm`, `packs`, `trace`); `Gateway`: gönderim (`broadcast`, `dispatchChannel`, `sendToGuild`, `sendDm`), görünürlük (`visibility`, `syncVisibility`), sunucu üyeliği (`announceJoin`, `announceLeave`), bağlantı (`accept`, `drop`, `handle`, `identifyMessage`, `identify` → READY, `pingAll`), çıkış süzgeci `out`.
+- `apps/server/src/freezeDiagnosis.ts` (1132): teşhis kuralları `diagnose`, `serverResourceProblems`, `summarizeLiveKit`; "Olay toplayıcı" bölümü `buildUsers`, `FreezeCorrelator` (`observe`, `sweep`, `detailOf`).
+- `apps/server/src/netSeconds.ts` (1003): /proc ayrıştırıcılar `parseSoftnetStat`, `readRaw`, `rowBetween`; Özetler `findBurst`, `summarizeRows`; Dakikalık özet `minuteOf`; Halka + kalıcı kayıt `isAbnormalRow`, `SilenceScanner`, `SecondSampler` (`tick`, `flush`, `seconds`, `minutes`).
+- `apps/server/src/cosmeticPacks.ts` (986): baştaki yorum depo düzenini anlatır; Dosya içeriğinin denetimi `inspectPackFile`, `parseBundle`; manifest.json bölümü; `CosmeticPackStore` (`served`, `openFile`, `publish`, `remove`, `prune`, `setPlatforms`, `setOrder`, kilit `forceUnlock`).
+- `apps/server/src/dashboard.ts` (644): `startOfDay`, `DashboardService` (panel özeti), `firstMessageIdSince`.
+- `apps/server/src/routes/messages.ts` (625): `createRateLimiter`; `registerMessageRoutes` içinde yardımcılar (`textChannel`, `visibleMessage`, `scheduleLinkEmbeds`), mesaj CRUD, "Sabitlenmiş mesajlar" (`pinTarget`), "Tepkiler" (`reactionTarget`), okundu (`/ack`).
+- `apps/server/src/infraStats.ts` (620): LiveKit bölümü `liveKitSample`, `LiveKitMetrics`; Kapsayıcılar/yedekler/sertifikalar `checkTls`, `InfraMonitor`.
+- `apps/server/src/telemetry.ts` (603): `assessReport` (kalite eşikleri), `VoiceTelemetryStore`.
+- `apps/server/src/app.ts` (565): `BuildOptions` (test enjeksiyonları), servis kurulumu, teşhis zinciri (`requestTracesFor`), `onSend` kozmetik süzgeci, sağlık uçları, rota kayıtları.
+- `apps/server/src/clientTrace.ts` (565): `traceUploadSchema`, `ClientTraceStore`.
+- `apps/server/src/lineTest/service.ts` (529): `LineTestService` (kod basma, UDP/TCP koşuları), "Aşamaları test olarak toplama" `groupSuites`, `syncGroups`.
+- `apps/server/src/fileInfo.ts` (517): `inspectImage`, Video `inspectVideo`, `mp4Metadata`, Dosya adı `sanitizeFileName`, sunum başlıkları `servedType`, `contentDisposition`, HTTP Range `parseRange`.
+- `packages/shared/src/index.ts` (1404): `// ----------` bölümleri: Modeller, Arkadaşlar, REST (`AuthResponse`, `VoiceJoinResponse`), Gateway (`GatewayServerMessage`, `GatewayClientMessage`, `CLIENT_FEATURES_HEADER`), Sabitler (`GATEWAY_HEARTBEAT_INTERVAL_MS`, `voiceRoomName`, `channelIdFromRoom`), Yardımcılar.
+- `scripts/cosmetic-render/render.mjs` (868): baştaki yorum tüm seçenekleri listeler; bölümler Seçenekler `parseArgs`, Çizim `runElectron`, Kare ölçümleri `seamStats`, Kodlama `encodeWebp`, Akış `renderSet`, `main`.
+- `tools/udp-probe/probe.mjs` (616): Protokol (`encodeHello`, `encodeStart`), ölçüm `LossCounter`, `measureClock`; masaüstü "Hat testi" düğmesinin de motoru.
+
+### İstemci çekirdeği ve masaüstü
+- `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` (`VoiceClient`, bölümler `// ----------`): bağlanma `join`/`leave`/`teardownRoom`, mikrofon `publishMic`/`republishMic`/`onDenoiserFailed`/`tryReupgrade`, mute/PTT `toggleMute`/`setPushToTalk`/`onSettingsChanged`, oda olayları `bindRoom`/`onSubscribed`, yayın izleme `watchStream`/`focusStream`, ekran paylaşımı `startScreenShare`/`stopScreenShareInternal`, istatistik `collectStats`/`watchConnectionDetail`, mikrofon testi `startMicTest`.
+- `apps/desktop/src/renderer/src/features/voice/micProcessor.ts`: model yükleme `loadDpdfnetAssets`, `firstAvailableDenoiser`; `MicProcessor` `init`/`restart`, zincir `build`, barındırıcı `startRealtimeHost` (AudioWorklet) / `startWorkerHost` (Worker), köprü `createDenoiser`, `teardown`.
+- `apps/desktop/src/renderer/src/components/cosmetics/layers.ts`: set başına Canvas katmanı `drawKaradelik`, `drawSakura`, `drawAurora`, `drawForest`, `drawIce`, `drawNeon` (+ `*Loop` döngü biçimleri), `drawFallback`, `LAYERS`; yalnız `scripts/cosmetic-render/page.ts` `LAYERS` kullanır.
+- `apps/desktop/src/renderer/src/components/stage/VoiceStage.tsx`: `VoiceStage`, `FocusedStage`, `TileGrid`, `ParticipantTile`, `StreamTile`, `CallControls`, şerit sırası `useStripOrder`.
+- `apps/desktop/src/renderer/src/components/settings/ProfileLookSettings.tsx`: `ProfileLookSettings`, `useLook`, `SetPicker`, `NameplatePicker`, `DecorationPicker`, `BannerPicker`.
+- `apps/desktop/src/renderer/src/components/settings/SettingsModal.tsx`: `SettingsModal`, `SectionContent`, `AccountSection`, `AppearanceSection`, `StreamSection`, `KeybindsSection`, `AdvancedSection`.
+- `apps/desktop/src/renderer/src/components/serverSettings/RolesSection.tsx`: `RolesSection`, `RoleEditor`, `RoleMembers`.
+- `apps/desktop/src/renderer/src/components/sidebar/ConnectionInfoPopover.tsx`: `ConnectionTab`, `PrivacyTab`, hata ayıklama `DebugView`, `MicProcessingSection`, `TransportSection`.
+- `apps/desktop/src/main/index.ts`: bölümler davet bağlantıları, ekran paylaşımı `getScreenSources`, pencere `createWindow`, tepsi `updateTrayMenu`, IPC `registerIpc`, boşta güncelleme, yaşam döngüsü `whenReady`.
+- `packages/client-core/src/messages.ts`: yükleme `loadInitial`/`loadOlder`, dosyalar `addFiles`, gönderme `sendMessage`/`startSending`/`retryMessage`/`editMessage`, tepkiler `toggleReaction`, okundu `ackChannel`, yazıyor `notifyTyping`, bahsetme `isMentioned`/`notifyMention`, gateway olayları `MESSAGE_CREATE`.
+- `packages/client-core/src/guild.ts`: tipler `GuildStore`, aktif sunucu `restoreActiveGuild`, türetme `derive`, depo `useGuild`, varlık `applyPresence`, olaylar `applyEvent`, seçiciler `isGuildUnread`, `guildVoiceStateOf`, `streamersFirst`.
+- `packages/client-core/src/voiceTrace.ts`: rapor okuma `parseTraceTotals`, farklar `uplinkDeltas`/`downlinkDeltas`, tetikleyiciler `TRACE_LOSS_PCT`, kayıt `VoiceTraceRecorder`.
+- `packages/client-core/src/voiceTelemetry.ts`: gelen ses `inboundAudioDelta`, takılma `LoopLagMeter`, `volumeSummary`, ana sınıf `VoiceTelemetry` → `voiceTelemetry`.
+- `packages/client-core/src/sfx.ts`: adlar/etiketler `SOUND_NAMES`, tarifler `SPECS`, sentez `renderSound`, başkalarının olayları `ChannelSoundGate`, `encodeWav`.
+- `packages/client-core/src/connectionStats.ts`: rapor `parseTransportStats`, değişim `describeTransport`, video `perFrameMs`, ping geçmişi `pushSample`/`linkQuality`, metinler `formatBitrate`.
+
+### Mobil ve web
+- `apps/web/admin.js` (~4150): Oturum `loadToken` → İstekler `apiGet`, `apiSend` → Yenileme `refresh` → Sekmeler `LOADERS`, `loadExtra`, `setTab` → Biçimlendirme/DOM `h`, `card`, `sparkline` → 5 sn özet `render`, `overview`, `quality` → Bağlantı teşhisi `loadDiag`, `liveView`, `openProviderReport`, `eventsView`, `traceLanes`, `detailView` → Hat testleri `lossBars`, `lineBadges` → İstemciler/Hatalar `clients`, `errors` → kişi başı ses `openTelemetry` → Ses geçmişi `voiceHistory` → Altyapı `infra`, `livekit`, `usage` → API `apiHealth` → Güvenlik `security` → Sunucular `guilds` → Geri bildirim `feedbackList` → iPhone `iosDevices`, `setIosStatus` → Başlangıç (dosya sonu).
+- `apps/mobile/src/components/ChannelChat.tsx` (~1140): ana bileşen `ChannelChat` (liste, kaydırma, okundu) → `useTypingNames`, `OtherUnread`, `UnseenPins` → başlıklar `ChannelTitle`, `DmTitle`, `Intro` → çubuklar `NewMessagesBar`, `TypingBar`, `JumpToBottom` → uzun basma menüsü `MessageMenu` (`MENU_REACTIONS`).
+- `apps/mobile/src/voice/voice.ts` (~960): yardımcılar `captureOptions`, `gateConfig`, `requestPermissions` → sınıf `MobileVoiceClient`: `join`, `leave`, `toggleMute`, `toggleDeafen`, `setSpeaker`, `watch`, `setVolume`, `toggleScreenShare`, `screenShareStats`; özel `syncVoiceState`, `onPublication`, `bind` (oda olayları), `playIntro`, `teardown` → `export const voice`.
+- `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/DpdfnetProcessor.kt` (~765): `Bypass`/`Stats`/`WarmUp` → kurulum `install`, `unload`, `setEnabled`, `bypassThermal`, `noteSlow` → ses iş parçacığı `processAudio`, `dry`, `crossfade`, `measure` → model iş parçacığı `ensureWorker`, `workLoop`, `idle` → `warmUp`.
+- `apps/mobile/src/components/cosmetics/Cosmetics.tsx` (~715): kancalar `usePieceShown` → Oynatma `usePlayback` → Canlı yüzey `stackedEffect`, `LiveCanvas`, `LiveBoundary` → Parça `PackPiece`, `StillPiece`, `LivePiece` → `CardEffect` → `AnimatedDecoration`, `StaticDecorationRing` → `NameplateBackground` → seçici `SetThumb` → `nameplateNameColor`.
+- `apps/mobile/src/components/settings/ProfileSettings.tsx` (~680): `ProfileSettings` → seçiciler `SetPicker`, `NameplatePicker`, `DecorationChoices` → kancalar `useProfileLook`, `useProfileBanner`, `useIntroSound`, `useProfilePhoto`.
+- `apps/mobile/src/components/cosmetics/packDriver.ts` (~670): arayüz iş parçacığı `uiStep`, `uiStepVideo`, `uiOpenImage`, `uiOpenVideo`, `uiClose` → video çalışma ortamı `workerOpenVideo` → JS tarafı `onUiEvent`, `load` → `createSkiaDriver`.
+- `apps/mobile/src/components/Composer.tsx` (~655): taslak/düzenleme kaydı `hasDraftText`, `hasOpenEdit` → `Composer` (bahsetme `MENTION_QUERY`) → `SendButton`, `TrayItem`, `Suggestions`, `AttachTile`.
+- `apps/mobile/src/components/settings/AccountAdmin.tsx` (~605): `AccountAdmin` → `AdminsBlock` → `AccountInvitesBlock` → `AccountsBlock`, `ResetCodeCard` → ortak `UserLine`, `SearchBox`.
+- `apps/mobile/src/components/StreamViewer.tsx` (~545): `StreamViewer` (tam ekran, kontroller) → `RoundButton` → `useVideoInfo` → `useViewerGestures` (yakınlaştırma, aşağı çekip kapatma).
+- `apps/mobile/src/components/MemberSheet.tsx` (~525): `MemberSheet` sayfaları `Page` (main/move/roles): profil, seste moderasyon, kanala taşıma, roller.
+- `apps/mobile/src/components/cosmetics/packPlayer.ts` (~515): sabitler `IDLE_CLOSE_MS`, `VIDEO_PARK_MS`, `RETRY_MS` → hata türü `isPermanentFailure`, `retryDelay` → `createPlayback` (dosya başına tek oynatıcı, görünüm sayımı).
+
+## Akışlar
+
+### Sunucu ve ortak
+- **Kayıt/giriş:** `apps/server/src/routes/auth.ts` `registerAuthRoutes` (`/api/auth/register` davet kodlu, `/api/auth/login`) → `apps/server/src/db.ts` `registerWithInvite` / `getUserAuthByUsername` → `apps/server/src/auth.ts` `verifyPassword`, `issueToken`. Her istek: `requireUser` (Bearer) → `userFromToken` (şifre değişmeden önceki jetonlar `getSessionsValidAfter` ile geçersiz).
+- **Gateway bağlantısı:** `apps/server/src/gateway.ts` `accept` → HELLO → istemci IDENTIFY → `identifyMessage` (zorunlu sürüm `outdated` → UPDATE_REQUIRED/4010; jeton → `userFromToken`; özellik bayrakları) → `identify` READY (sunucular, görünür kanallar, ses durumları, DM'ler) → `announcePresence`.
+- **Mesaj gönderme:** POST `/api/channels/:id/messages` → `apps/server/src/routes/messages.ts` `registerMessageRoutes`: `textChannel` → `hasPermission` SEND_MESSAGES → `allowMessage` → `parseBody` → bahsetmeler (`resolveMentions`, `viewersOf`) → `apps/server/src/db.ts` `createMessage` → `ack` → (DM) `reopenDm` → `dispatchChannel` MESSAGE_CREATE → `sendReadState` → `scheduleLinkEmbeds` (sonra MESSAGE_UPDATE) → `pushRecipients` + `notifyMention` / `notifyDm`.
+  - Yayın: `apps/server/src/gateway.ts` `dispatchChannel` her oturum için `canView` + DM bayrağı süzer, `out` eski istemciye kozmetik süzgeci uygular.
+- **Ses odasına katılma:** POST `/api/voice/:channelId/join` → `apps/server/src/routes/voice.ts` → `canConnect` → `apps/server/src/voiceModeration.ts` `joinToken` (`sources`: SPEAK→mikrofon, STREAM→ekran) → `apps/server/src/livekit.ts` `createJoinToken` → yanıt `{url, token, roomName}` (`voiceRoomName`).
+  - İstemci LiveKit'e bağlanır → webhook `/api/livekit/webhook` (`apps/server/src/routes/voice.ts`) → `receiveWebhook` → `participant_joined`: `canConnect` yeniden, `voice.join` (`apps/server/src/voiceState.ts` `join`) → Gateway VOICE_STATE_UPDATE yayını; `onJoined`, DM araması `webhookJoined`.
+  - Kaçan webhook: `apps/server/src/index.ts` `reconcile` → `snapshot` → `apps/server/src/voiceState.ts` `reconcile` → `enforceAll`.
+
+### İstemci çekirdeği ve masaüstü
+- Açılış: `apps/desktop/src/main/index.ts` `whenReady` → `runStartupGate` (güncelleme varsa kurulur) → `setupDisplayMedia` → `createWindow` → renderer `apps/desktop/src/renderer/src/platform.ts` `configureClient` (oturum `useSession` yüklenir) → `apps/desktop/src/renderer/src/App.tsx` `App`.
+- Giriş: `apps/desktop/src/renderer/src/components/AuthScreen.tsx` `AuthScreen` → `api.login` / `api.register` → `setSession` → `apps/desktop/src/renderer/src/App.tsx` `App` `MainLayout` çizer.
+- Gateway: `apps/desktop/src/renderer/src/components/MainLayout.tsx` `gateway.connect` → `packages/client-core/src/gateway.ts` `HELLO` → `IDENTIFY` (sürüm, `CLIENT_FEATURES`) → `READY` → `setReady`; kopunca `scheduleReconnect`, 4004/`INVALID_SESSION` → `logout`, `UPDATE_REQUIRED` → `onUpdateRequired`.
+- Ses kanalına katılma: `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` `prefetch`/`takePrefetched` (`api.joinVoice`, LiveKit adresi+token) → `new Room` → `room.connect` → `startMic` (`openMic` + `MicProcessor`) → `syncVoiceState` (`VOICE_STATE_SET`); kanaldaki kişiler sunucudan `packages/client-core/src/guild.ts` `VOICE_STATE_UPDATE` ile `useGuild`'e gelir.
+- Ekran paylaşımı: `apps/desktop/src/renderer/src/components/modals/ScreenSharePicker.tsx` `ScreenSharePicker` (`bridge.screen.getSources`) → `voice.startScreenShare` → `bridge.screen.select` → ana süreç `apps/desktop/src/main/index.ts` `setDisplayMediaRequestHandler` → `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` `getDisplayMedia` → `prepareHardwareEncoder` → `publishTrack` + `StreamPreviewUploader`.
+- Yayın izleme: `apps/desktop/src/renderer/src/lib/watchStream.ts` `watchUserStream` → gerekirse `voice.join` → `voice.watchStream` → `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` `watching` değişince `gateway.setWatching` (`packages/client-core/src/gateway.ts` `STREAM_WATCH_SET`) → `apps/desktop/src/renderer/src/components/stage/StreamView.tsx` `StreamView`.
+
+### Mobil ve web
+- Açılış/giriş: `apps/mobile/index.ts` → `apps/mobile/src/setup.ts` (`registerGlobals`, `configureClient` → `clientReady`) → `apps/mobile/src/app/_layout.tsx` `RootLayout`: `clientReady` sonrası `updateOnLaunch` (seste değilse) → `ready` → `Stack.Protected` token'a göre `apps/mobile/src/app/login.tsx` (`api.login`/`api.register`) ya da `apps/mobile/src/app/index.tsx` `HomeScreen`; ardından `registerForPush`, `gateway.connect`, `initSkia`, `reportPendingNativeCrashes`.
+- Ses kanalına katılma: `apps/mobile/src/voice/actions.ts` `joinVoice` → `apps/mobile/src/voice/voice.ts` `join`: `requestPermissions` → `api.joinVoice` → `AudioSession.configureAudio`/`startAudioSession` → `prepareNoiseFilter` → `Room` + `bind` → `room.connect` (`autoSubscribe: false`) → mikrofon → `VoiceService.start` (Android ön plan servisi, bildirim; iOS'ta boş) → `syncVoiceState`. Bildirim düğmeleri `onAction` ile `voice.ts`'e döner; çıkış `teardown` → `VoiceService.stop`.
+- Arka plan: Activity yeniden kurulsa da JS + servis yaşar; `apps/mobile/src/app/_layout.tsx` sesten çıkmayı yalnız oturum kapanınca/zorunlu güncellemede yapar, OTA yeniden yüklemesinden önce `setBeforeReload` ile `voice.leave`.
+- Yayın izleme: `apps/mobile/src/app/voice.tsx` `openStream` → `apps/mobile/src/voice/voice.ts` `watch` (yalnız izlenen yayına abone olur) → `apps/mobile/src/components/StreamViewer.tsx` `StreamViewer`; yayın bitince `streamGone` → "sona erdi"; ölçüm `apps/mobile/src/voice/connectionStats.ts` `noteStreamView`.
+- Güncelleme: sunucu "yeni sürüm" → `apps/mobile/src/setup.ts` `onUpdateAvailable` → `checkForUpdate`; ayrıntı `docs/surumler-ve-guncellemeler.md`.
+
+## Testler
+
+### Sunucu ve ortak
+- `apps/server/test/` (60 dosya, vitest): gerçek `buildApp` + `:memory:` SQLite; `apps/server/test/helpers.ts` `startServer`, `FakeLiveKit`, `connectGateway`, `joinGuild`. Dosya adları alanı söyler (`apps/server/test/messages.test.ts`, `apps/server/test/dmCalls.test.ts`, `apps/server/test/roles.test.ts`, `apps/server/test/cosmeticPacks.test.ts` + `apps/server/test/cosmeticPackFixtures.ts`).
+- Tek dosya: `pnpm --filter @diskort/server exec vitest run test/roles.test.ts`.
+- Göçler: `apps/server/test/migration.test.ts` (`MIGRATIONS` dilimleriyle eski şema kurar). Hat testi + araç uyumu: `apps/server/test/lineTest.test.ts` (`tools/udp-probe/probe.mjs`'i gerçek sunucuya karşı koşar).
+- Araç testi (pnpm test'e girmez): `node --test scripts/cosmetic-render/access.test.mjs`.
+
+### İstemci çekirdeği ve masaüstü
+- `packages/client-core/test/` (55 dosya): her modülün aynı adlı testi (ör. `packages/client-core/test/gateway.test.ts`, `packages/client-core/test/messages.test.ts`, `packages/client-core/test/permissions.test.ts`); WebRTC raporu örnekleri `packages/client-core/test/fixtures/rtcStats.ts`; `packages/client-core/test/setup.ts` ağı kapatır (`fetch` sahte).
+- `apps/desktop/test/`: yalnız saf mantık (Electron/DOM yok): `apps/desktop/test/activity.test.ts`, `apps/desktop/test/denoise.test.ts`, `apps/desktop/test/denoiserHealth.test.ts`, `apps/desktop/test/gateWorklet.test.ts`, `apps/desktop/test/micSequencer.test.ts`, `apps/desktop/test/crashStore.test.ts`, `apps/desktop/test/cosmeticPieces.test.ts`, `apps/desktop/test/callLogic.test.ts`, `apps/desktop/test/themes.test.ts`.
+- Arayüz uçtan uca: test yok; elle ya da CDP ile (`apps/desktop/src/main/index.ts` `DISKORT_DEBUG_PORT`, geliştirmede `window.__diskort`, bkz. `apps/desktop/src/renderer/src/main.tsx`).
+- Gürültü değerlendirme betiği: `apps/desktop/scripts/gurultu-degerlendir.mjs` `synthFan`.
+
+### Mobil ve web
+- `apps/mobile/test/` (vitest, `apps/mobile/vitest.config.ts`): kozmetik `apps/mobile/test/packPlayer.test.ts`, `apps/mobile/test/packLayout.test.ts`, `apps/mobile/test/packCache.test.ts`, `apps/mobile/test/packSource.test.ts`, `apps/mobile/test/skia.test.ts`; gölgelendirici CanvasKit ile `apps/mobile/test/stackedShader.test.ts`; "yalnız açık profilde oynar" kuralı kaynakta `apps/mobile/test/cosmeticCallSites.test.ts`.
+- Çökme: `apps/mobile/test/crashReports.test.ts`, `apps/mobile/test/tombstone.test.ts` (yardımcı `apps/mobile/test/protobuf.ts`); diğer `apps/mobile/test/calls.test.ts`, `apps/mobile/test/thermal.test.ts`, `apps/mobile/test/cosmeticReport.test.ts`.
+- Kotlin (JVM, telefonsuz): `apps/mobile/modules/noise-filter/android/src/test/java/expo/modules/noisefilter/DpdfnetDspTest.kt` (masaüstü `dsp.js` eşdeğerliği), `apps/mobile/modules/noise-filter/android/src/test/java/expo/modules/noisefilter/DpdfnetBudgetTest.kt`.
+- Ses istemcisi, ekranlar ve web için otomatik test yok (elle/cihazda).
+
+## Tuzaklar
+
+### Sunucu ve ortak
+- `tools/udp-probe/probe.mjs` değişirse `tools/udp-probe/hat-testi.cmd` içindeki `PROBE_SHA256` güncellenmeli (`apps/server/test/lineTest.test.ts` bunu denetler); protokol `apps/server/src/lineTest/protocol.ts` ile birebir aynı tutulmalı.
+- Şifreleme biçimi iki yerde: `apps/server/src/iosDevicesCrypto.ts` `encryptDevices` ve `scripts/ios-devices-crypto.mjs` `decryptDevices` (iş akışı çözer); testle bağlı.
+- `parseRange` iki kopya: `apps/server/src/fileInfo.ts` `parseRange` (ekler, kozmetik) ve `apps/server/src/routes/introSounds.ts` `parseRange`.
+- Kozmetik süzgeci iki yerde: REST `apps/server/src/app.ts` `onSend` kancası, gateway `apps/server/src/gateway.ts` `out`; ikisi de `apps/server/src/cosmeticCompat.ts` `withoutPackCosmetics`.
+- Yerel modül sürümleri `apps/server/Dockerfile` içinde sabit (`sharp@0.35.4`, argon2) — `apps/server/package.json` ile aynı tutulmalı; tsup bunları gömmez (`apps/server/tsup.config.ts` `external`).
+- Yeni ortam değişkeni infra/.env'e yazılınca kendiliğinden geçmez: compose api'ye yalnız `infra/docker-compose.yml` `environment` listesindekileri verir.
+- `/api/health` kalmalı: `infra/restore-db.sh` hâlâ ona bakar (yeni ad `/healthz`, Uptime Kuma).
+- Göçleri asla yeniden sıralama/düzenleme; `apps/server/src/db.ts` `migrate` foreign_keys kapalı çalıştığından tablo yeniden kuran göç bağlı satırları korumalı (göç 9 örneği).
+- `apps/server/src/voiceState.ts` `VoiceStateStore` yalnızca bellekte; sunucu yeniden başlayınca ilk `reconcile` gelene kadar ses durumu boş (`apps/server/src/dmCalls.ts` `expectFirstSync` bunu bekler).
+- DM aramaları yönetim kayıtlarında takma kimlikle: `apps/server/src/privateCalls.ts` `PrivateCallIds`; ses geçmişine DM yazılmaz (`apps/server/src/voiceHistory.ts` `VoiceSessionRecorder`).
+- `SYSTEM_STATS` kapalıyken (testler, geliştirme) kalıcı panel dosyaları yazılmaz (`apps/server/src/app.ts` `statsFile`).
+- Üretimde `infra/caddy/diskort.caddy` ayrı ziroo-edge Caddy'sine içe aktarılır; değişiklik `git pull` + edge reload (bkz. `docs/sunucu-kurulumu.md`). `infra/Caddyfile` değişince Caddy yeniden başlatılmalı.
+- `packages/shared` ikisi tarafından da kullanılır: tip değişikliği sunucuyu ve `packages/client-core` istemcilerini birlikte etkiler; eski istemciler zorunlu güncellemeye kadar eski biçimi bekler (sunucu önce güncellenir).
+
+### İstemci çekirdeği ve masaüstü
+- `packages/client-core` değişince masaüstü VE mobil etkilenir; ikisinin testini ve tip kontrolünü çalıştır (`pnpm test`, `pnpm typecheck`). Telefon tarafını bozacak tarayıcı API'si (DOM, `localStorage`) çekirdeğe girmez; platform işi `ClientEnvironment` ile.
+- Kopya mantık (masaüstü ↔ mobil, birlikte güncelle): ses motoru `apps/desktop/src/renderer/src/features/voice/voiceClient.ts` `voice` ↔ `apps/mobile/src/voice/voice.ts` `voice`; arama kuralları `apps/desktop/src/renderer/src/features/calls/callLogic.ts` `absentParticipants` ↔ `apps/mobile/src/calls.ts` `absentParticipants`; bağlantı istatistik deposu `apps/desktop/src/renderer/src/stores/connectionStats.ts` `ConnectionDetail` ↔ `apps/mobile/src/voice/connectionStats.ts` `ConnectionDetail`; ayarlar `apps/desktop/src/renderer/src/stores/settings.ts` `NoiseMode` ↔ `apps/mobile/src/stores/settings.ts` `NoiseMode`; kapı `apps/desktop/src/renderer/src/features/voice/gate-worklet.js` ↔ `apps/mobile/src/voice/micGate.ts` `MicGate`.
+- Gateway olay işleyicisi iki katmanlı: `packages/client-core/src/guild.ts` `applyEvent` her olayı alır, `packages/client-core/src/messages.ts` ayrıca `gateway.on` ile dinler; yeni olayda ikisini de düşün.
+- `apps/desktop/src/renderer/src/platform.ts` `main.tsx` içinde ilk içe aktarılmalı; `env()` yapılandırılmadan çağrılırsa hata atar.
+- `packages/client-core/src/sfx.ts` bilerek hiçbir şey içe aktarmaz (Node betiği doğrudan yükler); sesi değiştirince telefon WAV'ları yeniden üretilmeli.
+- `apps/desktop/src/renderer/src/components/cosmetics/layers.ts` ve client-core `cosmeticShaders`/`cosmeticLoops` canlı uygulamada çalışmaz; yalnız paket üretimi (`scripts/cosmetic-render/page.ts`) kullanır. Masaüstü kozmetiği sunucudan gelen dosyalarla oynatır.
+- `SharedArrayBuffer` ve AudioWorklet: `apps/desktop/src/main/index.ts` Chromium özellik anahtarı tek satırda toplanır (ikinci `enable-features` öncekini ezer); worklet `.js` dosyaları gömülmez (`apps/desktop/electron.vite.config.ts` `assetsInlineLimit`).
+- TURN portu: `apps/desktop/src/renderer/src/features/voice/turnPort.ts` `installTurnPortRewrite` herhangi bir WebRTC bağlantısından önce kurulmalı.
+- `appId`, paket adı, `productName`, `nsis.guid` değişmez (`docs/surumler-ve-guncellemeler.md`); `apps/desktop/src/renderer/src/lib/bridge.ts` `bridge` tarayıcıda null, her çağrı `bridge?.` ile.
+
+### Mobil ve web
+- Eski APK + yeni JS (OTA): yerel modüller `null` olabilir; yeni yerel fonksiyonlar TS'te isteğe bağlı, çağırmadan önce denetlenir (`apps/mobile/modules/noise-filter/src/NoiseFilterModule.ts` → `getThermal`, `apps/mobile/src/video.ts` → `hasNativeVideo`). Yerel değişiklik = yeni APK/IPA.
+- apps/mobile/android ve apps/mobile/ios `expo prebuild` ürünüdür, depoda yok; elle düzenleme yerine eklenti yaz.
+- `apps/mobile/plugins/withIos.js` eklenti listesinde EN BAŞTA kalmalı (expo-video'nun `audio` kipini silmesini geri alır).
+- `apps/mobile/app.config.ts`: `expo-image-picker`'a `microphonePermission: false` verme (RECORD_AUDIO engellenir); `minSdkVersion` 26 Skia videosu için şart.
+- Metro: react ve zustand tek kopya olmalı (`apps/mobile/metro.config.js` → `SINGLETONS`); yoksa kancalar bozulur.
+- Yamalar (`pnpm-workspace.yaml` → `patchedDependencies`): `patches/@livekit__react-native@3.0.0.patch` donanım gürültü engelleyicisini kapatır; `patches/@shopify__react-native-skia@2.6.2.patch` Android video çözücüsünü hemen bırakır, JNI istisnalarını yutar. Paket sürümü değişirse yama yeniden üretilmeli.
+- Masaüstüyle kopya mantık: DSP `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/DpdfnetDsp.kt` ↔ `apps/desktop/src/renderer/src/features/voice/dpdfnet/dsp.js`; temalar `apps/mobile/src/theme.ts` ↔ `apps/desktop/src/shared/themes.ts`; bağlantı paneli `apps/mobile/src/voice/connectionStats.ts`, üye menüsü `apps/mobile/src/components/MemberSheet.tsx`, ayar/sunucu ayarı bölüm sırası masaüstüyle aynı tutulur. Ortak olabilecek mantık client-core'a.
+- Android/iOS farkı: ön plan servisi, gürültü filtresi, çökme bildirici, galeri yalnız Android (iOS'ta `null`/boş); iOS'ta ekran paylaşımı yok, titreşim kapalı, APK yerine `itms-services` (`apps/mobile/src/update/updater.ts`). Ayrıntı `docs/ios.md`.
+- OTA adresi `apps/mobile/app.config.ts` `updates.url` Android'e göre; iOS adresi eklentide yeniden yazılır. `checkAutomatically: 'NEVER'`: denetimi uygulama yapar.
+- Sesteyken güncelleme/yeniden yükleme sesi bölmemeli (`apps/mobile/src/app/_layout.tsx` → `showUpdate`, `setBeforeReload`).
+- Web: CSP gereği satır içi betik/stil yok, dış metin yalnız `textContent` (`apps/web/admin.js`, `apps/web/udid.js`).
