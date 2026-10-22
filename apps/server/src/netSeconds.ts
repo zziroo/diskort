@@ -4,7 +4,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import { dayKey } from './counters.js';
 import { hostNetSample, parseDefaultGateway, readHostNet, type HostNetCounters } from './hostNetwork.js';
-import { NicSilenceDetector, OutageLog, type NicSilence, type Outage } from './netOutages.js';
+import { isPartialProbeOutage, NicSilenceDetector, OutageLog, type NicSilence, type Outage } from './netOutages.js';
 import type { ProbeOutage } from './netProbe.js';
 
 // Bağlantı teşhisi: sunucu ağının saniyelik kaydı (uçuş kaydedicisi) ve makinenin TEK ağ örnekleyicisi.
@@ -642,7 +642,12 @@ export class SecondSampler {
   persistedRows = 0;
 
   constructor(private readonly opts: SamplerOptions) {
-    this.outages = new OutageLog({ dir: opts.dir, offsetMin: opts.offsetMin ?? 180, ...(opts.log ? { log: opts.log } : {}) });
+    this.outages = new OutageLog({
+      dir: opts.dir,
+      offsetMin: opts.offsetMin ?? 180,
+      participants: () => this.opts.participants?.() ?? null,
+      ...(opts.log ? { log: opts.log } : {}),
+    });
     this.silence = new SilenceScanner((s) => this.notify(this.outages.addNic(s)));
   }
 
@@ -757,7 +762,8 @@ export class SecondSampler {
   }
 
   private notify(o: Outage): Outage {
-    if (o.kind !== 'aday') {
+    // Aday ve yalnız tek protokolün sonda kesintisi olay kaydı istemez
+    if (o.kind !== 'aday' && !isPartialProbeOutage(o)) {
       try {
         this.opts.onOutage?.(o);
       } catch (err) {

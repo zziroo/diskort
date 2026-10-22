@@ -55,10 +55,22 @@ export interface Outage {
   kind: OutageKind;
   probe: ProbeOutage | null;
   nic: NicSilence | null;
+  /**
+   * Boş odada (seste kimse yokken) görülen aday: dosyaya yazılmaz, listelerde/özetlerde görünmez; yalnızca kısa süre
+   * bellekte tutulur ki geç gelen bir sonda kesintisiyle birleşip tam kesinti olabilsin (o zaman alan silinir)
+   */
+  idle?: true;
 }
 
 /** NIC sessizliği yanıtsız sondalarla doğrulanmış mı: en az 2 yanıtsız sonda, en az 2 farklı hedef */
 export const isCorroborated = (s: Pick<NicSilence, 'probesLost' | 'probeTargets'>): boolean => s.probesLost >= 2 && (s.probeTargets?.length ?? 0) >= 2;
+
+/**
+ * Yalnızca bir protokolün sondaları kesildi (proto: udp / tcp), NIC sessizliği yok: tüm dış yol kesintisi DEĞİL.
+ * Sağlayıcı kesintisi yargısını seçmez, olay kaydı istemez; teşhiste ayrı ve zayıf bir işaret olarak anılır.
+ */
+export const isPartialProbeOutage = (o: Pick<Outage, 'kind' | 'probe'>): boolean =>
+  o.kind === 'sonda' && (o.probe?.proto === 'udp' || o.probe?.proto === 'tcp');
 
 /** Kesinti doğrulanmış mı (dış sondalarla); "aday" tek başına bir yargıyı seçemez */
 export const isConfirmedOutage = (o: Pick<Outage, 'kind'>): boolean => o.kind === 'tam' || o.kind === 'sonda';
@@ -293,6 +305,8 @@ export interface OutageLogOptions {
   /** Kayıt dosyaya yazılmadan önce beklenen süre (ms): öbür işaret gelip birleşebilsin */
   settleMs?: number;
   maxFileLines?: number;
+  /** Seste şu an kaç kişi var (bilinmiyorsa null): boş odadaki adaylar kayda geçmez */
+  participants?: () => number | null;
 }
 
 /** İki işaret bu kadar yakınsa (ms) aynı kesinti sayılır (NIC satırları saniye çözünürlüğündedir) */
@@ -300,6 +314,8 @@ const MERGE_SLACK_MS = 2_000;
 const KEEP_MS = 14 * 86_400_000;
 const MEMORY_MAX = 1_000;
 const FILE_MAX_LINES = 2_000;
+/** Boş odadaki aday bellekte en çok bu kadar tutulur (geç gelen sonda kesintisiyle birleşebilsin) */
+const IDLE_KEEP_MS = 60_000;
 
 function isOutage(v: unknown): v is Outage {
   const o = v as Partial<Outage> | null;
@@ -394,6 +410,8 @@ export class OutageLog {
         probe: isProbe ? part.probe : null,
         nic: isProbe ? null : part.nic,
       };
+      // Eski boş-oda adayları atılır (birleşme penceresi geçti)
+      this.items = this.items.filter((x) => !x.idle || x.at + x.durationMs >= at - IDLE_KEEP_MS);
       this.items.push(o);
       if (this.items.length > MEMORY_MAX) this.items.splice(0, this.items.length - MEMORY_MAX);
     }
@@ -401,6 +419,12 @@ export class OutageLog {
     // farklı hedeften yanıtsız sonda) tam kesintidir; tek başına adaydır
     o.kind = o.nic ? (o.probe || isCorroborated(o.nic) ? 'tam' : 'aday') : 'sonda';
     o.t = localStamp(o.at, this.opts.offsetMin ?? 180);
+    // Aday yalnızca seste biri varken kayda geçer (boş odadaki kısa çöküşler rapor gürültüsü); tam/sonda her zaman
+    if (o.kind === 'aday' && (o.nic?.participants ?? this.opts.participants?.() ?? null) === 0) {
+      o.idle = true;
+      return o;
+    }
+    delete o.idle;
     if (this.file) this.unsaved.set(o.id, this.now());
     return o;
   }
@@ -433,7 +457,7 @@ export class OutageLog {
     if (trim) {
       const since = now - KEEP_MS;
       const pending = new Set(this.unsaved.keys());
-      const kept = this.items.filter((o) => o.at >= since && !pending.has(o.id));
+      const kept = this.items.filter((o) => o.at >= since && !o.idle && !pending.has(o.id));
       this.fileLines = kept.length;
       snapshot = kept.map((o) => JSON.stringify(o)).join('\n') + '\n';
     }
@@ -453,11 +477,11 @@ export class OutageLog {
 
   /** En yeniler önce */
   list(since: number): Outage[] {
-    return this.items.filter((o) => o.at + o.durationMs >= since).sort((a, b) => b.at - a.at);
+    return this.items.filter((o) => !o.idle && o.at + o.durationMs >= since).sort((a, b) => b.at - a.at);
   }
 
   /** [from, to] aralığıyla kesişenler, eskiden yeniye */
   between(from: number, to: number): Outage[] {
-    return this.items.filter((o) => o.at <= to && o.at + o.durationMs >= from).sort((a, b) => a.at - b.at);
+    return this.items.filter((o) => !o.idle && o.at <= to && o.at + o.durationMs >= from).sort((a, b) => a.at - b.at);
   }
 }

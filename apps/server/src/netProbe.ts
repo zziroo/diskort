@@ -16,8 +16,10 @@ import { GATEWAY_LABEL } from './netSeconds.js';
 //   saniyede onlarca sorgu göndermek hem kabalıktır hem de çözücünün hız sınırı sahte kayıp üretir.
 // - Sayım GÖNDERİM sırasıyladır: sondalar farklı anlarda sonuçlanır (yanıtsız olan zaman aşımında, sonraki
 //   başarılı olan ondan önce), bu yüzden sonuçlar sıra numarasına göre dizilip öyle değerlendirilir.
-// - Kesinti: gönderim sırasıyla art arda en az 3 sonda, en az 2 farklı hedefte yanıtsız kalırsa. Tek bir
-//   çözücünün hız sınırı ya da arızası bu yüzden hiçbir zaman kesinti sayılmaz.
+// - Kesinti: gönderim sırasıyla art arda en az 3 sonda, en az 2 farklı hedefte yanıtsız kalırsa. Seriler hem tüm
+//   sondalar için hem protokol başına (UDP ayrı, TCP ayrı) tutulur: yalnız UDP'yi etkileyen kesinti, araya giren
+//   başarılı TCP sondalarına rağmen yakalanır (kayıtta proto: "udp"). Tek bir çözücünün hız sınırı ya da arızası
+//   bu yüzden hiçbir zaman kesinti sayılmaz.
 // - Ağ geçidi (/proc/net/route'tan): birkaç saniyede bir TCP 80'e bağlantı denemesi ("bağlantı reddedildi" de
 //   yanıttır). Ağ geçitleri çoğu zaman yanıt vermez: hiç yanıt gelmezse sonda kendini kapatır; kesinti
 //   yargısına hiç katılmaz.
@@ -127,6 +129,9 @@ export interface ProbeResult {
   skip?: boolean;
 }
 
+/** Kesintiden etkilenen protokol: both = tüm yol (UDP ve TCP sondaları birlikte, gönderim sırasıyla art arda yanıtsız) */
+export type ProbeProto = 'udp' | 'tcp' | 'both';
+
 /** Dış bağlantı kesintisi: art arda yanıtsız sondalar (≥2 farklı hedef) */
 export interface ProbeOutage {
   /** İlk yanıtsız sondanın gönderildiği an (ms) */
@@ -139,6 +144,11 @@ export interface ProbeOutage {
   /** UDP ve TCP hedefleri etkilendi mi (ikisi de: yol tümden kesik; yalnızca UDP: UDP'ye özgü süzgeç olabilir) */
   udp: boolean;
   tcp: boolean;
+  /**
+   * Kesintiyi hangi seri yakaladı: both = tüm sondalar (protokol ayırmadan) art arda yanıtsız; udp / tcp = yalnızca o
+   * protokolün sondaları art arda yanıtsız, öbür protokol yanıt vermeye devam etti. Eski kayıtlarda yok.
+   */
+  proto?: ProbeProto;
 }
 
 export interface OutageDetectorOptions {
@@ -149,41 +159,139 @@ export interface OutageDetectorOptions {
   onOutage: (o: ProbeOutage) => void;
 }
 
+/** Art arda yanıtsız sondalardan oluşan seri: yalnızca özet tutulur (seri ne kadar uzarsa uzasın bellek sabit) */
+interface LossRun {
+  at: number;
+  n: number;
+  targets: Set<string>;
+  /** Protokol başına yanıtsız sonda sayısı ve hedefler */
+  count: Record<'udp' | 'tcp', number>;
+  kindTargets: Record<'udp' | 'tcp', Set<string>>;
+  /** Farklı gönderim anları (en çok 2 tutulur: "en az iki tur" koşulu için) */
+  rounds: Set<number>;
+  /** Yalnız tüm-sonda serisinde: seri başladığında hangi protokol serisi zaten KENDİ BAŞINA eşiği aşmıştı */
+  preDown: Record<'udp' | 'tcp', boolean>;
+}
+
+const newRun = (): LossRun => ({ at: 0, n: 0, targets: new Set(), count: { udp: 0, tcp: 0 }, kindTargets: { udp: new Set(), tcp: new Set() }, rounds: new Set(), preDown: { udp: false, tcp: false } });
+
+function addLoss(run: LossRun, r: ProbeResult): void {
+  if (run.n === 0) run.at = r.sentAt;
+  run.n++;
+  run.targets.add(r.label);
+  run.count[r.kind]++;
+  run.kindTargets[r.kind].add(r.label);
+  if (run.rounds.size < 2) run.rounds.add(r.sentAt);
+}
+
+/**
+ * Üç seri birlikte tutulur: tüm sondalar (gönderim sırasıyla, herhangi bir yanıt seriyi bitirir) ve protokol başına
+ * (UDP ayrı, TCP ayrı: yalnızca aynı protokolden bir yanıt seriyi bitirir). Böylece araya giren başarılı TCP
+ * sondaları yalnızca UDP'yi etkileyen bir kesintiyi (ses/yayın paketleri) gizlemez. Her seride eşik aynıdır
+ * (art arda ≥minRun yanıtsız, ≥minTargets farklı hedef): tek çözücünün hız sınırı hiçbir seride kesinti sayılmaz.
+ * - Protokol serisi ayrıca en az iki farklı gönderim turuna yayılmalıdır; aynı turda o protokolden yanıt gelmişse o
+ *   turun kayıpları seriye katılmaz (aynı anda gönderilmiş sondaların sonuçlanma sırası tek başına kesinti üretmesin).
+ * - Tüm-sonda serisi "tüm yol" (both) sayılır, ama bir protokol seri başlamadan önce kendi başına kesinti eşiğini
+ *   aşmışken öbüründen tek hedefin kaybı araya düştüyse değil: o durumda öbür protokolde de ≥minTargets hedef yanıtsız kalmalıdır; yoksa kayıt
+ *   önceden kesik protokolün serisi olarak sürer. Tüm yol kaydında o sırada açık protokol serileri de ona katılır.
+ */
 export class OutageDetector {
-  private run: ProbeResult[] = [];
+  private run = newRun();
+  private readonly byKind: Record<'udp' | 'tcp', LossRun> = { udp: newRun(), tcp: newRun() };
+  /** Son yanıtın gönderim anı (tüm sondalar / protokol başına) */
+  private lastReply = Number.NaN;
+  private readonly lastReplyByKind: Record<'udp' | 'tcp', number> = { udp: Number.NaN, tcp: Number.NaN };
 
   constructor(private readonly opts: OutageDetectorOptions) {}
 
-  private qualifies(): boolean {
-    if (this.run.length < (this.opts.minRun ?? 3)) return false;
-    return new Set(this.run.map((r) => r.label)).size >= (this.opts.minTargets ?? 2);
+  private get minRun(): number {
+    return this.opts.minRun ?? 3;
   }
 
-  private describe(end: number): ProbeOutage {
-    const first = this.run[0]!;
-    return {
-      at: first.sentAt,
-      durationMs: Math.max(0, Math.round(end - first.sentAt)),
-      lost: this.run.length,
-      targets: [...new Set(this.run.map((r) => r.label))],
-      udp: this.run.some((r) => r.kind === 'udp'),
-      tcp: this.run.some((r) => r.kind === 'tcp'),
-    };
+  private get minTargets(): number {
+    return this.opts.minTargets ?? 2;
+  }
+
+  private kindQualifies(k: 'udp' | 'tcp'): boolean {
+    const r = this.byKind[k];
+    return r.n >= this.minRun && r.targets.size >= this.minTargets && r.rounds.size >= 2;
+  }
+
+  /** Tüm-sonda serisi "tüm yol" kesintisi mi */
+  private bothQualifies(): boolean {
+    const r = this.run;
+    if (r.n < this.minRun || r.targets.size < this.minTargets) return false;
+    for (const k of ['udp', 'tcp'] as const) {
+      const other = k === 'udp' ? 'tcp' : 'udp';
+      // k protokolü bu seri başlamadan önce kendi başına kesinti eşiğini aşmıştı: öbür protokolün kaybı da yaygın
+      // olmalı (tek hedefin araya düşen kaybı kaydı "tüm yol" yapmasın). Önceki tek tük kayıplar bu şartı doğurmaz.
+      if (r.preDown[k] && r.kindTargets[other].size < this.minTargets) return false;
+    }
+    return true;
+  }
+
+  private describe(kinds: readonly ('udp' | 'tcp')[], end: number, proto: ProbeProto, base?: LossRun): ProbeOutage {
+    // base (tüm-sonda serisi) varsa protokol serilerinin ondan ÖNCEKİ kayıpları eklenir (sonrakiler zaten içinde)
+    let lost = base?.n ?? 0;
+    let at = base && base.n > 0 ? base.at : Number.POSITIVE_INFINITY;
+    const targets = new Set(base?.targets ?? []);
+    let udp = (base?.count.udp ?? 0) > 0;
+    let tcp = (base?.count.tcp ?? 0) > 0;
+    for (const k of kinds) {
+      const r = this.byKind[k];
+      if (r.n === 0) continue;
+      lost += base ? Math.max(0, r.n - base.count[k]) : r.n;
+      at = Math.min(at, r.at);
+      for (const t of r.targets) targets.add(t);
+      if (k === 'udp') udp = true;
+      else tcp = true;
+    }
+    return { at, durationMs: Math.max(0, Math.round(end - at)), lost, targets: [...targets], udp, tcp, proto };
+  }
+
+  /** Şu an kesinti sayılacak seriler (yoksa null) */
+  private current(end: number): ProbeOutage | null {
+    if (this.bothQualifies()) return this.describe(['udp', 'tcp'], end, 'both', this.run);
+    const q = (['udp', 'tcp'] as const).filter((k) => this.kindQualifies(k));
+    if (q.length === 0) return null;
+    return this.describe(q, end, q.length === 2 ? 'both' : q[0]!);
   }
 
   /** Sonuçlar GÖNDERİM sırasıyla verilmelidir */
   push(r: ProbeResult): void {
     if (r.rtt === null) {
-      this.run.push(r);
+      if (r.sentAt !== this.lastReply) {
+        // Tüm-sonda serisi başlarken protokol serilerinin (bu sonda henüz katılmadan) durumu kaydedilir
+        if (this.run.n === 0) this.run.preDown = { udp: this.kindQualifies('udp'), tcp: this.kindQualifies('tcp') };
+        addLoss(this.run, r);
+      }
+      if (r.sentAt !== this.lastReplyByKind[r.kind]) addLoss(this.byKind[r.kind], r);
       return;
     }
-    if (this.qualifies()) this.opts.onOutage(this.describe(r.sentAt));
-    this.run = [];
+    let out: ProbeOutage | null = null;
+    let closeAll = false;
+    if (this.bothQualifies()) {
+      // Yol geri geldi: açık protokol serileri de bu kesintinin parçasıdır
+      out = this.describe(['udp', 'tcp'], r.sentAt, 'both', this.run);
+      closeAll = true;
+    } else if (this.kindQualifies(r.kind)) {
+      out = this.describe([r.kind], r.sentAt, r.kind);
+    }
+    // Seriler bildirimden önce sıfırlanır (bildirimdeki bir hata dedektörü bozuk bırakmasın)
+    this.run = newRun();
+    this.byKind[r.kind] = newRun();
+    if (closeAll) {
+      this.byKind.udp = newRun();
+      this.byKind.tcp = newRun();
+    }
+    this.lastReply = r.sentAt;
+    this.lastReplyByKind[r.kind] = r.sentAt;
+    if (out) this.opts.onOutage(out);
   }
 
   /** Süren (henüz yanıt alınmamış) kesinti; yoksa null */
   open(now: number): ProbeOutage | null {
-    return this.qualifies() ? this.describe(now) : null;
+    return this.current(now);
   }
 }
 

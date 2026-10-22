@@ -91,7 +91,7 @@ Hepsi `<DATA_DIR>` (kapsayıcıda `/data`) altındadır ve süresi dolunca kendi
 | `telemetry/YYYY-AA-GG.jsonl` | Ses kalitesi özetleri | 14 gün |
 | `telemetry/netmin-*.jsonl` | Makine ağının dakikalık özetleri | 14 gün |
 | `telemetry/netsec-*.jsonl` | Anormal saniyelerin çevresi | 7 gün |
-| `telemetry/outages.jsonl` | Kesinti kaydı | 14 gün |
+| `telemetry/outages.jsonl` | Kesinti kaydı (`probe.proto`: `both` tüm yol, `udp`/`tcp` yalnız o protokol, sağlayıcı kesintisi sayılmaz; boş odadaki adaylar yazılmaz) | 14 gün |
 | `telemetry/freeze-*.jsonl` | Yayın donması olayları ve kanıtları | — |
 | `telemetry/line-tests.jsonl`, `line-codes.json` | Hat testi sonuçları ve kodları | — |
 

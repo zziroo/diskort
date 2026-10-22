@@ -43,7 +43,11 @@ function replay(slim: Slim[]): { outages: Outage[]; silences: NicSilence[]; prob
   let prevT: number | null = null;
   for (const row of rows) {
     // Kayıt kesikse (dosya yalnızca anormal saniyelerin çevresini içerir) süren sonda dizisi sıfırlanır
-    if (prevT !== null && row.t - prevT > 5_000) detector.push({ seq: seq++, label: 'boşluk', kind: 'udp', sentAt: row.t, rtt: 0 });
+    if (prevT !== null && row.t - prevT > 5_000) {
+      // Protokol başına seriler de sıfırlansın: her iki protokolden bir "yanıt"
+      detector.push({ seq: seq++, label: 'boşluk', kind: 'udp', sentAt: row.t, rtt: 0 });
+      detector.push({ seq: seq++, label: 'boşluk', kind: 'tcp', sentAt: row.t, rtt: 0 });
+    }
     prevT = row.t;
     for (const [label, v] of Object.entries(row.p ?? {})) {
       if (label === GATEWAY_LABEL) continue;
@@ -103,6 +107,7 @@ describe('gerçek veriyle yeniden oynatma', () => {
   });
 
   it('öbür üç olayda (yayın; kare hızı / kodlayıcı / kullanıcı hatları) hiçbir kesinti ya da aday yok', () => {
+    // muosxa5r-0'da UDP kayıpları aynı turdaki UDP yanıtlarıyla iç içe: protokol serisi tur koşulu yüzünden kesinti saymaz
     for (const id of ['muosxa5r-0', 'muot5prx-1', 'muoth67a-0']) {
       const r = replay(event(id).rows);
       expect([id, r.outages.map((o) => o.kind), r.silences.length]).toEqual([id, [], 0]);

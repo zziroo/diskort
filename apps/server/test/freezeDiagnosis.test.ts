@@ -253,6 +253,21 @@ describe('sınıflandırıcı: sağlayıcı yolu', () => {
     expect(one).toMatchObject({ cause: 'saglayici_kesinti', confidence: 'orta' });
   });
 
+  it('yalnız UDP sondalarının kesintisi (TCP yanıt verdi) sağlayıcı kesintisi yargısını seçmez; ayrı ve zayıf bir işaret olarak anılır', () => {
+    const o = outage('sonda', 10, 1_500);
+    const udpOnly: Outage = { ...o, probe: { ...o.probe!, targets: ['udp 1.1.1.1', 'udp 8.8.8.8'], tcp: false, proto: 'udp' } };
+    const d = diagnose(buildUsers(incidentEntries()), summary(healthyRows(), [udpOnly]));
+    expect(d.cause).not.toBe('saglayici_kesinti');
+    expect(d.cause).toBe('saglayici_gelen');
+    expect(d.probe).toBe('temiz');
+    expect(d.evidence.join(' ')).toContain('Yalnız UDP sondaları 01:18:10 anında 1,5 sn art arda yanıtsız kaldı');
+    expect(d.evidence.join(' ')).toContain('TCP sondaları yanıt verdi');
+    expect(d.evidence.join(' ')).not.toContain('sunucunun dış yolu kesildi');
+    // Tek izleyicide kayıp: sağlayıcı kesintisine düşmez
+    const one = diagnose(buildUsers([entry('yayinci', { screen: streamerScreen({ fps: 30 }) }), entry('i1', { lossIn: 14, watch: watching(5) })]), summary(healthyRows(), [udpOnly]));
+    expect(one.cause).not.toBe('saglayici_kesinti');
+  });
+
   it('kayıptan hemen önceki patlama etken olarak yazılır (39 Mbps / 4300 pk/sn, 2 sn önce)', () => {
     const rows = healthyRows(60, { rx: 3, tx: 12, rxp: 900, txp: 1400 });
     for (const i of [18, 19]) rows[i] = { ...rows[i]!, rx: 11, tx: 39, txp: 4300 };

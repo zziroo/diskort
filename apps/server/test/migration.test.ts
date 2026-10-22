@@ -526,7 +526,7 @@ describe('göç 14: çoklu sunucu', () => {
 
       const other = store.createGuild('u3', 'Başka Grup');
       expect(store.primaryGuildId()).toBe('g1');
-      expect(store.userGuildIds('u3')).toEqual(['g1', other.id]);
+      expect(store.userGuildIds('u3').sort()).toEqual(['g1', other.id].sort()); // sıra rastgele kimliğe bağlı
       expect(store.listMembers(other.id).map((m) => m.userId)).toEqual(['u3']);
       expect(store.listChannels(other.id).map((c) => [c.name, c.type])).toEqual([
         ['genel-sohbet', 'text'],

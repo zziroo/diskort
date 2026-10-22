@@ -332,8 +332,153 @@ describe('dış sondalar', () => {
     expect(d.open(2600)).toMatchObject({ at: 2000, durationMs: 600, lost: 3 });
     push('a', 2750, null);
     push('b', 3000, 7, 'tcp');
-    expect(out).toEqual([{ at: 2000, durationMs: 1000, lost: 4, targets: ['a', 'b', 'c'], udp: true, tcp: true }]);
+    expect(out).toEqual([{ at: 2000, durationMs: 1000, lost: 4, targets: ['a', 'b', 'c'], udp: true, tcp: true, proto: 'both' }]);
     expect(d.open(3100)).toBeNull();
+  });
+
+  it('yalnız UDP kesintisi: araya giren başarılı TCP sondaları UDP serisini bozmaz (proto: udp); tüm yol kesikse tek kayıt (both)', () => {
+    const out: ProbeOutage[] = [];
+    const d = new OutageDetector({ onOutage: (o) => out.push(o) });
+    let seq = 0;
+    const push = (label: string, at: number, rtt: number | null): void =>
+      d.push({ seq: seq++, label, kind: label.startsWith('tcp') ? 'tcp' : 'udp', sentAt: at, rtt });
+    // Varsayılan sıra: udp1, tcp8, udp8, tcp1, udp9 — UDP sondaları yanıtsız, TCP yanıt veriyor
+    const order = ['udp 1', 'tcp 8', 'udp 8', 'tcp 1', 'udp 9'];
+    let t = 0;
+    const step = (udpUp: boolean, tcpUp: boolean): void => {
+      for (const l of order) {
+        push(l, t, (l.startsWith('udp') ? udpUp : tcpUp) ? 5 : null);
+        t += 250;
+      }
+    };
+    step(true, true);
+    step(false, true); // 1250..2250: üç UDP yanıtsız (üç hedef), TCP'ler arada yanıt verdi
+    expect(out).toEqual([]);
+    expect(d.open(2400)).toMatchObject({ at: 1250, lost: 3, proto: 'udp', udp: true, tcp: false });
+    step(true, true); // 2500: udp 1 yanıt verdi
+    expect(out).toEqual([{ at: 1250, durationMs: 1250, lost: 3, targets: ['udp 1', 'udp 8', 'udp 9'], udp: true, tcp: false, proto: 'udp' }]);
+    out.length = 0;
+    // Tek UDP hedefinin kaybı (hız sınırı) protokol serisinde de kesinti değil
+    for (let i = 0; i < 4; i++) {
+      for (const l of order) {
+        push(l, t, l === 'udp 9' ? null : 5);
+        t += 250;
+      }
+    }
+    expect(out).toEqual([]);
+    // Tüm yol kesik: tek kayıt (both); açık kalan protokol serisi de ona katılır, ikinci kayıt çıkmaz
+    step(true, true);
+    const down = t;
+    step(false, false);
+    step(true, true);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ at: down, lost: 5, durationMs: 1250, udp: true, tcp: true, proto: 'both' });
+    step(true, true);
+    expect(out).toHaveLength(1);
+    out.length = 0;
+    // UDP sürekli yanıtsızken araya düşen tek bir TCP kaybı kaydı "tüm yol" yapmaz, UDP serisini yutmaz
+    const udpDown = t;
+    for (let i = 0; i < 3; i++) {
+      for (const l of order) {
+        push(l, t, l.startsWith('udp') ? null : i === 1 && l === 'tcp 1' ? null : 5);
+        t += 250;
+      }
+    }
+    expect(out).toEqual([]);
+    expect(d.open(t)).toMatchObject({ at: udpDown, proto: 'udp', tcp: false });
+    step(true, true);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ at: udpDown, lost: 9, proto: 'udp', udp: true, tcp: false });
+  });
+
+  it('önceki tek tük protokol kaybı tüm yol kesintisini "yalnız UDP"ye çevirmez (B, B2: 5 hedef; C, C0: 1 UDP + 1 TCP)', () => {
+    const mk = () => {
+      const out: ProbeOutage[] = [];
+      const d = new OutageDetector({ onOutage: (o) => out.push(o) });
+      let seq = 0;
+      let t = 0;
+      const p = (l: string, up: boolean): void => {
+        d.push({ seq: seq++, label: l, kind: l.startsWith('tcp') ? 'tcp' : 'udp', sentAt: t, rtt: up ? 5 : null });
+        t += 250;
+      };
+      return { out, p };
+    };
+    // B: udp 8 tek kayıp, tcp 1 yanıt, sonra kısa tam kesinti (udp 9, udp 1, tcp 8), udp 8 yanıt
+    const b = mk();
+    for (const l of ['udp 1', 'tcp 8', 'udp 8', 'tcp 1', 'udp 9']) b.p(l, true);
+    b.p('udp 1', true);
+    b.p('tcp 8', true);
+    b.p('udp 8', false);
+    b.p('tcp 1', true);
+    for (const l of ['udp 9', 'udp 1', 'tcp 8']) b.p(l, false);
+    b.p('udp 8', true);
+    b.p('tcp 1', true);
+    expect(b.out).toHaveLength(1);
+    expect(b.out[0]).toMatchObject({ proto: 'both', udp: true, tcp: true });
+    expect(b.out[0]!.targets).toContain('tcp 8');
+    // B2: aynısı, iki tam tur süren kesinti
+    const b2 = mk();
+    b2.p('udp 1', true);
+    b2.p('tcp 8', true);
+    b2.p('udp 8', false);
+    b2.p('tcp 1', true);
+    for (const l of ['udp 9', 'udp 1', 'tcp 8', 'udp 8', 'tcp 1', 'udp 9']) b2.p(l, false);
+    b2.p('udp 1', true);
+    expect(b2.out).toHaveLength(1);
+    expect(b2.out[0]).toMatchObject({ proto: 'both', udp: true, tcp: true });
+    // C: 1+1 hedef, udp X tek kayıp, sonra 6 sondalık tam kesinti
+    const c = mk();
+    c.p('udp X', true);
+    c.p('tcp Y', true);
+    c.p('udp X', false);
+    c.p('tcp Y', true);
+    for (let i = 0; i < 6; i++) c.p(i % 2 ? 'tcp Y' : 'udp X', false);
+    c.p('udp X', true);
+    expect(c.out).toHaveLength(1);
+    expect(c.out[0]).toMatchObject({ proto: 'both', udp: true, tcp: true, targets: ['udp X', 'tcp Y'] });
+    // C0: önceki kayıp olmadan
+    const c0 = mk();
+    c0.p('udp X', true);
+    c0.p('tcp Y', true);
+    for (let i = 0; i < 6; i++) c0.p(i % 2 ? 'tcp Y' : 'udp X', false);
+    c0.p('udp X', true);
+    expect(c0.out).toEqual([{ at: 500, durationMs: 1500, lost: 6, targets: ['udp X', 'tcp Y'], udp: true, tcp: true, proto: 'both' }]);
+  });
+
+  it('protokol serisi en az iki gönderim turuna yayılmalı; aynı turda o protokolden yanıt geldiyse o turun kayıpları sayılmaz', () => {
+    const out: ProbeOutage[] = [];
+    const d = new OutageDetector({ onOutage: (o) => out.push(o) });
+    let seq = 0;
+    // Eski kayıt biçimi: bir turun bütün sondaları aynı anda gönderilmiş, sonuçlanma sırasıyla (zaman aşımları sonda)
+    const round = (at: number, res: Record<string, number | null>): void => {
+      for (const [label, rtt] of Object.entries(res)) d.push({ seq: seq++, label, kind: label.startsWith('tcp') ? 'tcp' : 'udp', sentAt: at, rtt });
+    };
+    round(0, { 'udp 1': 4, 'tcp 1': 4, 'udp 8': 4 });
+    // 2. turda udp 1 yanıt verdi, udp 8 yanıtsız; 3. turda ikisi de yanıtsız: sıralamaya göre "3 art arda" olurdu
+    round(2000, { 'udp 1': 4, 'tcp 1': 4, 'udp 8': null });
+    round(4000, { 'tcp 1': 4, 'udp 1': null, 'udp 8': null });
+    round(6000, { 'udp 1': 4, 'tcp 1': 4, 'udp 8': 4 });
+    expect(out).toEqual([]);
+    // Tek turda üç UDP hedefi birden yanıtsız: tek tur yetmez
+    round(8000, { 'tcp 1': 4, 'udp 1': null, 'udp 8': null, 'udp 9': null });
+    round(10_000, { 'udp 1': 4, 'tcp 1': 4, 'udp 8': 4, 'udp 9': 4 });
+    expect(out).toEqual([]);
+    // İki tur boyunca UDP yanıtsız (TCP yanıt veriyor): yalnız-UDP kesintisi
+    round(12_000, { 'tcp 1': 4, 'udp 1': null, 'udp 8': null });
+    round(14_000, { 'tcp 1': 4, 'udp 1': null, 'udp 8': null });
+    round(16_000, { 'udp 1': 4, 'tcp 1': 4 });
+    expect(out).toEqual([{ at: 12_000, durationMs: 4_000, lost: 4, targets: ['udp 1', 'udp 8'], udp: true, tcp: false, proto: 'udp' }]);
+  });
+
+  it('kesintisiz yanıtsız seri belleği büyütmez ve dedektörü bozmaz (çok uzun seri)', () => {
+    const out: ProbeOutage[] = [];
+    const d = new OutageDetector({ onOutage: (o) => out.push(o) });
+    let seq = 0;
+    d.push({ seq: seq++, label: 'udp 1', kind: 'udp', sentAt: 0, rtt: 5 });
+    for (let i = 1; i <= 300_000; i++) d.push({ seq: seq++, label: i % 2 ? 'udp 1' : 'udp 8', kind: 'udp', sentAt: i, rtt: null });
+    expect(d.open(300_001)).toMatchObject({ at: 1, lost: 300_000, proto: 'both' });
+    d.push({ seq: seq++, label: 'udp 1', kind: 'udp', sentAt: 300_001, rtt: 5 });
+    expect(out).toMatchObject([{ at: 1, lost: 300_000 }]);
   });
 
   it('motor sonuçları GÖNDERİM sırasıyla sayar: yanıtsız sonda geç sonuçlansa da kısa kesinti yakalanır', async () => {
@@ -366,7 +511,7 @@ describe('dış sondalar', () => {
     // Sonuçlanma sırası gönderim sırası değil: 8. ve 9. sondalar 5-7'den önce bitti
     expect(order.indexOf(8)).toBeLessThan(order.indexOf(5));
     expect(results).toHaveLength(10);
-    expect(outages).toEqual([{ at: 11_250, durationMs: 750, lost: 3, targets: ['a', 'b', 'c'], udp: true, tcp: true }]);
+    expect(outages).toEqual([{ at: 11_250, durationMs: 750, lost: 3, targets: ['a', 'b', 'c'], udp: true, tcp: true, proto: 'both' }]);
     const st = engine.status(13_000);
     expect(st.targets.find((t) => t.label === 'a')).toMatchObject({ sent: 2, lost: 1 });
     expect(st.open).toBeNull();
@@ -437,7 +582,7 @@ describe('dış sondalar', () => {
     expect(e2.status(1500).open).toMatchObject({ at: 500, lost: 4 });
     down = false;
     await e2.tick(1500);
-    expect(outages).toEqual([{ at: 500, durationMs: 1000, lost: 4, targets: ['a', 'c'], udp: true, tcp: true }]);
+    expect(outages).toEqual([{ at: 500, durationMs: 1000, lost: 4, targets: ['a', 'c'], udp: true, tcp: true, proto: 'both' }]);
   });
 
   it('ağ geçidi hiç yanıt vermezse kapanır ve artık bildirmez; ağ geçidi kesinti yargısına katılmaz', async () => {
@@ -648,7 +793,7 @@ describe('kesinti kaydı', () => {
   });
 
   const probe = (at: number, durationMs: number): ProbeOutage => ({ at, durationMs, lost: 6, targets: ['udp 1.1.1.1', 'tcp 8.8.8.8'], udp: true, tcp: true });
-  const nic = (at: number, durationMs: number, probesLost = 0): NicSilence => ({ at, durationMs, rxpMin: 3, baseline: 70, participants: 0, probesLost, txCollapsed: true });
+  const nic = (at: number, durationMs: number, probesLost = 0): NicSilence => ({ at, durationMs, rxpMin: 3, baseline: 70, participants: 2, probesLost, txCollapsed: true });
 
   it('yerel saat damgası istatistik saat dilimiyle yazılır', () => {
     expect(localStamp(T0 + 47_250, 180)).toBe('2026-10-01 01:18:47.250 +03:00');
@@ -681,6 +826,34 @@ describe('kesinti kaydı', () => {
     expect(log.list(0).map((x) => x.kind)).toEqual(['aday', 'aday', 'tam', 'aday', 'sonda', 'sonda', 'tam', 'tam']);
     expect(log.between(T0 + 9_000, T0 + 11_000).map((x) => x.kind)).toEqual(['tam']);
     expect(log.between(T0 + 500_000, T0 + 550_000)).toEqual([]);
+  });
+
+  it('boş odadaki aday kayda geçmez (listede yok, dosyaya yazılmaz); geç gelen sonda kesintisiyle birleşirse tam olur', async () => {
+    let voice = 0;
+    const log = new OutageLog({ dir, offsetMin: 180, now: () => T0 + 600_000, participants: () => voice });
+    const idle = (at: number): NicSilence => ({ ...nic(at, 1_500), participants: 0 });
+    // NIC anındaki sayı 0: aday yazılmaz
+    expect(log.addNic(idle(T0 + 10_000))).toMatchObject({ kind: 'aday', idle: true });
+    expect(log.list(0)).toEqual([]);
+    // NIC sayısı bilinmiyorsa (null) o anki ses sayısına bakılır
+    expect(log.addNic({ ...idle(T0 + 20_000), participants: null }).idle).toBe(true);
+    voice = 1;
+    expect(log.addNic({ ...idle(T0 + 30_000), participants: null }).idle).toBeUndefined();
+    // Seste biri varken aday yazılır
+    expect(log.addNic(nic(T0 + 40_000, 1_000)).kind).toBe('aday');
+    // Boş odada da tam kesinti her zaman yazılır
+    voice = 0;
+    expect(log.addNic({ ...idle(T0 + 50_000), probesLost: 2, probeTargets: ['udp 1.1.1.1', 'tcp 8.8.8.8'] })).toMatchObject({ kind: 'tam' });
+    // Boş odadaki aday sonradan gelen sonda kesintisiyle birleşir: tam, artık görünür
+    log.addNic(idle(T0 + 60_000));
+    const merged = log.addProbe(probe(T0 + 60_200, 1_000));
+    expect(merged.kind).toBe('tam');
+    expect(merged.idle).toBeUndefined();
+    expect(log.list(0).map((o) => o.kind)).toEqual(['tam', 'tam', 'aday', 'aday']);
+    await log.flush(true);
+    const lines = fs.readFileSync(path.join(dir, 'outages.jsonl'), 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.some((l) => l.includes('"idle"'))).toBe(false);
   });
 
   it('durulan kayıtlar outages.jsonl dosyasına yazılır, yeniden açılışta okunur (aynı kimlik bir kez), çalışırken kırpılır', async () => {

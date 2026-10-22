@@ -3,7 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { AlignedTrace } from './clientTrace.js';
 import type { LkRow } from './infraStats.js';
-import type { Outage } from './netOutages.js';
+import { isPartialProbeOutage, type Outage } from './netOutages.js';
 import { GATEWAY_LABEL, summarizeRows, type SecondRow, type SecondSampler, type ServerSummary } from './netSeconds.js';
 import type { TelemetryEntry } from './telemetry.js';
 import { summarizeTraces, type TraceEvidence } from './traceEvidence.js';
@@ -183,7 +183,9 @@ export function serverResourceProblems(s: ServerSummary | null): { material: str
 
 function probeVerdict(s: ServerSummary | null): { kind: Diagnosis['probe']; text: string } {
   if (!s || s.probeLossPct === null) return { kind: 'yok', text: 'Dış sonda verisi yok (sunucu ölçümü kapalı ya da yeni başladı).' };
-  const outage = (s.outages ?? []).find((o) => o.probe);
+  // Yalnız tek protokolün (UDP ya da TCP) sonda kesintisi tüm yolun kesildiğini göstermez: aşağıda ayrıca anılır
+  const outage = (s.outages ?? []).find((o) => o.probe && !isPartialProbeOutage(o));
+  const partial = (s.outages ?? []).find(isPartialProbeOutage);
   const corroborated = (s.outages ?? []).find((o) => o.kind === 'tam' && !o.probe && o.nic);
   if (!outage && corroborated?.nic) {
     return {
@@ -200,6 +202,16 @@ function probeVerdict(s: ServerSummary | null): { kind: Diagnosis['probe']; text
   }
   const lossy = s.probeLossyTargets ?? [];
   const pct = (label: string): string => `${label} %${num(s.probes[label]?.lossPct, 1)}`;
+  if (partial?.probe) {
+    const p = partial.probe;
+    const [only, other] = p.proto === 'udp' ? ['UDP', 'TCP'] : ['TCP', 'UDP'];
+    return {
+      kind: lossy.length >= 2 ? 'kayıp' : 'temiz',
+      text:
+        `Yalnız ${only} sondaları ${clockOf(partial)} anında ${sec(p.durationMs)} sn art arda yanıtsız kaldı (${p.lost} sonda; ${p.targets.join(', ')}), ${other} sondaları yanıt verdi: sunucunun dış yolu tümden kesilmedi; ${only}'ye özgü kayıp (sağlayıcı süzgeci / hız sınırı) olabilir.` +
+        (lossy.length >= 2 ? ` Kayıplı hedefler: ${lossy.map(pct).join(', ')}.` : ''),
+    };
+  }
   if (lossy.length >= 2) {
     return { kind: 'kayıp', text: `Sunucudan birden çok dış hedefe kayıp var (${lossy.map(pct).join(', ')}): sağlayıcı/VPS ağ yolu.` };
   }
@@ -282,7 +294,8 @@ export function diagnose(users: FreezeUser[], server: ServerSummary | null, lk: 
   const longest = (kind: Outage['kind']): Outage | null =>
     outages.filter((o) => o.kind === kind).sort((a, b) => b.durationMs - a.durationMs)[0] ?? null;
   const total = longest('tam');
-  const probeOnly = longest('sonda');
+  /** Tüm dış yol kesintisi (yalnız tek protokolün kesintisi sağlayıcı kesintisi yargısını seçmez) */
+  const probeOnly = outages.filter((o) => o.kind === 'sonda' && !isPartialProbeOutage(o)).sort((a, b) => b.durationMs - a.durationMs)[0] ?? null;
   /** Doğrulanmamış NIC sessizliği: tek başına hiçbir sağlayıcı yargısını seçmez */
   const nicOnly = longest('aday');
 
