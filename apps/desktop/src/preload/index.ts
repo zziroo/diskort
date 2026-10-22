@@ -24,6 +24,7 @@ const bridge: DiskortBridge = {
   onTrayAction: (cb) => listen<TrayAction>('tray-action', cb),
   showWindow: () => ipcRenderer.send('app:show-window'),
   requestAttention: () => ipcRenderer.send('app:request-attention'),
+  setBadgeCount: (count) => ipcRenderer.send('app:badge-count', count),
   download: (url) => ipcRenderer.invoke('app:download', url),
   onDownloadDone: (cb) => listen<DownloadResult>('download:done', cb),
   edit: (command) => ipcRenderer.send('app:edit', command),

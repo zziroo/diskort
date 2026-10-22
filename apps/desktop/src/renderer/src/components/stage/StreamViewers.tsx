@@ -193,6 +193,9 @@ function ViewerList({
       onMouseLeave={onLeave}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
+      // Liste React ağacında StreamView'ın içinde: tekerlek ve sürükleme yayını yakınlaştırmasın/kaydırmasın
+      onWheel={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="px-2 pt-1 pb-1.5 text-xs font-bold tracking-wide text-text-muted">
         İZLEYİCİLER — {shown.length}

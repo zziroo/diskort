@@ -62,6 +62,29 @@ export function useDmUnreadTotal(): number {
   return useMessages((s) => ids.reduce((n, id) => n + (s.mentionCounts[id] ?? 0), 0));
 }
 
+/**
+ * Uygulama simgesi rozetinin sayısı: tüm sunuculardaki okunmamış bahsetmeler + okunmamış DM mesajları.
+ * Yalnızca bilinen (görülebilen sunucu kanalı ya da açık konuşma) kimlikler sayılır; arkadaşlık istekleri dahil değil.
+ */
+export function unreadBadgeTotal(
+  mentionCounts: Record<string, number>,
+  channelGuild: Record<string, string>,
+  dms: Record<string, unknown>,
+): number {
+  let total = 0;
+  for (const [id, count] of Object.entries(mentionCounts)) {
+    if (count > 0 && (id in channelGuild || id in dms)) total += count;
+  }
+  return total;
+}
+
+/** unreadBadgeTotal'ın hook'u (masaüstü uygulama simgesi rozeti) */
+export function useUnreadBadgeTotal(): number {
+  const channelGuild = useGuild((s) => s.channelGuild);
+  const dms = useGuild((s) => s.dms);
+  return useMessages((s) => unreadBadgeTotal(s.mentionCounts, channelGuild, dms));
+}
+
 /** Okunmamış mesajı olan konuşmalar, en yeni üstte (ana sayfa düğmesinin altında gösterilir) */
 export function useUnreadDms(limit = 3): DmChannel[] {
   const list = useDmList();

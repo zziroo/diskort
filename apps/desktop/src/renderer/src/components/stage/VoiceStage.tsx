@@ -386,7 +386,8 @@ function FocusedStage({ focused, entries }: { focused: string; entries: Presence
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1">
-        <StreamView userId={focused} large />
+        {/* Yayına tek tık ızgaraya döndürür (çift tık tam ekran, tekerlek yakınlaştırır) */}
+        <StreamView userId={focused} large onClick={() => voice.focusStream(null)} />
       </div>
       <div data-stage-chrome className={cn('flex h-7 shrink-0 items-center justify-center', CHROME)}>
         <button

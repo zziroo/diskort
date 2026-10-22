@@ -103,7 +103,7 @@ function remember(key: string, url: string): void {
   }
 }
 
-/** Kart açıkken önizlemeyi indirir; yenisi gelene kadar eskisi görünür */
+/** Kart açıkken (ya da `open` true iken) önizlemeyi indirir; yenisi gelene kadar eskisi görünür */
 function usePreviewImage(state: VoiceState | undefined, open: boolean): string | null {
   const at = state?.streamPreviewAt;
   const key = state && at ? `${state.userId}:${state.channelId}:${at}` : null;
@@ -131,6 +131,16 @@ function usePreviewImage(state: VoiceState | undefined, open: boolean): string |
   }, [open, key]);
 
   return shown && state && shown.userId === state.userId && at ? shown.url : null;
+}
+
+/**
+ * Satırda sürekli duran küçük resim için: önbellekten atılıp iptal edilen bir objectURL kırık görünürse
+ * (`onError`) gösterilen resmi düşürür; anahtar değişmediği için yeniden indirmek yerine yer tutucuya döner.
+ */
+export function useLivePreviewImage(state: VoiceState): { src: string | null; onError: () => void } {
+  const url = usePreviewImage(state, true);
+  const [broken, setBroken] = useState<string | null>(null);
+  return { src: url && broken !== url ? url : null, onError: () => setBroken(url) };
 }
 
 function useNow(active: boolean): number {

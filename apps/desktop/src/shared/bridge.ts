@@ -181,6 +181,8 @@ export interface DiskortBridge {
   showWindow(): void;
   /** Pencere odakta değilse görev çubuğu simgesini yakıp söndürerek dikkat çeker. */
   requestAttention(): void;
+  /** Uygulama simgesindeki okunmamış rozeti (macOS dock / Linux sayı, Windows görev çubuğu kırmızı noktası); 0 kaldırır. */
+  setBadgeCount(count: number): void;
   /** Dosyayı indirir ("Farklı kaydet" penceresi açılır). */
   download(url: string): Promise<void>;
   /** İndirme bitti (kaydetme penceresinde vazgeçilirse çağrılmaz). */

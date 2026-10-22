@@ -322,7 +322,9 @@ export {
   sortDms,
   useDmList,
   useDmUnreadCount,
+  unreadBadgeTotal,
   useDmUnreadTotal,
+  useUnreadBadgeTotal,
   useUnreadDms,
 } from './dms';
 export {

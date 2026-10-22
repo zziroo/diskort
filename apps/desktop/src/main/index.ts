@@ -11,6 +11,7 @@ import {
   systemPreferences,
   Tray,
   type DesktopCapturerSource,
+  type NativeImage,
 } from 'electron';
 import type {
   AppPreferences,
@@ -356,6 +357,26 @@ function createTray(): void {
   updateTrayMenu();
 }
 
+// ---------- Okunmamış rozeti ----------
+
+let badgeOverlay: NativeImage | null = null;
+
+/** Uygulama simgesi rozeti: macOS/Linux sayı (0 kaldırır), Windows'ta görev çubuğu simgesinde kırmızı nokta */
+function setUnreadBadge(raw: unknown): void {
+  const count = typeof raw === 'number' && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+  if (isWindows) {
+    if (!mainWindow) return;
+    if (count === 0) {
+      mainWindow.setOverlayIcon(null, '');
+      return;
+    }
+    badgeOverlay ??= nativeImage.createFromPath(join(__dirname, '../../resources/badge.png'));
+    if (!badgeOverlay.isEmpty()) mainWindow.setOverlayIcon(badgeOverlay, `${count} okunmamış`);
+  } else {
+    app.setBadgeCount(count);
+  }
+}
+
 // ---------- IPC ----------
 
 const EDIT_COMMANDS = new Set<EditCommand>(['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll']);
@@ -402,6 +423,7 @@ function registerIpc(): void {
     if (isMac) app.dock?.bounce('informational');
     else mainWindow.flashFrame(true);
   });
+  ipcMain.on('app:badge-count', (_e, count: unknown) => setUnreadBadge(count));
 
   ipcMain.handle('screen:get-sources', () => getScreenSources());
   ipcMain.handle('screen:select', (_e, selection: ScreenSelection) => {

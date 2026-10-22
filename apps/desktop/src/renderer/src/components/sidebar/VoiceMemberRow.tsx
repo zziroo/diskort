@@ -23,7 +23,27 @@ import { Avatar } from '../ui/Avatar';
 import { openProfile, type ProfileAnchor } from '../members/ProfilePopover';
 import { ActivityIcon } from '../status/ActivityCard';
 import { activityCardHandlers } from './ActivityHoverCard';
-import { streamCardHandlers } from './StreamPreviewCard';
+import { streamCardHandlers, useLivePreviewImage } from './StreamPreviewCard';
+
+/**
+ * Üye satırının sağ ucundaki sabit yuva: yayın yapıyorsa yayının küçük resmi, yoksa oyun ikonu.
+ * Her satırda aynı yerde durur; soldaki mikrofon/kulaklık ikonları değişse de dikey hiza bozulmaz.
+ */
+function TrailingSlot({ state, activity }: { state: VoiceState; activity: ReturnType<typeof useActivity> }) {
+  if (state.streaming) return <StreamThumb state={state} />;
+  if (activity) return <ActivityIcon activity={activity} size={18} />;
+  return null;
+}
+
+/** Yayın yapan üyenin satırındaki küçük önizleme (16:9); resim gelene kadar koyu yer tutucu */
+function StreamThumb({ state }: { state: VoiceState }) {
+  const { src, onError } = useLivePreviewImage(state);
+  return (
+    <span className="flex h-[18px] w-8 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-black ring-1 ring-divider">
+      {src && <img src={src} alt="" draggable={false} onError={onError} className="h-full w-full object-cover" />}
+    </span>
+  );
+}
 
 export function LiveBadge({ className }: { className?: string }) {
   return (
@@ -96,14 +116,14 @@ export function VoiceStateIcons({ state, localMuted, size = 15 }: { state: Voice
           aria-label={
             state.serverMute ? 'Sunucuda susturuldu' : suppressed ? 'Bu kanalda konuşma izni yok' : 'Susturuldu'
           }
-          className={cn('anim-pill-in', mutedByOthers ? 'text-danger' : 'text-text-muted')}
+          className={cn('anim-pill-in shrink-0', mutedByOthers ? 'text-danger' : 'text-text-muted')}
         />
       )}
       {deaf && (
         <HeadphoneOff
           size={size}
           aria-label={state.serverDeaf ? 'Sunucuda sağırlaştırıldı' : 'Sağırlaştırıldı'}
-          className={cn('anim-pill-in', state.serverDeaf && 'text-danger')}
+          className={cn('anim-pill-in shrink-0', state.serverDeaf && 'text-danger')}
         />
       )}
     </>
@@ -180,8 +200,8 @@ export function VoiceMemberRow({ state, inMyChannel }: { state: VoiceState; inMy
         {user?.displayName ?? '…'}
       </span>
       {state.streaming && <WatchLiveBadge userId={state.userId} channelId={state.channelId} tooltip={false} />}
-      {activity && <ActivityIcon activity={activity} size={18} />}
       <VoiceStateIcons state={state} localMuted={localMuted} />
+      <TrailingSlot state={state} activity={activity} />
     </div>
   );
 }

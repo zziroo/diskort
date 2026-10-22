@@ -9,11 +9,19 @@ import { LiveBadge } from '../sidebar/VoiceMemberRow';
 import { Slider } from '../ui/Slider';
 import { StreamViewers } from './StreamViewers';
 import { SwapIcon } from '../ui/SwapIcon';
+import { useEscapeLayer } from '../../lib/escape';
+import { NO_ZOOM, panBy, wheelFactor, zoomAt, type Size, type Zoom } from './zoom';
+
+/** Tek tık bu kadar bekler; içinde ikinci tık gelirse (çift tık: tam ekran) tek tık iptal edilir */
+const CLICK_DELAY = 250;
+/** Bundan fazla kayan basış tık değil sürüklemedir */
+const DRAG_SLOP = 4;
 
 interface Props {
   userId: string;
   /** Büyük (odaklanmış) görünüm mü, yoksa küçük önizleme mi */
   large?: boolean;
+  /** Tek tık (çift tıkla çakışmasın diye kısa gecikmeyle çağrılır; yakınlaşmışken çağrılmaz) */
   onClick?: () => void;
 }
 
@@ -56,6 +64,101 @@ export function StreamView({ userId, large, onClick }: Props) {
     else void containerRef.current?.requestFullscreen();
   };
 
+  // Yakınlaştırma yalnız büyük görünümde ve tam ekranda; görünüm değişince (büyük↔tam ekran dahil,
+  // kutu ölçüsü değiştiği için) ve yayın değişince sıfırlanır
+  const zoomable = Boolean(large) || fullscreen;
+  const [zoom, setZoom] = useState<Zoom>(NO_ZOOM);
+  const zoomed = zoom.s > 1;
+  useEffect(() => setZoom(NO_ZOOM), [large, fullscreen, userId]);
+  // Esc önce yakınlaştırmayı sıfırlar (sonra sahnenin kendi Esc davranışı)
+  useEscapeLayer(() => setZoom(NO_ZOOM), zoomed);
+
+  const measure = (): { box: Size; content: Size | null } => {
+    const el = containerRef.current;
+    const v = videoRef.current;
+    const box = { w: el?.clientWidth ?? 0, h: el?.clientHeight ?? 0 };
+    return {
+      box,
+      content: v && v.videoWidth > 0 ? { w: v.videoWidth, h: v.videoHeight } : null,
+    };
+  };
+
+  const onWheel = (e: React.WheelEvent): void => {
+    if (!zoomable || !hasVideo || e.deltaY === 0) return;
+    // Portal ile açılan izleyici listesi React ağacında içeride ama DOM'da dışarıda: onun tekerleği yayına işlemesin
+    if (!containerRef.current?.contains(e.target as Node)) return;
+    if ((e.target as Element).closest('[data-stage-chrome]')) return;
+    // Sürüklerken ölçek değişirse pan başlangıcı eskir; sürükleme bitene kadar tekerleği yok say
+    if (drag.current?.moving) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const { box, content } = measure();
+    setZoom((z) => zoomAt(z, z.s * wheelFactor(e.deltaY), e.clientX - rect.left, e.clientY - rect.top, box, content));
+  };
+
+  // Sürükleme: eşik aşılınca kaydırır (pan); sonrasındaki tık yutulur
+  const drag = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    start: Zoom;
+    moving: boolean;
+  } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const suppressClick = useRef(false);
+  const onPointerDown = (e: React.PointerEvent): void => {
+    suppressClick.current = false;
+    if (e.button !== 0) return;
+    if (!containerRef.current?.contains(e.target as Node)) return;
+    // Kontrol barı, düğmeler ve kaydırıcılar kendi işini yapar
+    if ((e.target as Element).closest('[data-stage-chrome], button, input, [role="slider"]')) return;
+    drag.current = {
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      start: zoom,
+      moving: false,
+    };
+  };
+  const onPointerMove = (e: React.PointerEvent): void => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moving) {
+      if (Math.hypot(dx, dy) <= DRAG_SLOP) return;
+      d.moving = true;
+      suppressClick.current = true;
+      if (d.start.s > 1) {
+        containerRef.current?.setPointerCapture(e.pointerId);
+        setDragging(true);
+      }
+    }
+    if (d.start.s > 1) {
+      const { box, content } = measure();
+      setZoom(panBy(d.start, dx, dy, box, content));
+    }
+  };
+  const endDrag = (e: React.PointerEvent): void => {
+    if (drag.current?.id !== e.pointerId) return;
+    drag.current = null;
+    setDragging(false);
+  };
+
+  // Tek tık gecikmeli; çift tıkın ikinci tıkı onu iptal eder
+  const clickTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(clickTimer.current), []);
+  const handleClick = (e: React.MouseEvent): void => {
+    clearTimeout(clickTimer.current);
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    // Tam ekranda tek tık bir şey yapmaz (odak değişince öğe yeniden kurulur, tam ekran düşerdi)
+    if (!onClick || e.detail > 1 || zoomed || fullscreen) return;
+    clickTimer.current = setTimeout(onClick, CLICK_DELAY);
+  };
+
   const setVolume = (v: number): void => {
     const streamVolumes = { ...useSettings.getState().streamVolumes, [userId]: v };
     useSettings.getState().set({ streamVolumes });
@@ -66,18 +169,42 @@ export function StreamView({ userId, large, onClick }: Props) {
       ref={containerRef}
       className={cn(
         'group relative flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-black',
-        onClick && 'cursor-pointer',
+        zoomed ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : onClick && 'cursor-pointer',
       )}
-      onClick={onClick}
-      onDoubleClick={toggleFullscreen}
+      onClick={handleClick}
+      onDoubleClick={() => {
+        clearTimeout(clickTimer.current);
+        toggleFullscreen();
+      }}
+      onWheel={onWheel}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
     >
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className={cn('h-full w-full object-contain transition-opacity duration-300', hasVideo ? 'opacity-100' : 'opacity-0')}
-      />
+      {/* Yakınlaştırma bu iç katmana uygulanır (kapsayıcının animasyonları etkilenmez) */}
+      <div
+        className="h-full w-full origin-top-left"
+        style={
+          zoomed
+            ? {
+                transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`,
+                willChange: 'transform',
+              }
+            : undefined
+        }
+      >
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={cn(
+            'h-full w-full object-contain transition-opacity duration-300',
+            hasVideo ? 'opacity-100' : 'opacity-0',
+          )}
+        />
+      </div>
       {paused ? (
         <SelfPreviewPaused compact={!large} />
       ) : (
@@ -103,33 +230,46 @@ export function StreamView({ userId, large, onClick }: Props) {
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        {!isSelf && hasAudio && (
-          // Görüntünün üstünde okunaklı küçük hap: simge (sessize alır), kaydırıcı, yüzde
-          <div className="mr-auto flex h-8 items-center gap-2 rounded-full bg-black/60 pr-3 pl-1 text-white backdrop-blur-sm">
+        <div className="mr-auto flex items-center gap-2">
+          {zoomed && (
             <button
-              className="press-icon flex h-6 w-6 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
-              onClick={() => setVolume(volume > 0 ? 0 : 1)}
-              data-tooltip={volume > 0 ? 'Yayın sesini kapat' : 'Yayın sesini aç'}
-              aria-label="Yayın sesi"
+              type="button"
+              onClick={() => setZoom(NO_ZOOM)}
+              onDoubleClick={(e) => e.stopPropagation()}
+              data-tooltip="Yakınlaştırmayı sıfırla"
+              className="press flex h-8 items-center rounded-full bg-black/60 px-3 text-xs font-medium text-white/85 tabular-nums backdrop-blur-sm hover:text-white"
             >
-              <SwapIcon swapKey={volume > 0 ? 'on' : 'off'} motion="ico-pop">
-                {volume > 0 ? <Volume2 size={16} /> : <VolumeX size={16} />}
-              </SwapIcon>
+              %{Math.round(zoom.s * 100)}
             </button>
-            <Slider
-              className="w-24"
-              aria-label="Yayın ses seviyesi"
-              aria-valuetext={`%${Math.round(volume * 100)}`}
-              min={0}
-              max={200}
-              value={Math.round(volume * 100)}
-              onValueChange={(v) => setVolume(v / 100)}
-            />
-            <span className="w-9 text-right text-xs font-medium text-white/80 tabular-nums">
-              %{Math.round(volume * 100)}
-            </span>
-          </div>
-        )}
+          )}
+          {!isSelf && hasAudio && (
+            // Görüntünün üstünde okunaklı küçük hap: simge (sessize alır), kaydırıcı, yüzde
+            <div className="flex h-8 items-center gap-2 rounded-full bg-black/60 pr-3 pl-1 text-white backdrop-blur-sm">
+              <button
+                className="press-icon flex h-6 w-6 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
+                onClick={() => setVolume(volume > 0 ? 0 : 1)}
+                data-tooltip={volume > 0 ? 'Yayın sesini kapat' : 'Yayın sesini aç'}
+                aria-label="Yayın sesi"
+              >
+                <SwapIcon swapKey={volume > 0 ? 'on' : 'off'} motion="ico-pop">
+                  {volume > 0 ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                </SwapIcon>
+              </button>
+              <Slider
+                className="w-24"
+                aria-label="Yayın ses seviyesi"
+                aria-valuetext={`%${Math.round(volume * 100)}`}
+                min={0}
+                max={200}
+                value={Math.round(volume * 100)}
+                onValueChange={(v) => setVolume(v / 100)}
+              />
+              <span className="w-9 text-right text-xs font-medium text-white/80 tabular-nums">
+                %{Math.round(volume * 100)}
+              </span>
+            </div>
+          )}
+        </div>
         {isSelf && !paused && (
           <IconButton title="Önizlemeyi duraklat" onClick={() => setVoice({ selfPreview: false })}>
             <EyeOff size={18} className="ico-blink" />

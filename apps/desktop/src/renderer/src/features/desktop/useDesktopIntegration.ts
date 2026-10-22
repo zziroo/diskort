@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { gateway, setPendingInvite, useSession } from '@diskort/client-core';
+import { gateway, setPendingInvite, useSession, useUnreadBadgeTotal } from '@diskort/client-core';
 import type { ActivityState } from '../../../../shared/bridge';
 import { bridge } from '../../lib/bridge';
 import { useSettings } from '../../stores/settings';
@@ -31,6 +31,15 @@ export function useDesktopIntegration(): void {
     void activity.getState().then(report, () => undefined);
     return activity.onState(report);
   }, [loggedIn]);
+
+  // Uygulama simgesindeki okunmamış rozeti: bahsetmeler + okunmamış DM'ler (DND'de de sayılır). Okununca sayı
+  // düşer, 0'da rozet kalkar; oturum kapalıyken ve arayüz kapanırken 0.
+  const unreadTotal = useUnreadBadgeTotal();
+  const badgeCount = loggedIn ? unreadTotal : 0;
+  useEffect(() => {
+    bridge?.setBadgeCount(badgeCount);
+  }, [badgeCount]);
+  useEffect(() => () => bridge?.setBadgeCount(0), []);
 
   // Davet bağlantısı (diskort://davet/<kod>): kod bekletilir; oturum açıksa katılma penceresi açılır,
   // değilse giriş ekranı "giriş yapınca katılacaksın" notunu gösterir (MainLayout, AuthScreen)
