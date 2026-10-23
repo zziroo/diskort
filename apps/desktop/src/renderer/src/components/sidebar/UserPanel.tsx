@@ -95,7 +95,6 @@ export function UserPanel() {
           intro={intro}
           status={status}
           ringClassName="bg-bg-card"
-          decoration={user?.avatarDecoration}
         />
         <div className="min-w-0 leading-tight">
           <div className="truncate text-sm font-semibold text-text-head">{user?.displayName}</div>

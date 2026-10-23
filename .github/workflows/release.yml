@@ -73,7 +73,8 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # Masaüstü paketi telefon uygulamasını gerektirmez: Skia'nın yerel kütüphaneleri (~1,4 GB) indirilmesin
+      # Masaüstü paketi telefon uygulamasını gerektirmez: mobil paketinin (Expo/React Native) bağımlılıkları
+      # masaüstü yayınında gereksiz, kurulmasın
       - run: pnpm install --frozen-lockfile --filter "!@diskort/mobile"
 
       - name: Derle

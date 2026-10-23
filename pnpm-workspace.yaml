@@ -8,9 +8,6 @@ allowBuilds:
   esbuild: true
   uiohook-napi: true
   '@node-rs/argon2': true
-  # Skia'nın hazır yerel kütüphanelerini (react-native-skia-android / -apple-*) paketin libs/ klasörüne kopyalar;
-  # telefon derlemesi (CI) bunlar olmadan bağlanamaz
-  '@shopify/react-native-skia': true
   # Squirrel yükleyicisi kullanılmıyor (NSIS kullanılıyor)
   electron-winstaller: false
   # onnxruntime-web bağımlılığı; kurulum betiği yalnızca sürüm uyarısı basar
@@ -19,9 +16,5 @@ allowBuilds:
 # Yamalı paketler (patches/). Paket sürümü değişince yama yeniden yapılmalı (pnpm patch <paket>@<sürüm>).
 # - @livekit/react-native: Android'de telefonun donanım gürültü engelleyicisi kapalı (kütüphane bunu
 #   ayar olarak sunmuyor, ses modülü uygulama açılırken yerel tarafta kuruluyor)
-# - @shopify/react-native-skia: yalnızca Android videosu (RNSkVideo.java, RNSkAndroidVideo.cpp): Java hataları
-#   yakalanır (yamasız hali uygulamayı kapatır), video bırakılınca çözücü hemen kapatılır. Yalnızca android/
-#   dosyalarına dokunur; iOS parmak izine girmez (apps/mobile/scripts/runtime-version.mjs).
 patchedDependencies:
   '@livekit/react-native@3.0.0': patches/@livekit__react-native@3.0.0.patch
-  '@shopify/react-native-skia@2.6.2': patches/@shopify__react-native-skia@2.6.2.patch

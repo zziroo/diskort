@@ -6,7 +6,6 @@ import { useEscapeLayer } from '../../lib/escape';
 import { usePresenceClosing } from '../../lib/motion';
 import { cn } from '../../lib/utils';
 import { useUi, type ServerSettingsSection } from '../../stores/ui';
-import { CosmeticsCover } from '../cosmetics/Cosmetics';
 import { BansSection } from './BansSection';
 import { InvitesSection } from './InvitesSection';
 import { MembersSection } from './MembersSection';
@@ -55,45 +54,43 @@ export function ServerSettingsModal({ initial }: { initial?: ServerSettingsSecti
   }, [sections.length, close]);
 
   return (
-    <CosmeticsCover>
-      <div
-        className={cn(
-          'fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] z-40 flex bg-bg-main',
-          closing ? 'anim-settings-out pointer-events-none' : 'anim-settings-in',
-        )}
-      >
-        <nav className="flex w-[30%] min-w-[220px] justify-end overflow-y-auto border-r border-divider bg-bg-side py-14 pr-2">
-          <div className="w-[190px]">
-            <div className="truncate px-2.5 pb-1.5 text-xs font-bold text-text-muted uppercase">{guildName}</div>
-            {sections.map((s) => (
-              <NavItem key={s.id} active={current === s.id} onClick={() => setSection(s.id)}>
-                {s.label}
-              </NavItem>
-            ))}
-          </div>
-        </nav>
-        <main className="relative flex-1 overflow-y-auto py-14 pr-10 pl-10">
-          {/* Bölüm değişince içerik hafifçe yükselerek belirir */}
-          <div key={current} className="anim-rise-in max-w-[860px]">
-            {current === 'overview' && <OverviewSection />}
-            {current === 'roles' && <RolesSection />}
-            {current === 'members' && <MembersSection />}
-            {current === 'invites' && <InvitesSection />}
-            {current === 'bans' && <BansSection />}
-          </div>
-          <button
-            onClick={close}
-            className="group fixed top-14 right-10 flex flex-col items-center gap-1 text-text-muted transition-colors hover:text-text-head"
-            aria-label="Kapat"
-          >
-            <span className="ico-rotate flex h-9 w-9 items-center justify-center rounded-full border-2 border-current group-active:scale-90">
-              <X size={20} />
-            </span>
-            <span className="text-xs font-semibold">ESC</span>
-          </button>
-        </main>
-      </div>
-    </CosmeticsCover>
+    <div
+      className={cn(
+        'fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] z-40 flex bg-bg-main',
+        closing ? 'anim-settings-out pointer-events-none' : 'anim-settings-in',
+      )}
+    >
+      <nav className="flex w-[30%] min-w-[220px] justify-end overflow-y-auto border-r border-divider bg-bg-side py-14 pr-2">
+        <div className="w-[190px]">
+          <div className="truncate px-2.5 pb-1.5 text-xs font-bold text-text-muted uppercase">{guildName}</div>
+          {sections.map((s) => (
+            <NavItem key={s.id} active={current === s.id} onClick={() => setSection(s.id)}>
+              {s.label}
+            </NavItem>
+          ))}
+        </div>
+      </nav>
+      <main className="relative flex-1 overflow-y-auto py-14 pr-10 pl-10">
+        {/* Bölüm değişince içerik hafifçe yükselerek belirir */}
+        <div key={current} className="anim-rise-in max-w-[860px]">
+          {current === 'overview' && <OverviewSection />}
+          {current === 'roles' && <RolesSection />}
+          {current === 'members' && <MembersSection />}
+          {current === 'invites' && <InvitesSection />}
+          {current === 'bans' && <BansSection />}
+        </div>
+        <button
+          onClick={close}
+          className="group fixed top-14 right-10 flex flex-col items-center gap-1 text-text-muted transition-colors hover:text-text-head"
+          aria-label="Kapat"
+        >
+          <span className="ico-rotate flex h-9 w-9 items-center justify-center rounded-full border-2 border-current group-active:scale-90">
+            <X size={20} />
+          </span>
+          <span className="text-xs font-semibold">ESC</span>
+        </button>
+      </main>
+    </div>
   );
 }
 

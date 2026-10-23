@@ -9,7 +9,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { flushAcks, gateway, reportClientError, useSession } from '@diskort/client-core';
 import { UpdateBanner } from '../components/UpdateBanner';
 import { DialogHost } from '../components/Dialog';
-import { initSkia } from '../components/cosmetics/skia';
 import { GuildMenuHost } from '../components/GuildMenu';
 import { CallSounds, IncomingCallHost } from '../components/IncomingCall';
 import { StatusPickerHost } from '../components/StatusPicker';
@@ -116,14 +115,6 @@ export default function RootLayout() {
   // sonra (oturum yüklü: bildirim kullanıcıyla eşleşir), çizimin dışında. Yerel modülü olmayan APK'da bir şey yapmaz.
   useEffect(() => {
     if (ready) reportPendingNativeCrashes();
-  }, [ready]);
-
-  // Skia (hareketli kozmetikler) açılış ekranını geciktirmesin: uygulama çizildikten sonra, çizimin dışında
-  // bir kez kurulur; kurulamazsa ölümcül değil (bkz. skia.ts). Hazır olunca kozmetikler kendiliğinden belirir.
-  useEffect(() => {
-    if (!ready) return;
-    const timer = setTimeout(initSkia, 0);
-    return () => clearTimeout(timer);
   }, [ready]);
 
   // Oturum açılınca bu telefonu bildirimler için kaydet

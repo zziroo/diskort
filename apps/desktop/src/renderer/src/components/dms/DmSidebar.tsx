@@ -14,7 +14,6 @@ import { closeOrLeaveDm, dmMenuItems } from '../../lib/dm';
 import { useMainView } from '../../lib/mainView';
 import { cn } from '../../lib/utils';
 import { useUi } from '../../stores/ui';
-import { PlayOnHover } from '../cosmetics/Cosmetics';
 import { formatAgo, formatFull } from '../text/format';
 import { PresenceSubline } from '../status/ActivityCard';
 import { DmAvatar } from './DmAvatar';
@@ -111,7 +110,7 @@ const DmRow = memo(function DmRow({ dm, selected }: { dm: DmChannel; selected: b
 
   return (
     // Avatarın dekorasyonu yalnızca satırın üstüne gelinirken (ya da klavyeyle odaklanınca) oynar
-    <PlayOnHover className="group/item relative mb-0.5">
+    <div className="group/item relative mb-0.5">
       {highlight && (
         <span className="anim-indicator-in absolute top-1/2 -left-2 h-2 w-1 origin-left -translate-y-1/2 rounded-r bg-text-head" />
       )}
@@ -130,7 +129,7 @@ const DmRow = memo(function DmRow({ dm, selected }: { dm: DmChannel; selected: b
           openContextMenu({ x: e.clientX, y: e.clientY, items: dmMenuItems(dm) });
         }}
       >
-        <DmAvatar dm={dm} size={32} status ringClassName="bg-bg-side" decorated />
+        <DmAvatar dm={dm} size={32} status ringClassName="bg-bg-side" />
         <span className="min-w-0 flex-1 leading-tight">
           <span className="flex min-w-0 items-center gap-1">
             <span className={cn('truncate', highlight ? 'font-semibold' : 'font-medium')}>{title}</span>
@@ -169,6 +168,6 @@ const DmRow = memo(function DmRow({ dm, selected }: { dm: DmChannel; selected: b
       >
         <X size={16} className="ico-rotate" />
       </button>
-    </PlayOnHover>
+    </div>
   );
 });

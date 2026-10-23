@@ -1,7 +1,7 @@
 // Telefonun yerel (Java/Kotlin, C++) çökmeleri. JavaScript bunları göremez: uygulama bir anda kapanır, küresel
 // hata işleyicisi (setup.ts) hiç çalışmaz. Yerel modül (modules/crash-reporter) çökmeyi kaydeder; bir sonraki
 // açılışta buradan sunucuya bildirilir (yer: 'yerel-çökme'). Android 11+'da sistemin çıkış kayıtları da okunur:
-// yerel kod (Skia, GPU sürücüsü, WebRTC) çökmeleri ve ANR'ler yalnızca oradan görünür. Yerel çökmenin dökümünden
+// yerel kod (GPU sürücüsü, WebRTC) çökmeleri ve ANR'ler yalnızca oradan görünür. Yerel çökmenin dökümünden
 // (tombstone) yalnızca güvenli alanlar alınır (bkz. tombstone.ts).
 // Çökme anının bağlamı için açık ekran, ses durumu, JS sürümü ve güncelleme yerel modüle bildirilir.
 //

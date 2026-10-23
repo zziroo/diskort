@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { Crown } from 'lucide-react';
-import { userNameplateId, type User } from '@diskort/shared';
+import type { User } from '@diskort/shared';
 import {
   activeGuildContext,
   guildVoiceStateOf,
@@ -16,7 +16,6 @@ import { PresenceSubline } from '../status/ActivityCard';
 import { memberMenuItems } from '../../lib/memberMenu';
 import { cn } from '../../lib/utils';
 import { useUi } from '../../stores/ui';
-import { Nameplate, nameplateNameColor, PlayScope, useHoverPlay, useKnownCosmeticSet } from '../cosmetics/Cosmetics';
 import { Avatar } from '../ui/Avatar';
 import { openProfile } from './ProfilePopover';
 
@@ -57,10 +56,6 @@ const MemberRow = memo(function MemberRow({ user, offline, owner }: { user: User
   const mobile = useOnMobile(user.id);
   const openContextMenu = useUi((s) => s.openContextMenu);
   const isSelf = user.id === selfId;
-  // İsim plakası satırın arkasında oynar; seti tanınmıyorsa (paketi yayında değil) satır plakasızdır
-  const plate = useKnownCosmeticSet(userNameplateId(user));
-  // Plaka ve avatar dekorasyonu yalnızca satırın üstüne gelinirken (ya da klavyeyle odaklanınca) oynar
-  const { playing, bind } = useHoverPlay();
 
   // Tıklayınca profil kartı listenin soluna açılır
   const showProfile = (el: HTMLElement): void => {
@@ -74,64 +69,44 @@ const MemberRow = memo(function MemberRow({ user, offline, owner }: { user: User
   };
 
   return (
-    <PlayScope playing={playing}>
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={`${user.displayName} profili`}
-        {...bind}
-        className={cn(
-          'group flex h-[42px] cursor-pointer items-center gap-3 rounded px-2 hover:bg-bg-hover',
-          plate && 'relative isolate overflow-hidden',
-          // Plakalı satırda plaka solmaz (açık temada zemine karışmasın), yalnızca avatar ve yazılar
-          offline && !plate && 'opacity-40 hover:opacity-100',
-        )}
-        onClick={(e) => showProfile(e.currentTarget)}
-        onKeyDown={(e) => {
-          if (e.key !== 'Enter' && e.key !== ' ') return;
-          e.preventDefault();
-          showProfile(e.currentTarget);
-        }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          const items = memberMenuItems(user.id, activeGuildContext(useGuild.getState()));
-          // Başkasına sağ tıklayınca ses seviyesi de ayarlanabilir (seste olmasa da kaydedilir)
-          if (!isSelf || items.length > 0) {
-            openContextMenu({ x: e.clientX, y: e.clientY, userId: isSelf ? undefined : user.id, items });
-          }
-        }}
-      >
-        {plate && <Nameplate id={plate} />}
-        <Avatar
-          user={user}
-          size={32}
-          status={status}
-          mobile={mobile}
-          ringClassName="bg-bg-side"
-          ringColor={plate ? '#0a0a0a' : undefined}
-          decoration={user.avatarDecoration}
-          className={cn(offline && plate && 'opacity-40 group-hover:opacity-100')}
-        />
-        <div
-          className={cn('min-w-0 flex-1 leading-tight', offline && plate && 'opacity-50 group-hover:opacity-100')}
-        >
-          <div className="flex items-center gap-1">
-            <span
-              className={cn('truncate font-medium', plate ? 'nameplate-text' : 'text-text-normal')}
-              style={color ? { color: plate ? nameplateNameColor(color) : color } : undefined}
-            >
-              {user.displayName}
-            </span>
-            {owner && <Crown size={13} aria-label="Sunucunun sahibi" className="shrink-0 text-warn" />}
-          </div>
-          {/* Durum simgeleri (oyun, ses) ve yazı: özel durum, yoksa oynadığı oyun, o da yoksa sesli sohbet */}
-          <PresenceSubline
-            userId={user.id}
-            voice={voice}
-            className={cn('text-xs', plate ? 'nameplate-sub' : 'text-text-muted')}
-          />
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={`${user.displayName} profili`}
+      className={cn(
+        'group flex h-[42px] cursor-pointer items-center gap-3 rounded px-2 hover:bg-bg-hover',
+        offline && 'opacity-40 hover:opacity-100',
+      )}
+      onClick={(e) => showProfile(e.currentTarget)}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        showProfile(e.currentTarget);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const items = memberMenuItems(user.id, activeGuildContext(useGuild.getState()));
+        // Başkasına sağ tıklayınca ses seviyesi de ayarlanabilir (seste olmasa da kaydedilir)
+        if (!isSelf || items.length > 0) {
+          openContextMenu({ x: e.clientX, y: e.clientY, userId: isSelf ? undefined : user.id, items });
+        }
+      }}
+    >
+      <Avatar user={user} size={32} status={status} mobile={mobile} ringClassName="bg-bg-side" />
+      <div className="min-w-0 flex-1 leading-tight">
+        <div className="flex items-center gap-1">
+          <span className="truncate font-medium text-text-normal" style={color ? { color } : undefined}>
+            {user.displayName}
+          </span>
+          {owner && <Crown size={13} aria-label="Sunucunun sahibi" className="shrink-0 text-warn" />}
         </div>
+        {/* Durum simgeleri (oyun, ses) ve yazı: özel durum, yoksa oynadığı oyun, o da yoksa sesli sohbet */}
+        <PresenceSubline
+          userId={user.id}
+          voice={voice}
+          className="text-xs text-text-muted"
+        />
       </div>
-    </PlayScope>
+    </div>
   );
 });

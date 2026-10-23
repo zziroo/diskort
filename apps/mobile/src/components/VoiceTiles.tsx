@@ -7,14 +7,12 @@ import { useAppear, useTimingTo } from '../motion';
 import { colors, createStyles, font, radius, space } from '../theme';
 import { useVoice } from '../voice/voice';
 import { Avatar } from './Avatar';
-import { decorationCanvasSize } from './cosmetics/Cosmetics';
 import { SpeakingRing } from './SpeakingRing';
 import { StreamViewers } from './StreamViewers';
 import { VoiceStateIcon } from './VoiceStateIcon';
 
-// Ses ekranının kutucukları. Yerleşim kozmetikten bağımsızdır: avatar sabit boyda bir "sahnenin"
-// ortasında durur, dekorasyon onun üstüne (yerleşimi etkilemeden) taşarak çizilir, ad sahnenin hemen
-// altında sabit yükseklikte bir satırdadır. Sahne her kutucukta aynı boydadır (dekorasyon olsun olmasın),
+// Ses ekranının kutucukları. Avatar sabit boyda bir "sahnenin" (avatar + konuşma halkasının payı) ortasında
+// durur, ad sahnenin hemen altında sabit yükseklikte bir satırdadır. Sahne her kutucukta aynı boydadır,
 // böylece bütün avatarlar ve adlar aynı hizada durur.
 
 /** Kutucuğun iç boşluğu (üst/alt) */
@@ -22,26 +20,25 @@ const TILE_PAD = 10;
 /** Ad satırının sabit yüksekliği ve sahneyle arası */
 const NAME_HEIGHT = 20;
 const NAME_GAP = 4;
-/** En büyük avatar (dekorasyon bu boyda setin sabit resmiyle çizilir; telefonda yalnızca açık profilde oynar) */
+/** En büyük avatar */
 const AVATAR_MAX = 72;
-/** Küçük kutucukta (yayın izlenirken) avatar; dekorasyon sabit halka olur */
+/** Küçük kutucukta (yayın izlenirken) avatar */
 const AVATAR_SMALL = 56;
 /** Konuşma halkası avatarın dışına taşar (kalınlık + boşluk, iki yanda) */
 const RING_ROOM = 12;
 
 /** Büyük avatarın sığdığı en kısa kutucuk (sahne + ad + boşluklar) */
-export const TILE_MIN_HEIGHT = decorationCanvasSize(AVATAR_MAX) + NAME_GAP + NAME_HEIGHT + TILE_PAD * 2;
+export const TILE_MIN_HEIGHT = AVATAR_MAX + RING_ROOM + NAME_GAP + NAME_HEIGHT + TILE_PAD * 2;
 
-/** Kutucuk yüksekliğine göre avatar ve sahne (dekorasyon yüzeyinin kaplayacağı kare) boyu */
+/** Kutucuk yüksekliğine göre avatar ve sahne (avatarın ortada durduğu kare) boyu */
 function stageFor(height: number): { avatar: number; stage: number } {
   const room = height - TILE_PAD * 2 - NAME_HEIGHT - NAME_GAP;
-  const big = decorationCanvasSize(AVATAR_MAX);
-  if (big <= room) return { avatar: AVATAR_MAX, stage: big };
+  if (AVATAR_MAX + RING_ROOM <= room) return { avatar: AVATAR_MAX, stage: AVATAR_MAX + RING_ROOM };
   const avatar = Math.max(32, Math.min(AVATAR_SMALL, room - RING_ROOM));
   return { avatar, stage: avatar + RING_ROOM };
 }
 
-/** Kutucuğun dışı: katılınca büyüyerek belirir; konuşma kenarı içeriğin üstünde çizilir (dekorasyon örtmez) */
+/** Kutucuğun dışı: katılınca büyüyerek belirir; konuşma kenarı içeriğin üstünde çizilir (avatarı örtmez) */
 function TileFrame({
   width,
   height,
@@ -117,8 +114,7 @@ export const MemberTile = memo(function MemberTile({ state, width, height, selfI
       <TileFrame width={width} height={height} edge={edge} edgeColor={lastIntro.current ? colors.warn : undefined}>
         <View style={[styles.stage, { width: stage, height: stage }]}>
           <SpeakingRing speaking={speaking} intro={intro} size={avatar}>
-            {/* Dekorasyon sabit resimdir (konuşurken de): katılımcı kadar oynatıcı sesle yarışmasın */}
-            <Avatar user={user} size={avatar} decoration={user?.avatarDecoration} />
+            <Avatar user={user} size={avatar} />
           </SpeakingRing>
         </View>
         <View style={styles.nameRow}>
@@ -259,7 +255,7 @@ const styles = createStyles(() => ({
     borderWidth: 2,
     borderColor: colors.ok,
   },
-  // Dekorasyon yüzeyi bu karenin tamamını kaplar; avatar ortada
+  // Avatar karenin ortasında
   stage: { alignItems: 'center', justifyContent: 'center' },
   nameRow: {
     height: NAME_HEIGHT,

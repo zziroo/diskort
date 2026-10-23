@@ -1,11 +1,10 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { userEffectId, type CosmeticSetId, type CustomStatus, type ProfileTheme, type User } from '@diskort/shared';
+import type { CustomStatus, ProfileTheme, User } from '@diskort/shared';
 import { bannerUrl, profileGradient, type DisplayStatus } from '@diskort/client-core';
 import { cn } from '../../lib/utils';
-import { CardEffect, useCosmeticSetInfo } from '../cosmetics/Cosmetics';
 import { Avatar } from '../ui/Avatar';
 
-// Profil süsleri (afiş, tema, efekt) masaüstünde: profil kartı ve Ayarlar > Profil'deki önizleme kullanır.
+// Profil süsleri (afiş, tema) masaüstünde: profil kartı ve Ayarlar > Profil'deki önizleme kullanır.
 
 /**
  * Temalı kartın zemini: tema degradesinin üstüne uygulamanın kart rengi yarı saydam serilir (yazılar
@@ -28,25 +27,21 @@ export function themedRingColor(theme: ProfileTheme | null | undefined): string 
 }
 
 /**
- * Kartın üstündeki afiş: resim, yoksa tema rengi, yoksa hareketli set efektinin gökyüzü degradesi, o da yoksa
- * avatarın rengi (sunucu, tema varsa onun ana rengini avatarColor olarak gönderir)
+ * Kartın üstündeki afiş: resim, yoksa tema rengi, o da yoksa avatarın rengi (sunucu, tema varsa onun ana
+ * rengini avatarColor olarak gönderir)
  */
 export function ProfileBanner({
   user,
   className,
 }: {
-  user: Pick<User, 'bannerUrl' | 'profileTheme' | 'avatarColor' | 'animatedEffect'>;
+  user: Pick<User, 'bannerUrl' | 'profileTheme' | 'avatarColor'>;
   className?: string;
 }) {
   const src = bannerUrl(user);
-  const set = useCosmeticSetInfo(userEffectId(user));
   return (
     <div
       className={cn('relative shrink-0 overflow-hidden', className)}
-      style={{
-        background:
-          user.profileTheme?.primary ?? (set ? `linear-gradient(140deg, ${set.from}, ${set.to})` : user.avatarColor),
-      }}
+      style={{ background: user.profileTheme?.primary ?? user.avatarColor }}
     >
       {src && <img src={src} alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover" />}
     </div>
@@ -55,7 +50,7 @@ export function ProfileBanner({
 
 /**
  * Profil kartının üst kısmı: afiş, avatar (halkası kartın renginde), yanında isteğe bağlı balon, ad ve
- * kullanıcı adı. Avatarın dekorasyonu kart açık olduğu sürece oynar. Kartın zemini (themedCardStyle) ve efekti (ProfileEffectLayer) dıştaki kaba verilir.
+ * kullanıcı adı. Kartın zemini (themedCardStyle) dıştaki kaba verilir.
  */
 export function ProfileCardTop({
   user,
@@ -65,17 +60,7 @@ export function ProfileCardTop({
   badge,
   bannerClassName,
 }: {
-  user: Pick<
-    User,
-    | 'displayName'
-    | 'username'
-    | 'avatarColor'
-    | 'avatarUrl'
-    | 'bannerUrl'
-    | 'profileTheme'
-    | 'avatarDecoration'
-    | 'animatedEffect'
-  >;
+  user: Pick<User, 'displayName' | 'username' | 'avatarColor' | 'avatarUrl' | 'bannerUrl' | 'profileTheme'>;
   status?: DisplayStatus;
   /** Kişi yalnızca telefondan bağlı (nokta telefon biçiminde) */
   mobile?: boolean;
@@ -87,16 +72,13 @@ export function ProfileCardTop({
   bannerClassName?: string;
 }) {
   const ring = themedRingColor(user.profileTheme);
-  const effect = useCosmeticSetInfo(userEffectId(user));
   return (
     <>
-      {/* Hareketli set efekti 106 piksellik afişe göre hazırlandığından efektli kartın afişi resim yokken de uzun */}
-      <ProfileBanner user={user} className={cn(user.bannerUrl || effect ? 'h-[106px]' : 'h-[60px]', bannerClassName)} />
+      <ProfileBanner user={user} className={cn(user.bannerUrl ? 'h-[106px]' : 'h-[60px]', bannerClassName)} />
       <div className="px-4">
         <div className="-mt-10 mb-2 flex items-start gap-2">
-          {/* Efekt avatarın yerini bilmez: avatar (halkası, dekorasyonu ve durum noktasıyla) efekt katmanının üstünde */}
           <div
-            className="relative z-[2] w-fit shrink-0 rounded-full border-[6px] border-bg-float"
+            className="relative w-fit shrink-0 rounded-full border-[6px] border-bg-float"
             style={{ borderColor: ring }}
           >
             <Avatar
@@ -106,8 +88,6 @@ export function ProfileCardTop({
               mobile={mobile}
               ringClassName="bg-bg-float"
               ringColor={ring}
-              decoration={user.avatarDecoration}
-              animateDecoration
             />
           </div>
           {aside}
@@ -135,20 +115,3 @@ export function StatusBubble({ custom }: { custom: CustomStatus }) {
     </div>
   );
 }
-
-/**
- * Kartın üstünde oynayan hareketli set efekti (tıklamaları engellemez; avatar bu katmanın üstünde kalır).
- * "Hareketi azalt" açıkken sabit resmi gösterilir; seti tanınmıyorsa (paketi yayında değil) hiçbir şey çizilmez.
- */
-export function ProfileEffectLayer({
-  effect,
-  className,
-}: {
-  /** Setin kimliği (userEffectId) */
-  effect: CosmeticSetId | null | undefined;
-  /** Kart taşanı kırpmıyorsa katmanın köşeleri (ör. rounded-lg) */
-  className?: string;
-}) {
-  return <CardEffect id={effect} className={className} />;
-}
-

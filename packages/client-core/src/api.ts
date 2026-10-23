@@ -42,7 +42,6 @@ import type {
   VoiceModerationRequest,
 } from '@diskort/shared';
 import {
-  CLIENT_FEATURE_COSMETIC_PACKS,
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
   CLIENT_FEATURE_VOICE_TRACE,
@@ -70,14 +69,10 @@ export function normalizeServerUrl(url: string): string {
 export const CLIENT_FEATURES: readonly string[] = [
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
-  CLIENT_FEATURE_COSMETIC_PACKS,
   CLIENT_FEATURE_VOICE_TRACE,
 ];
 
-/**
- * Kullanıcı döndüren her isteğe eklenen başlık: sunucu, paketleri tanıdığını bildirmeyen istemciye set
- * seçimlerinde yalnızca yerleşik kimlikleri gönderir (bkz. CLIENT_FEATURE_COSMETIC_PACKS).
- */
+/** Her isteğe eklenen özellik başlığı (bugün sunucuda buna bakan bir uç yok; eski bir özelliği ayırt etmek için) */
 export const clientFeatureHeaders = (): Record<string, string> => ({ [CLIENT_FEATURES_HEADER]: CLIENT_FEATURES.join(',') });
 
 /** Oturum jetonuyla JSON isteği; hata durumunda ApiError atar. */

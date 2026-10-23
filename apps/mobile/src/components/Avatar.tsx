@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { Image, Text, View } from 'react-native';
-import { animatedDecorationId, type User } from '@diskort/shared';
+import type { User } from '@diskort/shared';
 import { avatarInk, avatarUrl, useOnMobile, useStatus, type DisplayStatus } from '@diskort/client-core';
 import { colors, createStyles } from '../theme';
-import { AnimatedDecoration } from './cosmetics/Cosmetics';
 import { showsPhone, StatusDot } from './StatusDot';
 
 function initials(name: string): string {
@@ -25,15 +24,6 @@ interface Props {
   mobile?: boolean;
   /** Çevrimiçi noktasının çevresindeki halka: avatarın durduğu yüzeyin rengi */
   surface?: string;
-  /** Avatar dekorasyonunun kimliği (user.avatarDecoration): avatarın üstüne, yerleşimi değiştirmeden çizilir */
-  decoration?: string | null;
-  /**
-   * Hareketli dekorasyon oynasın: YALNIZCA açık profil kartı (ProfileHeader). Başka her yerde (listeler, mesajlar,
-   * ses kutucukları, seçici) dekorasyon sabittir ve oynatıcı kurulmaz.
-   */
-  animateDecoration?: boolean;
-  /** Küçük avatarda da halka yerine dekorasyonun sabit resmi (ayarlardaki seçicinin kutuları) */
-  decorationPoster?: boolean;
 }
 
 export function Avatar({
@@ -44,9 +34,6 @@ export function Avatar({
   status,
   mobile,
   surface = colors.side,
-  decoration,
-  animateDecoration,
-  decorationPoster,
 }: Props) {
   const shown: DisplayStatus | undefined = status ?? (online === undefined ? undefined : online ? 'online' : 'offline');
   const phone = shown !== undefined && showsPhone(shown, mobile);
@@ -56,8 +43,6 @@ export function Avatar({
   const src = avatarUrl(user);
   // Yüklenemeyen fotoğrafın yerine baş harfler (adres değişince yeniden denenir)
   const [failed, setFailed] = useState<string | null>(null);
-  // Hareketli dekorasyon (anim:<set>): setin paketi oynatılır; bildirimde olmayan set gösterilmez
-  const animated = animatedDecorationId(decoration);
   return (
     <View style={{ width: size, height: size }}>
       <View
@@ -84,7 +69,6 @@ export function Avatar({
           <Text style={[styles.text, { fontSize: Math.max(10, size * 0.38), color: avatarInk(user?.avatarColor) }]}>{initials(user?.displayName ?? '?')}</Text>
         )}
       </View>
-      {animated && <AnimatedDecoration set={animated} size={size} animate={animateDecoration} poster={decorationPoster} />}
       {shown !== undefined && (
         <View
           style={[

@@ -1,9 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "typeRoots": ["../../apps/desktop/node_modules/@types"],
-    "types": ["node"]
-  },
-  "include": ["page.ts", "client-core-shim.ts"]
-}

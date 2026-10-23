@@ -1,10 +1,9 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  // Diğer girişler: sunucuda geri bildirimleri okuma (dist/feedback-cli.js), hesap yöneticilerini
-  // yönetme (dist/admin-cli.js) ve kozmetik paketlerini yayınlama (dist/cosmetics-cli.js) araçları
-  // (docker compose exec api node dist/...)
-  entry: ['src/index.ts', 'src/feedback-cli.ts', 'src/admin-cli.ts', 'src/cosmetics-cli.ts'],
+  // Diğer girişler: sunucuda geri bildirimleri okuma (dist/feedback-cli.js) ve hesap yöneticilerini
+  // yönetme (dist/admin-cli.js) araçları (docker compose exec api node dist/...)
+  entry: ['src/index.ts', 'src/feedback-cli.ts', 'src/admin-cli.ts'],
   format: ['esm'],
   platform: 'node',
   target: 'node22',

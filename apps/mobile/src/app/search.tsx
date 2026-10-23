@@ -277,7 +277,7 @@ const ResultRow = memo(function ResultRow({
         accessibilityRole="button"
         accessibilityHint="Mesaja git"
       >
-        <Avatar user={user} size={36} decoration={user?.avatarDecoration} />
+        <Avatar user={user} size={36} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={styles.cardHead}>
             <Text style={[styles.author, color ? { color } : null, !user && styles.deleted]} numberOfLines={1}>

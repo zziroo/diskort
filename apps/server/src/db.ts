@@ -47,14 +47,7 @@ import {
   SEARCH_TOTAL_CAP,
   type SearchHas,
 } from '@diskort/shared';
-import {
-  animatedDecorationId,
-  AVATAR_COLORS,
-  type AnimatedDecoration,
-  type CosmeticSetId,
-  isCosmeticSet,
-  type ProfileTheme,
-} from '@diskort/shared';
+import { AVATAR_COLORS, type ProfileTheme } from '@diskort/shared';
 import { FEEDBACK_MIGRATION } from './feedbackStore.js';
 import { ADMIN_HISTORY_MIGRATION } from './voiceHistory.js';
 
@@ -495,6 +488,16 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE users ADD COLUMN intro_sound_hash TEXT;
   `,
+  // 28: profil kozmetikleri (kart efekti, avatar süsü, isim plakası, kozmetik paketleri) her platformdan
+  // kaldırıldı. Sütunlar ve içlerindeki seçimler silinir (profile_frame göç 23'ten beri boştu). Bu göçten
+  // sonra eski sunucu sürümüne dönmek yedekten geri yüklemeyi gerektirir (eski kod bu sütunları okur).
+  // DROP COLUMN SQLite 3.35+ ister (node:sqlite Node 22.12+ ile daha yenisini taşır).
+  `
+  ALTER TABLE users DROP COLUMN profile_effect;
+  ALTER TABLE users DROP COLUMN avatar_decoration;
+  ALTER TABLE users DROP COLUMN profile_frame;
+  ALTER TABLE users DROP COLUMN nameplate;
+  `,
 ];
 
 type Param = string | number | null;
@@ -526,9 +529,6 @@ interface UserRow {
   intro_sound_hash: string | null;
   theme_primary: string | null;
   theme_accent: string | null;
-  profile_effect: string | null;
-  avatar_decoration: string | null;
-  nameplate: string | null;
 }
 
 /**
@@ -878,25 +878,12 @@ export class Store {
       bannerUrl: r.banner_hash ? `/api/banners/${r.id}/${r.banner_hash}.webp` : null,
       introSoundUrl: r.intro_sound_hash ? `/api/intro-sounds/${r.id}/${r.intro_sound_hash}.mp3` : null,
       profileTheme: r.theme_primary && r.theme_accent ? { primary: r.theme_primary, accent: r.theme_accent } : null,
-      // Eski kozmetiklerin alanları (0.8.x istemciler okur) her zaman null: eski istemciler tanımadıkları
-      // efekt kimliğinde çöker, set efekti bu yüzden ayrı alanda gider. Alanlar gönderilmeseydi de aynı
-      // sonuç çıkardı (USER_UPDATE profili bütünüyle değiştirir); açıkça null olmaları daha güvenli.
-      profileEffect: null,
-      // Set seçimleri yalnızca kimlik şu an biliniyorsa (yerleşik ya da yayında olan paket) gider: yayından
-      // kaldırılan paketin kimliği saklı kalır ama gönderilmez (paket yeniden yayınlanırsa geri gelir)
-      animatedEffect: this.knownCosmeticSet(r.profile_effect) ? r.profile_effect : null,
-      avatarDecoration: this.knownCosmeticSet(animatedDecorationId(r.avatar_decoration)) ? r.avatar_decoration : null,
-      profileFrame: null,
-      nameplate: this.knownCosmeticSet(r.nameplate) ? r.nameplate : null,
+      // Kaldırılan profil kozmetiklerinin alanları (profileEffect, animatedEffect, avatarDecoration,
+      // profileFrame, nameplate) gönderilmez: sahadaki eski istemciler bunları isteğe bağlı tanımlar ve
+      // gelmeyen alanı "yok" sayar.
       isAdmin: r.is_admin === 1,
     };
   }
-
-  /**
-   * Set kimliği şu an seçilebilir mi. Varsayılan: yalnızca yerleşik setler; uygulama kurulurken kozmetik
-   * paketleri deposuna bağlanır (yerleşik ∪ yayında olan paketler, bkz. CosmeticPackStore.knows).
-   */
-  knownCosmeticSet: (id: string | null | undefined) => boolean = isCosmeticSet;
 
   // ---------- Kullanıcılar ----------
 
@@ -1067,9 +1054,6 @@ export class Store {
       displayName?: string;
       avatarColor?: string;
       profileTheme?: ProfileTheme | null;
-      profileEffect?: CosmeticSetId | null;
-      avatarDecoration?: AnimatedDecoration | null;
-      nameplate?: CosmeticSetId | null;
     },
   ): User | null {
     if (patch.displayName !== undefined) this.run('UPDATE users SET display_name = ? WHERE id = ?', patch.displayName, id);
@@ -1082,11 +1066,6 @@ export class Store {
         id,
       );
     }
-    if (patch.profileEffect !== undefined) this.run('UPDATE users SET profile_effect = ? WHERE id = ?', patch.profileEffect, id);
-    if (patch.avatarDecoration !== undefined) {
-      this.run('UPDATE users SET avatar_decoration = ? WHERE id = ?', patch.avatarDecoration, id);
-    }
-    if (patch.nameplate !== undefined) this.run('UPDATE users SET nameplate = ? WHERE id = ?', patch.nameplate, id);
     return this.getUser(id);
   }
 

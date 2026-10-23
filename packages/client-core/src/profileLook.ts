@@ -1,5 +1,5 @@
 // Profil süsleri (afiş, tema): iki platformun ortak kısmı. Tema hazır renkleri ve degradesi burada
-// tanımlanır. Profil efektleri hareketli setlerdir (bkz. cosmeticSets.ts, cosmeticShaders.ts).
+// tanımlanır.
 
 import type { ProfileTheme } from '@diskort/shared';
 

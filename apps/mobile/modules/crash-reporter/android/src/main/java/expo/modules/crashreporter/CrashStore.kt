@@ -20,7 +20,7 @@ import kotlin.system.exitProcess
  * JavaScript'in göremediği çökmeleri bir sonraki açılışta bildirmek için (JS: src/crashReports.ts):
  *  - Java/Kotlin: yakalanmamış istisnada yığın filesDir'e küçük bir JSON dosyası olarak yazılır, sonra önceki
  *    işleyiciye devredilir: çökme yutulmaz, Android uygulamayı yine kapatır.
- *  - Android 11+: sistemin çıkış kayıtları (ApplicationExitInfo) okunur. Yerel (C++, Skia, GPU sürücüsü)
+ *  - Android 11+: sistemin çıkış kayıtları (ApplicationExitInfo) okunur. Yerel (C++, GPU sürücüsü)
  *    çökmeler ve ANR'ler Java işleyicisine hiç uğramaz; yalnızca buradan görünür.
  * Raporlara JavaScript'in son bildirdiği bağlam (sürüm, güncelleme, açık ekran) eklenir.
  */

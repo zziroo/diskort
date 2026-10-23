@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AtSign, Crown, Eye, MessageCircle } from 'lucide-react';
 import { create } from 'zustand';
-import { userEffectId } from '@diskort/shared';
 import {
   canMessageIn,
   showsGuildInfo,
@@ -25,7 +24,6 @@ import { cn } from '../../lib/utils';
 import { toast } from '../../stores/ui';
 import {
   ProfileCardTop,
-  ProfileEffectLayer,
   StatusBubble,
   themedCardStyle,
 } from '../profile/ProfileLook';
@@ -269,7 +267,6 @@ export function ProfilePopover() {
           </div>
         )}
       </div>
-      <ProfileEffectLayer effect={userEffectId(user)} />
     </div>
   );
 }

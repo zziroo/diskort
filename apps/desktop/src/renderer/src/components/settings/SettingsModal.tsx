@@ -45,7 +45,6 @@ import { cn } from '../../lib/utils';
 import { DEFAULT_SERVER_URL, useSettings, type ScreenCodec, type ScreenPresetId, type ThemeId } from '../../stores/settings';
 import { toast, useUi, type SettingsSection } from '../../stores/ui';
 import { Avatar } from '../ui/Avatar';
-import { CosmeticsCover } from '../cosmetics/Cosmetics';
 import { Button, Divider, Field, SectionTitle, Select, TextInput, Toggle } from '../ui/controls';
 import { ActivitySettings } from './ActivitySettings';
 import { BlockedUsers } from './BlockedUsers';
@@ -129,83 +128,81 @@ export function SettingsModal({ initial }: { initial?: SettingsSection }) {
   };
 
   return (
-    <CosmeticsCover>
-      <div
-        className={cn(
-          'fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] z-40 flex bg-bg-main',
-          closing ? 'anim-settings-out pointer-events-none' : 'anim-settings-in',
-        )}
-      >
-        {/* Ortalama: sol bölme 50% - 241px. Gezinme (210) + sağ boşluk (8) = 218 solda biter; içerik 40px girintiyle
-            başlar ve 660px'e kadar uzar. Blok (210 + 8 + 40 + 660 = 918px) pencere ortasında durur. */}
-        <nav className="flex w-[calc(50%-241px)] min-w-[240px] shrink-0 justify-end overflow-y-auto border-r border-divider bg-bg-side py-14 pr-2">
-          <div className="w-[210px]">
-            <label className="mb-3 flex h-8 items-center gap-2 rounded bg-bg-rail px-2 text-sm text-text-muted focus-within:ring-2 focus-within:ring-brand/60">
-              <Search size={14} className="shrink-0" aria-hidden />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  // Esc önce aramayı temizler, boşsa ayarları kapatır
-                  if (e.key === 'Escape' && query) {
-                    e.stopPropagation();
-                    setQuery('');
-                  }
-                }}
-                placeholder="Ara"
-                aria-label="Ayarlarda ara"
-                className="min-w-0 flex-1 bg-transparent text-text-normal outline-none placeholder:text-text-faint"
-              />
-              {query && (
-                <button onClick={() => setQuery('')} aria-label="Aramayı temizle" className="text-text-muted hover:text-text-head">
-                  <X size={14} />
-                </button>
-              )}
-            </label>
-            {shown.length === 0 && <div className="px-2.5 py-2 text-sm text-text-muted">Eşleşen ayar yok.</div>}
-            {shown.map((group, i) => (
-              <div key={group.id}>
-                {i > 0 && <div className="mx-2.5 my-2 h-px bg-line" />}
-                <div className="px-2.5 pb-1.5 text-xs font-bold text-text-muted uppercase">{group.title}</div>
-                {group.sections.map((item) => {
-                  const Icon = ICONS[item.icon.desktop];
-                  return (
-                    <NavItem key={item.id} active={item.kind === 'page' && section === item.id} onClick={() => choose(item)}>
-                      {Icon && <Icon size={16} className="shrink-0 opacity-80" aria-hidden />}
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      {item.id === 'feedbackAdmin' && newFeedback > 0 && <CountBadge count={newFeedback} />}
-                      {item.kind === 'link' && <span className="text-xs text-text-faint">↗</span>}
-                    </NavItem>
-                  );
-                })}
-              </div>
-            ))}
-            <div className="mx-2.5 my-2 h-px bg-line" />
-            <NavItem onClick={() => void logout()} danger>
-              <LogOut size={16} className="shrink-0" aria-hidden />
-              <span className="flex-1">Çıkış Yap</span>
-            </NavItem>
-            <AppInfo />
-          </div>
-        </nav>
-        <main className="relative min-w-0 flex-1 overflow-y-auto py-14 pr-24 pl-10">
-          {/* Bölüm değişince içerik hafifçe yükselerek belirir */}
-          <div key={section} className="anim-rise-in max-w-[660px]">
-            <SectionContent id={section} />
-          </div>
-          <button
-            onClick={close}
-            className="group fixed top-14 right-10 flex flex-col items-center gap-1 text-text-muted transition-colors hover:text-text-head"
-            aria-label="Kapat"
-          >
-            <span className="ico-rotate flex h-9 w-9 items-center justify-center rounded-full border-2 border-current group-active:scale-90">
-              <X size={20} />
-            </span>
-            <span className="text-xs font-semibold">ESC</span>
-          </button>
-        </main>
-      </div>
-    </CosmeticsCover>
+    <div
+      className={cn(
+        'fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] z-40 flex bg-bg-main',
+        closing ? 'anim-settings-out pointer-events-none' : 'anim-settings-in',
+      )}
+    >
+      {/* Ortalama: sol bölme 50% - 241px. Gezinme (210) + sağ boşluk (8) = 218 solda biter; içerik 40px girintiyle
+          başlar ve 660px'e kadar uzar. Blok (210 + 8 + 40 + 660 = 918px) pencere ortasında durur. */}
+      <nav className="flex w-[calc(50%-241px)] min-w-[240px] shrink-0 justify-end overflow-y-auto border-r border-divider bg-bg-side py-14 pr-2">
+        <div className="w-[210px]">
+          <label className="mb-3 flex h-8 items-center gap-2 rounded bg-bg-rail px-2 text-sm text-text-muted focus-within:ring-2 focus-within:ring-brand/60">
+            <Search size={14} className="shrink-0" aria-hidden />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Esc önce aramayı temizler, boşsa ayarları kapatır
+                if (e.key === 'Escape' && query) {
+                  e.stopPropagation();
+                  setQuery('');
+                }
+              }}
+              placeholder="Ara"
+              aria-label="Ayarlarda ara"
+              className="min-w-0 flex-1 bg-transparent text-text-normal outline-none placeholder:text-text-faint"
+            />
+            {query && (
+              <button onClick={() => setQuery('')} aria-label="Aramayı temizle" className="text-text-muted hover:text-text-head">
+                <X size={14} />
+              </button>
+            )}
+          </label>
+          {shown.length === 0 && <div className="px-2.5 py-2 text-sm text-text-muted">Eşleşen ayar yok.</div>}
+          {shown.map((group, i) => (
+            <div key={group.id}>
+              {i > 0 && <div className="mx-2.5 my-2 h-px bg-line" />}
+              <div className="px-2.5 pb-1.5 text-xs font-bold text-text-muted uppercase">{group.title}</div>
+              {group.sections.map((item) => {
+                const Icon = ICONS[item.icon.desktop];
+                return (
+                  <NavItem key={item.id} active={item.kind === 'page' && section === item.id} onClick={() => choose(item)}>
+                    {Icon && <Icon size={16} className="shrink-0 opacity-80" aria-hidden />}
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.id === 'feedbackAdmin' && newFeedback > 0 && <CountBadge count={newFeedback} />}
+                    {item.kind === 'link' && <span className="text-xs text-text-faint">↗</span>}
+                  </NavItem>
+                );
+              })}
+            </div>
+          ))}
+          <div className="mx-2.5 my-2 h-px bg-line" />
+          <NavItem onClick={() => void logout()} danger>
+            <LogOut size={16} className="shrink-0" aria-hidden />
+            <span className="flex-1">Çıkış Yap</span>
+          </NavItem>
+          <AppInfo />
+        </div>
+      </nav>
+      <main className="relative min-w-0 flex-1 overflow-y-auto py-14 pr-24 pl-10">
+        {/* Bölüm değişince içerik hafifçe yükselerek belirir */}
+        <div key={section} className="anim-rise-in max-w-[660px]">
+          <SectionContent id={section} />
+        </div>
+        <button
+          onClick={close}
+          className="group fixed top-14 right-10 flex flex-col items-center gap-1 text-text-muted transition-colors hover:text-text-head"
+          aria-label="Kapat"
+        >
+          <span className="ico-rotate flex h-9 w-9 items-center justify-center rounded-full border-2 border-current group-active:scale-90">
+            <X size={20} />
+          </span>
+          <span className="text-xs font-semibold">ESC</span>
+        </button>
+      </main>
+    </div>
   );
 }
 

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   ALL_PERMISSIONS,
-  CLIENT_FEATURE_COSMETIC_PACKS,
   CLIENT_FEATURE_VOICE_TRACE,
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
@@ -128,7 +127,6 @@ describe('direkt mesajlar', () => {
     expect(identify?.t === 'IDENTIFY' && identify.d.features).toEqual([
       CLIENT_FEATURE_DM,
       CLIENT_FEATURE_PRESENCE,
-      CLIENT_FEATURE_COSMETIC_PACKS,
       CLIENT_FEATURE_VOICE_TRACE,
     ]);
   });

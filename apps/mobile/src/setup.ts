@@ -2,7 +2,6 @@
 import { registerGlobals } from '@livekit/react-native';
 import { configureClient, dmTitle, reportClientError, useGuild, useSession } from '@diskort/client-core';
 import { GIF_SNIPPET, isGifMessage } from '@diskort/shared';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { AppState, Platform, Vibration } from 'react-native';
 import { uploadFromDevice } from './attachments';
@@ -42,8 +41,6 @@ export const clientReady = configureClient({
   platform: Platform.OS === 'ios' ? 'ios' : 'android',
   version: APP_VERSION,
   storage: secureStorage,
-  // Gizli olmayan, büyüyebilen önbellek (kozmetik paketlerinin bildirimi): güvenli depoya sığmaz
-  cacheStorage: AsyncStorage,
   serverUrl: () => getSettings().serverUrl,
   notifyError: (message) => toast(message, 'error'),
   // Zorunlu çıkışta da bildirim kaydı unutulur; sonraki girişte yeniden kaydolunur

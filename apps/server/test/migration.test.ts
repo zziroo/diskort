@@ -446,11 +446,6 @@ describe('göç 14: çoklu sunucu', () => {
           banner_hash: null,
           theme_primary: null,
           theme_accent: null,
-          profile_effect: null,
-          avatar_decoration: null,
-          profile_frame: null,
-          // göç 22: isim plakası boş başlar
-          nameplate: null,
           // göç 27: giriş sesi boş başlar
           intro_sound_hash: null,
         })),
@@ -639,7 +634,8 @@ describe('göç 21: profil süsleri', () => {
     new Store(file).close();
     const db = new DatabaseSync(file);
     const users = db.prepare('SELECT id, username, avatar_hash FROM users ORDER BY id').all();
-    for (const column of ['banner_hash', 'theme_primary', 'theme_accent', 'profile_effect', 'avatar_decoration', 'profile_frame']) {
+    // Kozmetik sütunları (profile_effect, avatar_decoration, profile_frame) göç 28 ile düştü
+    for (const column of ['banner_hash', 'theme_primary', 'theme_accent']) {
       expect(db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${column} IS NOT NULL`).get()).toEqual({ n: 0 });
     }
     db.close();
@@ -648,104 +644,7 @@ describe('göç 21: profil süsleri', () => {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
       expect(store.db.prepare('SELECT id, username, avatar_hash FROM users ORDER BY id').all()).toEqual(users);
       const user = store.listUsers()[0]!;
-      expect(user).toMatchObject({
-        bannerUrl: null,
-        profileTheme: null,
-        profileEffect: null,
-        avatarDecoration: null,
-        profileFrame: null,
-      });
-    } finally {
-      store.close();
-    }
-  });
-});
-
-describe('göç 22: isim plakası', () => {
-  it('şema 21 veritabanı 22 ile göçer; süsler korunur, plaka boş başlar, set efekti ayrı alanda okunur', () => {
-    const file = schema19Database();
-    const db = new DatabaseSync(file);
-    for (let v = 19; v < 21; v++) db.exec(MIGRATIONS[v]!);
-    db.exec('PRAGMA user_version = 21');
-    const [first, second] = db.prepare('SELECT id FROM users ORDER BY id').all() as { id: string }[];
-    db.prepare(`UPDATE users SET profile_effect = 'kuzey' WHERE id = ?`).run(first!.id);
-    db.prepare(`UPDATE users SET profile_effect = 'karadelik', avatar_decoration = 'anim:buz' WHERE id = ?`).run(second!.id);
-    db.close();
-
-    const store = new Store(file);
-    try {
-      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(store.getUser(first!.id)).toMatchObject({
-        profileEffect: null,
-        animatedEffect: 'kuzey',
-        avatarDecoration: null,
-        nameplate: null,
-      });
-      // Eski istemciler tanımadıkları efekt kimliğinde çöker: set efekti profileEffect'te hiç görünmez
-      expect(store.getUser(second!.id)).toMatchObject({
-        profileEffect: null,
-        animatedEffect: 'karadelik',
-        avatarDecoration: 'anim:buz',
-        nameplate: null,
-      });
-      // Bilinmeyen plaka (ör. ileride kaldırılmış bir set) gösterilmez
-      store.db.prepare(`UPDATE users SET nameplate = 'eski-set' WHERE id = ?`).run(first!.id);
-      expect(store.getUser(first!.id)!.nameplate).toBeNull();
-      expect(store.updateUser(first!.id, { nameplate: 'sakura' })!.nameplate).toBe('sakura');
-    } finally {
-      store.close();
-    }
-  });
-});
-
-describe('göç 23: eski kozmetikler kaldırıldı', () => {
-  it('şema 22 veritabanında eski efekt, katalog dekorasyonu ve çerçeve silinir; set parçaları korunur', () => {
-    const file = schema19Database();
-    const db = new DatabaseSync(file);
-    for (let v = 19; v < 22; v++) db.exec(MIGRATIONS[v]!);
-    db.exec('PRAGMA user_version = 22');
-    const ids = (db.prepare('SELECT id FROM users ORDER BY id').all() as { id: string }[]).map((u) => u.id);
-    expect(ids.length).toBeGreaterThanOrEqual(4);
-    const [first, second, third, fourth] = ids as [string, string, string, string];
-    const set = db.prepare(
-      'UPDATE users SET profile_effect = ?, avatar_decoration = ?, profile_frame = ?, nameplate = ? WHERE id = ?',
-    );
-    set.run('snow', 'crown', 'gold', 'neon', first);
-    set.run('karadelik', 'anim:buz', 'floral', null, second);
-    set.run('sparkles', 'anim:olmayan', null, null, third);
-    set.run('petals', null, 'gold', 'sakura', fourth);
-    const others = db.prepare('SELECT id, username, display_name, avatar_color, theme_primary FROM users ORDER BY id').all();
-    db.close();
-
-    const store = new Store(file);
-    try {
-      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(27);
-      expect(
-        store.db.prepare('SELECT id, profile_effect, avatar_decoration, profile_frame, nameplate FROM users ORDER BY id').all(),
-      ).toEqual(
-        ids.map((id) => ({
-          id,
-          profile_effect: id === second ? 'karadelik' : null,
-          // anim: ile başlayan kalır; bilinmeyen set (ör. ileride kaldırılmış) okunurken gösterilmez
-          avatar_decoration: id === second ? 'anim:buz' : id === third ? 'anim:olmayan' : null,
-          profile_frame: null,
-          nameplate: id === first ? 'neon' : id === fourth ? 'sakura' : null,
-        })),
-      );
-      // Diğer alanlara dokunulmaz
-      expect(
-        store.db.prepare('SELECT id, username, display_name, avatar_color, theme_primary FROM users ORDER BY id').all(),
-      ).toEqual(others);
-
-      const legacy = { profileEffect: null, profileFrame: null };
-      expect(store.getUser(first)).toMatchObject({ ...legacy, animatedEffect: null, avatarDecoration: null, nameplate: 'neon' });
-      expect(store.getUser(second)).toMatchObject({ ...legacy, animatedEffect: 'karadelik', avatarDecoration: 'anim:buz' });
-      expect(store.getUser(third)).toMatchObject({ ...legacy, animatedEffect: null, avatarDecoration: null });
-
-      // Göç tekrar çalışsa da zararsızdır
-      expect(() => store.db.exec(MIGRATIONS[22]!)).not.toThrow();
-      expect(store.getUser(second)).toMatchObject({ animatedEffect: 'karadelik', avatarDecoration: 'anim:buz' });
+      expect(user).toMatchObject({ bannerUrl: null, profileTheme: null });
     } finally {
       store.close();
     }
@@ -796,7 +695,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(27);
+      expect(MIGRATIONS.length).toBe(28);
       // Var olan mesajlar olduğu gibi; türleri yok (sıradan mesaj biçimi değişmez)
       expect(store.db.prepare('SELECT id, channel_id, author_id, content, created_at FROM messages ORDER BY id').all()).toEqual(before);
       const old = store.getMessage(Number((before[0] as { id: number }).id))!;
@@ -828,7 +727,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
       // Göç tekrar çalıştırılamaz (sütun ekler) ama açılışta tekrar çalışmaz
       store.close();
       const again = new Store(file);
-      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 27 });
+      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 28 });
       again.close();
     } finally {
       try {
@@ -852,7 +751,7 @@ describe('göç 26: arkadaşlar', () => {
 
     const store = new Store(file);
     try {
-      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 27 });
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 28 });
       const [a, b] = userIds as [string, string];
       const permissions = new PermissionService(store);
       expect(store.listFriends(a)).toEqual({ friends: [], incoming: [], outgoing: [] });
@@ -876,6 +775,43 @@ describe('göç 26: arkadaşlar', () => {
       store.deleteUser(b);
       expect(store.listFriends(a)).toEqual({ friends: [], incoming: [], outgoing: [] });
       expect(store.db.prepare('SELECT COUNT(*) AS n FROM friend_requests').get()).toEqual({ n: 0 });
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe('göç 28: profil kozmetikleri kaldırıldı', () => {
+  it('şema 27 veritabanında kozmetik sütunları ve içlerindeki seçimler silinir; diğer alanlar korunur', () => {
+    const file = schema19Database();
+    const db = new DatabaseSync(file);
+    for (let v = 19; v < 27; v++) db.exec(MIGRATIONS[v]!);
+    db.exec('PRAGMA user_version = 27');
+    const ids = (db.prepare('SELECT id FROM users ORDER BY id').all() as { id: string }[]).map((u) => u.id);
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    const set = db.prepare(
+      'UPDATE users SET profile_effect = ?, avatar_decoration = ?, profile_frame = ?, nameplate = ?, theme_primary = ?, theme_accent = ? WHERE id = ?',
+    );
+    set.run('karadelik', 'anim:buz', null, 'neon', '#112233', '#445566', ids[0]!);
+    set.run('kuzey', null, null, 'sakura', null, null, ids[1]!);
+    const kept = 'SELECT id, username, display_name, avatar_color, avatar_hash, banner_hash, theme_primary, theme_accent, intro_sound_hash FROM users ORDER BY id';
+    const others = db.prepare(kept).all();
+    db.close();
+
+    const store = new Store(file);
+    try {
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
+      expect(MIGRATIONS.length).toBe(28);
+      const columns = (store.db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((c) => c.name);
+      for (const gone of ['profile_effect', 'avatar_decoration', 'profile_frame', 'nameplate']) expect(columns).not.toContain(gone);
+      expect(store.db.prepare(kept).all()).toEqual(others);
+      // Kullanıcı nesnesinde kozmetik alanları hiç yok (eski istemciler gelmeyen alanı "yok" sayar)
+      const user = store.getUser(ids[0]!)!;
+      expect(user.profileTheme).toEqual({ primary: '#112233', accent: '#445566' });
+      for (const key of ['profileEffect', 'animatedEffect', 'avatarDecoration', 'profileFrame', 'nameplate']) {
+        expect(key in user).toBe(false);
+      }
+      expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally {
       store.close();
     }

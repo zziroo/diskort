@@ -76,7 +76,7 @@ export default function VoiceScreen() {
   );
 
   // Tek kutucuksa geniş, değilse iki sütun; yayın izlenirken kutucuklar kısalır. Hepsi aynı yükseklikte:
-  // büyük avatar ve dekorasyonu (TILE_MIN_HEIGHT) her telefonda sığar
+  // büyük avatar (TILE_MIN_HEIGHT) her telefonda sığar
   const single = tiles.length === 1;
   const tileWidth = single ? width - GRID_PADDING * 2 : Math.floor((width - GRID_PADDING * 2 - GRID_GAP) / 2);
   const tileHeight = viewing ? 118 : single ? 220 : Math.max(TILE_MIN_HEIGHT, Math.round(tileWidth * 0.86));

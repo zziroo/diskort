@@ -40,7 +40,6 @@ import { absentParticipants, type AbsentParticipant } from '../../features/calls
 import { useSettings } from '../../stores/settings';
 import { useUi } from '../../stores/ui';
 import { useVoice } from '../../stores/voice';
-import { PlayOnHover } from '../cosmetics/Cosmetics';
 import { Avatar } from '../ui/Avatar';
 import { SwapIcon } from '../ui/SwapIcon';
 import { LiveBadge, openVoiceProfile, voiceMemberContext, VoiceStateIcons, WatchLiveBadge } from '../sidebar/VoiceMemberRow';
@@ -606,9 +605,7 @@ function ParticipantTile({ state, compact }: { state: VoiceState; compact?: bool
   const openContextMenu = useUi((s) => s.openContextMenu);
 
   return (
-    // Avatarın dekorasyonu yalnızca kutucuğun üstüne gelinirken (ya da klavyeyle odaklanınca) oynar; konuşma
-    // artık oynatmaz
-    <PlayOnHover
+    <div
       role="button"
       tabIndex={0}
       aria-label={`${user?.displayName ?? 'Üye'} profili`}
@@ -633,7 +630,7 @@ function ParticipantTile({ state, compact }: { state: VoiceState; compact?: bool
         }
       }}
     >
-      <Avatar user={user} size={compact ? 44 : 80} speaking={speaking} intro={intro} decoration={user?.avatarDecoration} />
+      <Avatar user={user} size={compact ? 44 : 80} speaking={speaking} intro={intro} />
       <div
         data-stage-chrome
         className={cn(
@@ -647,7 +644,7 @@ function ParticipantTile({ state, compact }: { state: VoiceState; compact?: bool
         </span>
         {state.streaming && <WatchLiveBadge userId={state.userId} channelId={state.channelId} />}
       </div>
-    </PlayOnHover>
+    </div>
   );
 }
 

@@ -243,7 +243,7 @@ describe('dosya ekleri', () => {
       Authorization: 'Bearer jeton',
       'Content-Type': 'image/png',
       // Her isteğe eklenen özellik başlığı (bkz. clientFeatureHeaders)
-      'x-diskort-features': 'dm,presence,cosmetic_packs,voice_trace',
+      'x-diskort-features': 'dm,presence,voice_trace',
     });
     // Türü bilinmeyen dosya
     expect(requests[1]!.headers['Content-Type']).toBe('application/octet-stream');

@@ -30,6 +30,16 @@ const closed = (ws: WebSocket): Promise<number> =>
   ws.readyState === ws.CLOSED ? Promise.resolve(-1) : new Promise((r) => ws.once('close', (code) => r(code)));
 
 describe('gateway oturumları', () => {
+  it("eski istemcinin bildirdiği kaldırılmış 'cosmetic_packs' ve bilinmeyen bayraklar yok sayılır", async () => {
+    const ali = await s.member('ali');
+    const client = await connectGateway(s.app, ali.token, [CLIENT_FEATURE_DM, 'cosmetic_packs', 'ileride-gelecek']);
+    clients.push(client);
+    // Bağlantı kurulur, bilinen bayrak (DM) etkindir, kullanıcıda kozmetik alanı yoktur
+    expect(client.ready.dms).toBeDefined();
+    expect(s.ctx.gateway.isOnline(ali.user.id)).toBe(true);
+    for (const key of ['animatedEffect', 'avatarDecoration', 'nameplate']) expect(key in client.ready.user).toBe(false);
+  });
+
   it('kimlik doğrulanırken kapanan bağlantı çevrimiçi kalmaz (hayalet oturum)', async () => {
     const ali = await s.member('ali');
     let release!: () => void;

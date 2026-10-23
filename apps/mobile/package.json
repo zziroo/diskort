@@ -20,7 +20,6 @@
     "@livekit/react-native-expo-plugin": "^1.0.3",
     "@livekit/react-native-webrtc": "^144.2.0",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@shopify/react-native-skia": "2.6.2",
     "expo": "~57.0.25",
     "expo-application": "~57.0.3",
     "expo-audio": "~57.0.5",
@@ -54,7 +53,6 @@
   "devDependencies": {
     "@expo/fingerprint": "~0.20.13",
     "@types/react": "~19.2.2",
-    "canvaskit-wasm": "0.41.0",
     "typescript": "~6.0.3",
     "vitest": "^4.1.11"
   }

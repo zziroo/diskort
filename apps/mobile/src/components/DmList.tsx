@@ -206,7 +206,7 @@ const DmRow = memo(function DmRow({
         accessibilityLabel={`${title}${calling ? ', arama sürüyor' : ''}${count ? `, ${count} okunmamış mesaj` : ''}`}
         accessibilityHint="Seçenekler için uzun bas"
       >
-        <DmAvatar dm={dm} size={44} status decorated />
+        <DmAvatar dm={dm} size={44} status />
         <View style={{ flex: 1 }}>
           <Text style={[styles.name, (unread || selected) && styles.nameUnread]} numberOfLines={1}>
             {title}

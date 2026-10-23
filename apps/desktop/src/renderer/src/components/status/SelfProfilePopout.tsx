@@ -5,7 +5,6 @@ import {
   STATUS_DESCRIPTIONS,
   STATUS_DURATIONS,
   STATUS_LABELS,
-  userEffectId,
   type UserStatus,
 } from '@diskort/shared';
 import {
@@ -23,7 +22,6 @@ import { cn } from '../../lib/utils';
 import { useUi } from '../../stores/ui';
 import {
   ProfileCardTop,
-  ProfileEffectLayer,
   themedCardStyle,
 } from '../profile/ProfileLook';
 import { StatusIcon } from '../ui/StatusIcon';
@@ -194,7 +192,6 @@ export function SelfProfilePopout() {
           />
         </div>
       </div>
-      <ProfileEffectLayer effect={userEffectId(user)} className="rounded-lg" />
     </div>
   );
 }

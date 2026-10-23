@@ -1,4 +1,4 @@
-import { AVATAR_MAX_BYTES, INTRO_SOUND_MAX_BYTES, INTRO_SOUND_MAX_SECONDS, type AnimatedDecoration, type ApiErrorBody, type Attachment, type CosmeticSetId, type ProfileTheme, type User } from '@diskort/shared';
+import { AVATAR_MAX_BYTES, INTRO_SOUND_MAX_BYTES, INTRO_SOUND_MAX_SECONDS, type ApiErrorBody, type Attachment, type ProfileTheme, type User } from '@diskort/shared';
 import { api, ApiError, clientFeatureHeaders, normalizeServerUrl } from './api';
 import { env, type LocalFile, type UploadRequest, type UploadResponse } from './env';
 import { useGuild } from './guild';
@@ -178,17 +178,8 @@ export async function removeBanner(): Promise<User> {
   return user;
 }
 
-/**
- * Profil süsleri: tema, set efekti, hareketli avatar dekorasyonu ve isim plakası (null: kaldır); verilmeyen
- * alan değişmez. Set kimlikleri yerleşik setlerden ya da yayında olan paketlerden olabilir (bkz.
- * selectableCosmeticSets).
- */
-export async function updateProfileLook(patch: {
-  profileTheme?: ProfileTheme | null;
-  profileEffect?: CosmeticSetId | null;
-  avatarDecoration?: AnimatedDecoration | null;
-  nameplate?: CosmeticSetId | null;
-}): Promise<User> {
+/** Profil teması (null: kaldır); verilmezse değişmez. */
+export async function updateProfileLook(patch: { profileTheme?: ProfileTheme | null }): Promise<User> {
   const user = await api.updateMe(patch);
   applyOwnUser(user);
   return user;

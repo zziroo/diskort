@@ -21,7 +21,7 @@ import type { User } from '@diskort/shared';
 import type { MemberUser } from '@diskort/client-core';
 
 /** Satırda kullanılan yazar alanları (hepsi ilkel değer: bkz. useRowAuthor) */
-type RowAuthor = Pick<MemberUser, 'id' | 'displayName' | 'username' | 'avatarColor' | 'avatarUrl' | 'avatarDecoration' | 'removed'>;
+type RowAuthor = Pick<MemberUser, 'id' | 'displayName' | 'username' | 'avatarColor' | 'avatarUrl' | 'removed'>;
 
 /**
  * Yazarı `users` haritasının tamamı yerine tek tek ilkel alanlarla okur. `users` her profil/üye
@@ -35,7 +35,6 @@ function useRowAuthor(authorId: string | null | undefined, channelId: string): R
   const username = useGuild((s) => (authorId ? s.users[authorId]?.username : undefined));
   const avatarColor = useGuild((s) => (authorId ? s.users[authorId]?.avatarColor : undefined));
   const avatarUrl = useGuild((s) => (authorId ? s.users[authorId]?.avatarUrl : undefined));
-  const avatarDecoration = useGuild((s) => (authorId ? s.users[authorId]?.avatarDecoration : undefined));
   // Artık burada değil: kanalda sunucunun üyesi değil; DM'de (sunucu yok) ortak sunucusu kalmadı
   const removed = useGuild((s) =>
     !authorId ? undefined : s.dms[channelId] ? !s.reachable[authorId] : s.users[authorId]?.removed,
@@ -43,9 +42,9 @@ function useRowAuthor(authorId: string | null | undefined, channelId: string): R
   return useMemo(
     () =>
       exists && authorId && displayName !== undefined && username !== undefined && avatarColor !== undefined
-        ? { id: authorId, displayName, username, avatarColor, avatarUrl, avatarDecoration, removed: removed ?? false }
+        ? { id: authorId, displayName, username, avatarColor, avatarUrl, removed: removed ?? false }
         : undefined,
-    [exists, authorId, displayName, username, avatarColor, avatarUrl, avatarDecoration, removed],
+    [exists, authorId, displayName, username, avatarColor, avatarUrl, removed],
   );
 }
 import { feedback } from '../haptics';
@@ -230,7 +229,7 @@ export const MessageRow = memo(function MessageRow({
                 {!compact &&
                   (author && onAvatarPress ? (
                     <Pressable onPress={() => onAvatarPress(author.id)} hitSlop={4} accessibilityRole="button" accessibilityLabel={`${author.displayName} profili`}>
-                      <Avatar user={author} size={40} decoration={author.avatarDecoration} />
+                      <Avatar user={author} size={40} />
                     </Pressable>
                   ) : (
                     <Avatar user={author} size={40} />

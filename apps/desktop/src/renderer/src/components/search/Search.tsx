@@ -225,7 +225,7 @@ function ResultCard({ result, onOpen }: { result: SearchResult; onOpen: (r: Sear
       className="group/res flex w-full min-w-0 gap-3 rounded-lg border border-edge bg-bg-main p-3 text-left transition-colors hover:border-line hover:bg-msg-hover"
       onClick={() => onOpen(result)}
     >
-      <Avatar user={user} size={32} className="mt-0.5" decoration={user?.avatarDecoration} />
+      <Avatar user={user} size={32} className="mt-0.5" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2 leading-snug">
           <span

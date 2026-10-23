@@ -431,24 +431,37 @@ describe('profil afişi, tema ve efekt', () => {
     expect(files()).toEqual([]);
   });
 
-  it('tema renkleri ve efekt kaydedilir, geçersizleri reddedilir, null kaldırır', async () => {
+  it('tema renkleri kaydedilir, geçersizleri reddedilir, null kaldırır; kaldırılan kozmetik alanları yok sayılır', async () => {
     const { member } = await setup();
     const patch = (payload: unknown) =>
       app.inject({ method: 'PATCH', url: '/api/me', headers: auth(member.token), payload: payload as object });
 
-    const ok = await patch({ profileTheme: { primary: '#FF0000', accent: '#00ff00' }, profileEffect: 'kuzey' });
+    const ok = await patch({ profileTheme: { primary: '#FF0000', accent: '#00ff00' } });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json()).toMatchObject({ profileTheme: { primary: '#ff0000', accent: '#00ff00' }, animatedEffect: 'kuzey' });
+    expect(ok.json()).toMatchObject({ profileTheme: { primary: '#ff0000', accent: '#00ff00' } });
 
     expect((await patch({ profileTheme: { primary: 'red', accent: '#00ff00' } })).statusCode).toBe(400);
     expect((await patch({ profileTheme: { primary: '#ff0000' } })).statusCode).toBe(400);
-    expect((await patch({ profileEffect: 'fireworks' })).statusCode).toBe(400);
 
-    // Yalnızca verilen alan değişir
-    expect((await patch({ displayName: 'Üye' })).json()).toMatchObject({ animatedEffect: 'kuzey' });
-    const cleared = (await patch({ profileTheme: null, profileEffect: null })).json() as User;
+    // Eski istemciler (0.11.3 ve öncesi) kaldırılan kozmetik alanlarını gönderebilir: istek reddedilmez,
+    // aynı istekteki diğer alanlar kaydedilir, kozmetik alanları yanıtta hiç yoktur
+    const legacy = await patch({
+      displayName: 'Üye',
+      profileEffect: 'kuzey',
+      avatarDecoration: 'anim:olmayan-set',
+      nameplate: 'fireworks',
+      profileFrame: 'gold',
+    });
+    expect(legacy.statusCode).toBe(200);
+    const user = legacy.json() as Record<string, unknown>;
+    expect(user).toMatchObject({ displayName: 'Üye', profileTheme: { primary: '#ff0000', accent: '#00ff00' } });
+    for (const key of ['profileEffect', 'animatedEffect', 'avatarDecoration', 'profileFrame', 'nameplate']) {
+      expect(key in user).toBe(false);
+    }
+    expect((await patch({ nameplate: null, avatarDecoration: null })).statusCode).toBe(200);
+
+    const cleared = (await patch({ profileTheme: null })).json() as User;
     expect(cleared.profileTheme).toBeNull();
-    expect(cleared.animatedEffect).toBeNull();
   });
 
   it('avatar rengi: tema varsa ana renk, yoksa saklı renk (eski istemci avatarColor göndermeye devam eder)', async () => {

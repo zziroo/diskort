@@ -185,7 +185,7 @@ function MessageSummary({
   const files = message.attachments.length;
   return (
     <>
-      <Avatar user={author} size={36} decoration={author?.avatarDecoration} />
+      <Avatar user={author} size={36} />
       <View style={styles.body}>
         <View style={[styles.header, inset && styles.headerInset]}>
           <Text style={[styles.author, !author && styles.deleted, color ? { color } : null]} numberOfLines={1}>

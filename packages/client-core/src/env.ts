@@ -44,12 +44,6 @@ export interface ClientEnvironment {
   /** Uygulama sürümü (sunucu eski sürümleri reddeder) */
   version: string;
   storage: KeyValueStorage;
-  /**
-   * Gizli olmayan, büyüyebilen önbellek verisi (ör. kozmetik paketlerinin bildirimi) için depo. Telefonda
-   * `storage` güvenli depodur (değer başına birkaç KB); orada bunun verilmesi gerekir (AsyncStorage).
-   * Verilmezse `storage` kullanılır (masaüstü: localStorage).
-   */
-  cacheStorage?: KeyValueStorage;
   /** Bağlanılan sohbet sunucusunun adresi */
   serverUrl(): string;
   /** Kullanıcıya kısa bir hata göster (ör. mesaj gönderilemedi) */

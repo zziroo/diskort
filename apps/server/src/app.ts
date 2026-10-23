@@ -2,7 +2,6 @@ import path from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
-import { CLIENT_FEATURES_HEADER } from '@diskort/shared';
 import { ActivityTracker, createErrorLog } from './activity.js';
 import { ActivityIconStore } from './activityIcons.js';
 import { ApiStats } from './apiStats.js';
@@ -31,8 +30,6 @@ import { AuthService } from './auth.js';
 import { ClientVersionPolicy } from './clientVersion.js';
 import type { Config } from './config.js';
 import type { AppContext } from './context.js';
-import { knowsCosmeticPacks, withoutPackCosmetics } from './cosmeticCompat.js';
-import { CosmeticPackStore } from './cosmeticPacks.js';
 import { DashboardService } from './dashboard.js';
 import { Store } from './db.js';
 import { DmCallService } from './dmCalls.js';
@@ -64,7 +61,6 @@ import { registerIosDeviceRoutes } from './routes/iosDevices.js';
 import { IosDeviceService } from './iosDevices.js';
 import { registerAvatarRoutes } from './routes/avatars.js';
 import { registerIntroSoundRoutes } from './routes/introSounds.js';
-import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerDmRoutes } from './routes/dms.js';
 import { registerDownloadRoutes } from './routes/download.js';
 import { registerFriendRoutes } from './routes/friends.js';
@@ -98,10 +94,6 @@ export interface BuildOptions {
   introSoundTranscode?: IntroSoundTranscode;
   /** Etkinlik (oyun) ikonlarının klasörü (varsayılan: <DATA_DIR>/activity-icons) */
   activityIconsDir?: string;
-  /** Kozmetik paketlerinin klasörü (varsayılan: <DATA_DIR>/cosmetic-packs) */
-  cosmeticPacksDir?: string;
-  /** Testler: paket bildirimine (manifest.json) bakma aralığı (ms; varsayılan 2000) */
-  cosmeticPacksRecheckMs?: number;
   /** Testler için sahte GIPHY */
   gifFetch?: typeof fetch;
   /** Geri bildirim ekran görüntülerinin klasörü (varsayılan: <DATA_DIR>/feedback) */
@@ -173,12 +165,6 @@ export async function buildApp(
   const activityIcons = new ActivityIconStore(opts.activityIconsDir ?? path.join(config.dataDir, 'activity-icons'), {
     log: app.log,
   });
-  // Kozmetik paketleri: kullanıcıların seçebildiği setler yerleşik setler ∪ yayında olan paketlerdir
-  const cosmeticPacks = new CosmeticPackStore(opts.cosmeticPacksDir ?? path.join(config.dataDir, 'cosmetic-packs'), {
-    log: app.log,
-    ...(opts.cosmeticPacksRecheckMs !== undefined ? { recheckMs: opts.cosmeticPacksRecheckMs } : {}),
-  });
-  store.knownCosmeticSet = (id) => cosmeticPacks.knows(id);
   const gateway = new Gateway(
     store,
     auth,
@@ -338,7 +324,6 @@ export async function buildApp(
     avatars,
     introSounds,
     activityIcons,
-    cosmeticPacks,
     gifs,
     linkPreviews,
     embedMedia,
@@ -496,16 +481,6 @@ export async function buildApp(
   await app.register(cors, { origin: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] });
   await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
 
-  // Kozmetik paketlerini tanıdığını bildirmeyen eski istemcilere (0.9.1 ve öncesi) JSON yanıtlardaki
-  // kullanıcıların set seçimlerinde yalnızca yerleşik kimlikler gider (bkz. cosmeticCompat.ts; gateway'de
-  // aynısını Gateway.out yapar). Karar yalnızca yanıtın metnine bakar (ucuz bir ön tarama), o anki paket
-  // listesine değil: yanıt hazırlandıktan sonra paket yayından kalksa da tanınmayan kimlik sızmaz.
-  app.addHook('onSend', async (req, reply, payload) => {
-    if (typeof payload !== 'string' || knowsCosmeticPacks(req.headers[CLIENT_FEATURES_HEADER])) return payload;
-    const type = reply.getHeader('content-type');
-    return typeof type === 'string' && type.startsWith('application/json') ? withoutPackCosmetics(payload) : payload;
-  });
-
   // Sağlık ucu: ziroo.net projelerinin ortak adı /healthz (düz "ok"; Uptime Kuma buraya bakar).
   // /api/health eski ad, infra/restore-db.sh hâlâ onu bekler; ikisi de kalır.
   app.get('/healthz', async (_req, reply) => reply.type('text/plain').send('ok'));
@@ -527,7 +502,6 @@ export async function buildApp(
   registerAvatarRoutes(app, ctx);
   registerIntroSoundRoutes(app, ctx);
   registerActivityIconRoutes(app, ctx);
-  registerCosmeticRoutes(app, ctx);
   registerGifRoutes(app, ctx);
   registerUpdateRoutes(app, ctx);
   registerClientErrorRoutes(app, ctx);

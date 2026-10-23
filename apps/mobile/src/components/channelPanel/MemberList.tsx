@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState, type ReactElement } from 'react';
 import { Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { userNameplateId, type User } from '@diskort/shared';
+import type { User } from '@diskort/shared';
 import {
   channelMemberGroups,
   memberGroups,
@@ -17,7 +17,6 @@ import {
 } from '@diskort/client-core';
 import { PresenceSubline } from '../ActivityCard';
 import { Avatar } from '../Avatar';
-import { NAMEPLATE_TEXT_SHADOW, NameplateBackground, nameplateNameColor, useNameplateShown } from '../cosmetics/Cosmetics';
 import { MemberSheet } from '../MemberSheet';
 import { ListSkeleton } from '../Skeleton';
 import { EmptyState } from '../States';
@@ -124,7 +123,7 @@ export function MemberList({
         sections={sections}
         keyExtractor={(u) => u.id}
         stickySectionHeadersEnabled={false}
-        // Varsayılan 21 ekranlık pencere yerine 11: pencerenin dışında kurulan satır (isim plakası resmi) azalır
+        // Varsayılan 21 ekranlık pencere yerine 11: pencerenin dışında kurulan satır azalır
         windowSize={11}
         contentContainerStyle={styles.content}
         ListHeaderComponent={header}
@@ -172,10 +171,6 @@ const MemberRow = memo(function MemberRow({
   const custom = useCustomStatus(user.id);
   // Oynadığı oyun hesap düzeyidir: konuşmada da görünür (satırda yalnızca asıl oyun)
   const activity = useActivity(user.id);
-  // İsim plakası: satırın arkasında setin zemini (listede hep sabit resim: telefonda kozmetikler yalnızca açık
-  // profilde oynar); üstündeki yazılar açık renkli ve gölgeli (set bildirimde yoksa ya da Skia yoksa plaka
-  // gösterilmez, satır eskisi gibi kalır)
-  const plate = useNameplateShown(userNameplateId(user));
   return (
     <View style={[styles.cardRow, first && styles.cardFirst, last && styles.cardLast]}>
       <Pressable
@@ -188,24 +183,13 @@ const MemberRow = memo(function MemberRow({
         accessibilityRole={onPress ? 'button' : 'text'}
         accessibilityLabel={`${user.displayName}${offline ? ', çevrimdışı' : ''}${inVoice ? ', sesli sohbette' : ''}`}
       >
-        {plate && <NameplateBackground set={plate} />}
         {!first && <View style={styles.divider} />}
         <View style={offline && styles.offline}>
-          <Avatar
-            user={user}
-            size={38}
-            status={status}
-            mobile={mobile}
-            surface={plate ? '#0a0a0a' : colors.side}
-            decoration={user.avatarDecoration}
-          />
+          <Avatar user={user} size={38} status={status} mobile={mobile} surface={colors.side} />
         </View>
         <View style={[{ flex: 1 }, offline && styles.offline]}>
           <View style={styles.nameRow}>
-            <Text
-              style={[styles.name, plate ? [{ color: nameplateNameColor(color) }, NAMEPLATE_TEXT_SHADOW] : color ? { color } : null]}
-              numberOfLines={1}
-            >
+            <Text style={[styles.name, color ? { color } : null]} numberOfLines={1}>
               {user.displayName}
             </Text>
             {/* Masaüstündeki gibi taç; Ionicons'ta taç yok */}
@@ -224,7 +208,7 @@ const MemberRow = memo(function MemberRow({
             custom={custom}
             activity={activity}
             inVoice={inVoice}
-            textStyle={[styles.sub, plate && styles.plateSub]}
+            textStyle={styles.sub}
           />
         </View>
       </Pressable>
@@ -233,7 +217,6 @@ const MemberRow = memo(function MemberRow({
 });
 
 const CARD_RADIUS = radius.lg - 4;
-const PLATE_SUB_COLOR = 'rgba(255,255,255,0.78)';
 
 const styles = createStyles(() => ({
   content: { paddingHorizontal: space.lg, paddingBottom: space.xxl, flexGrow: 1 },
@@ -261,7 +244,6 @@ const styles = createStyles(() => ({
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   name: { color: colors.text, fontSize: font.row, fontWeight: '600', flexShrink: 1 },
   sub: { color: colors.muted, fontSize: font.caption + 0.5, marginTop: 1 },
-  plateSub: { color: PLATE_SUB_COLOR, ...NAMEPLATE_TEXT_SHADOW },
   youTag: { backgroundColor: colors.brandSoft, borderRadius: radius.sm, paddingHorizontal: 5, paddingVertical: 1 },
   youText: { color: colors.brandText, fontSize: 9.5, fontWeight: '800' },
 }));

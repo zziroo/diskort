@@ -2,7 +2,6 @@
 @import './styles/motion.css';
 @import './styles/hover.css';
 @import './styles/controls.css';
-@import './styles/profile.css';
 
 /*
  * Renk belirteçleri. Temaların tam listesi ve değerleri src/shared/themes.ts'te: arayüz seçili temanın

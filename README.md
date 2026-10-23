@@ -211,7 +211,6 @@ Kod haritası: [docs/kod-haritasi.md](docs/kod-haritasi.md), önce onu oku.
 | [Direkt mesajlar](docs/direkt-mesajlar.md) | DM gizliliği ve veri modeli |
 | [Yönetim](docs/yonetim.md) | Yönetim paneli, komut satırı araçları, sunucuda tutulan kayıtlar |
 | [Geri bildirim](docs/geri-bildirim.md) | Geri bildirim akışı ve komut satırından yönetim |
-| [Kozmetik paketleri](docs/kozmetik-paketleri.md) | Hareketli profil süslerinin hazırlanması ve yayınlanması |
 | [iOS](docs/ios.md) | iPhone kurulumu, cihaz kaydı, imzalama |
 | [Kod imzalama](docs/kod-imzalama.md) | Windows ve macOS kod imzalama durumu |
 | [UDP hat testi](tools/udp-probe/README.md) | Sunucu ile kullanıcı arasındaki hattı ölçme |

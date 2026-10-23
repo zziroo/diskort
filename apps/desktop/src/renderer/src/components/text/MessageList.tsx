@@ -218,7 +218,7 @@ function DmIntro({ dm, name, selfId }: { dm: DmChannel; name: string; selfId: st
   const partner = useGuild((s) => dmPartner(dm, s.users, selfId));
   return (
     <div className="anim-fade-in mx-4 mt-4 mb-2">
-      <DmAvatar dm={dm} size={80} className="mb-3" decorated />
+      <DmAvatar dm={dm} size={80} className="mb-3" />
       <h2 className="text-[32px] leading-tight font-bold text-text-head">{name}</h2>
       {partner && <div className="mb-2 text-lg text-text-normal">@{partner.username}</div>}
       <p className="text-text-muted">
