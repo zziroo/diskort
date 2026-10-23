@@ -21,6 +21,8 @@ export interface LibraryGame {
   source: LibrarySource;
   /** Oyun değil (ortak kurulum dosyaları, araç, film müziği…): içinden çalışan hiçbir şey oyun sayılmaz */
   tool?: boolean;
+  /** Steam kaydından geldiyse uygulama kimliği (oyun sayfasındaki mağaza bağlantıları için) */
+  steamAppId?: string;
 }
 
 export interface GameLibraries {
@@ -190,6 +192,7 @@ async function steamGames(steamPath: string): Promise<LibraryGame[]> {
         dir: pathKey(join(apps, 'common', app.installDir)),
         name: app.name,
         source: 'steam',
+        steamAppId: app.appId,
         ...(isSteamTool(app) ? { tool: true } : {}),
       });
     }

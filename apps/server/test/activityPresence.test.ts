@@ -350,6 +350,23 @@ describe('etkinlik', () => {
     // Liste olmayan: undefined; boş liste: boş
     expect(parseActivityReports({ length: 0 }, () => true)).toBeUndefined();
     expect(parseActivityReports([], () => true)).toEqual([]);
+    // Steam kimliği: yalnızca rakam ve en çok 10 hane geçer; eski istemcinin göndermediği ya da geçersiz
+    // alan düşer (alan hiç konmaz: eski istemciler bilmediği alanı zaten yok sayar)
+    const parsed = parseActivityReports(
+      [
+        { type: 'game', name: 'A', icon: null, elapsedMs: 0, steamAppId: '620' },
+        { type: 'game', name: 'B', icon: null, elapsedMs: 0, steamAppId: 'abc' },
+        { type: 'game', name: 'C', icon: null, elapsedMs: 0, steamAppId: '12345678901' },
+        { type: 'game', name: 'D', icon: null, elapsedMs: 0 },
+      ],
+      () => true,
+      1000,
+    )!;
+    expect(parsed.map((a) => a.steamAppId)).toEqual(['620', undefined, undefined, undefined]);
+    expect(parseActivityReports([{ type: 'game', name: 'E', icon: null, elapsedMs: 0, steamAppId: 620 }], () => true)![0]!.steamAppId).toBeUndefined();
+    expect(Object.hasOwn(parsed[1]!, 'steamAppId')).toBe(false);
+    // Birleştirmede kimliği olan oturumunki korunur
+    expect(combineActivities([[at('A', 1000)], [{ ...at('A', 31_000), steamAppId: '620' }]])).toEqual([{ ...at('A', 1000), steamAppId: '620' }]);
   });
 
   it('görünmez kullanıcının etkinliği sızmaz; görünür olunca duyurulur', async () => {

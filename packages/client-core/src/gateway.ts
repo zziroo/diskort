@@ -109,7 +109,15 @@ class GatewayClient {
   setActivities(reports: readonly ActivityReport[]): void {
     const now = Date.now();
     const next = reports
-      .map((r): LocalActivity => ({ type: r.type, name: r.name, icon: r.icon, startedAt: now - Math.max(0, r.elapsedMs) }))
+      .map(
+        (r): LocalActivity => ({
+          type: r.type,
+          name: r.name,
+          icon: r.icon,
+          steamAppId: r.steamAppId ?? null,
+          startedAt: now - Math.max(0, r.elapsedMs),
+        }),
+      )
       .sort((a, b) => b.startedAt - a.startedAt)
       .slice(0, ACTIVITY_MAX_COUNT);
     const prev = this.activities;
@@ -121,6 +129,7 @@ class GatewayClient {
           a.type === b.type &&
           a.name === b.name &&
           a.icon === b.icon &&
+          (a.steamAppId ?? null) === (b.steamAppId ?? null) &&
           Math.abs(a.startedAt - b.startedAt) <= ACTIVITY_START_TOLERANCE_MS
         );
       });
@@ -155,6 +164,7 @@ class GatewayClient {
         name: a.name,
         icon: a.icon,
         elapsedMs: Math.min(ACTIVITY_ELAPSED_MAX_MS, Math.max(0, now - a.startedAt)),
+        ...(a.steamAppId ? { steamAppId: a.steamAppId } : {}),
       }),
     );
     this.send({ t: 'ACTIVITY_SET', d: { activities } });

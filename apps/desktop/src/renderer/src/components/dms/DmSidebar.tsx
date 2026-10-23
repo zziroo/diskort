@@ -140,7 +140,7 @@ const DmRow = memo(function DmRow({ dm, selected }: { dm: DmChannel; selected: b
           {dm.group ? (
             <span className="block truncate text-xs text-text-muted">{dm.participantIds.length} üye</span>
           ) : (
-            <PresenceSubline userId={reachable ? partnerId : null} className="text-xs text-text-muted" />
+            <PresenceSubline userId={reachable ? partnerId : null} interactive={false} className="text-xs text-text-muted" />
           )}
         </span>
         {count > 0 && !selected ? (

@@ -120,6 +120,8 @@ export interface ActivityGame {
   startedAt: number;
   /** İkonun anahtarı (PNG'nin SHA-256'sı); ikon yoksa ya da henüz çıkarılmadıysa null */
   icon: string | null;
+  /** Steam kütüphane kaydından tanındıysa uygulama kimliği; yoksa null */
+  steamAppId: string | null;
 }
 
 export interface ActivityState {

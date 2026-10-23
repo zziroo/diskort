@@ -131,7 +131,7 @@ describe('Epic manifesti', () => {
 
 const libraries: GameLibraries = {
   games: [
-    { dir: pathKey('D:\\SteamLibrary\\steamapps\\common\\Portal 2'), name: 'Portal 2', source: 'steam' },
+    { dir: pathKey('D:\\SteamLibrary\\steamapps\\common\\Portal 2'), name: 'Portal 2', source: 'steam', steamAppId: '620' },
     { dir: pathKey('D:\\SteamLibrary\\steamapps\\common\\ELDEN RING'), name: 'ELDEN RING', source: 'steam' },
     { dir: pathKey('C:\\Program Files (x86)\\Steam\\steamapps\\common\\Steamworks Shared'), name: 'Steamworks Common Redistributables', source: 'steam', tool: true },
     { dir: pathKey('D:\\SteamLibrary\\steamapps\\common\\wallpaper_engine'), name: 'Wallpaper Engine', source: 'steam', tool: true },
@@ -167,6 +167,10 @@ describe('oyun sınıflandırma', () => {
     expect(nameOf('d:/steamlibrary/steamapps/common/elden ring/Game/eldenring.exe')).toBe('ELDEN RING');
     const game = classifyProcess(proc('D:\\SteamLibrary\\steamapps\\common\\Portal 2\\portal2.exe'), ctx());
     expect(game?.source).toBe('steam');
+    // Steam kimliği kayıttan gelir (oyun sayfasındaki mağaza bağlantıları için); kaydı olmayanlarda null
+    expect(game?.steamAppId).toBe('620');
+    expect(classifyProcess(proc('D:\\SteamLibrary\\steamapps\\common\\ELDEN RING\\Game\\eldenring.exe'), ctx())?.steamAppId).toBeNull();
+    expect(classifyProcess(proc('C:\\Program Files\\Epic Games\\FallGuys\\FallGuys.exe'), ctx())?.steamAppId).toBeNull();
   });
 
   it('Epic: manifestteki klasör; manifest yoksa "Epic Games" klasörü', () => {

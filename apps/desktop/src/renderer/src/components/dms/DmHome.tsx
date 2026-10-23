@@ -60,6 +60,7 @@ export function DmHome() {
                   {/* Oynuyorsa oyun simgesi; özel durum, yoksa oynadığı oyun, o da yoksa kullanıcı adı */}
                   <PresenceSubline
                     userId={u.id}
+                    interactive={false}
                     className="text-xs text-text-muted"
                     fallback={<span className="block truncate text-xs text-text-muted">@{u.username}</span>}
                   />

@@ -28,6 +28,7 @@ import {
   themedCardStyle,
 } from '../profile/ProfileLook';
 import { ActivityCards } from '../status/ActivityCard';
+import { isInsideActivityPopover } from '../status/ActivityPopover';
 import { FriendButton } from '../friends/FriendButton';
 
 const MARGIN = 8;
@@ -123,7 +124,8 @@ export function ProfilePopover() {
   useEffect(() => {
     if (!target) return;
     const onDown = (e: MouseEvent): void => {
-      if (!ref.current?.contains(e.target as Node)) closeProfile();
+      // Karttaki oyuna tıklayınca açılan oyun sayfası profilin dışındadır; oradaki tıklama profili kapatmaz
+      if (!ref.current?.contains(e.target as Node) && !isInsideActivityPopover(e.target)) closeProfile();
     };
     // Açan tıklamanın kendisi kartı hemen kapatmasın
     const timer = window.setTimeout(() => window.addEventListener('mousedown', onDown));

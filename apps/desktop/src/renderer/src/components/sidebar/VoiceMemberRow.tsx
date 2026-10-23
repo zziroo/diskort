@@ -22,16 +22,38 @@ import { useVoice } from '../../stores/voice';
 import { Avatar } from '../ui/Avatar';
 import { openProfile, type ProfileAnchor } from '../members/ProfilePopover';
 import { ActivityIcon } from '../status/ActivityCard';
+import { openActivityPopover } from '../status/ActivityPopover';
 import { activityCardHandlers } from './ActivityHoverCard';
 import { streamCardHandlers, useLivePreviewImage } from './StreamPreviewCard';
 
 /**
- * Üye satırının sağ ucundaki sabit yuva: yayın yapıyorsa yayının küçük resmi, yoksa oyun ikonu.
- * Her satırda aynı yerde durur; soldaki mikrofon/kulaklık ikonları değişse de dikey hiza bozulmaz.
+ * Üye satırının sağ ucundaki sabit yuva: yayın yapıyorsa yayının küçük resmi, yoksa oyun ikonu (tıklayınca
+ * oyun sayfası; satırın profil tıklaması ve sürüklemesi çalışmaz). Her satırda aynı yerde durur; soldaki
+ * mikrofon/kulaklık ikonları değişse de dikey hiza bozulmaz.
  */
 function TrailingSlot({ state, activity }: { state: VoiceState; activity: ReturnType<typeof useActivity> }) {
   if (state.streaming) return <StreamThumb state={state} />;
-  if (activity) return <ActivityIcon activity={activity} size={18} />;
+  if (activity) {
+    return (
+      <button
+        type="button"
+        className="press-icon flex shrink-0 rounded"
+        aria-label={`${activity.name} (oyun sayfası)`}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          openActivityPopover(state.userId, activity, e.currentTarget.getBoundingClientRect());
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+        // Enter/boşluk satırın profil kısayolunu tetiklemesin; öteki tuşlar (Esc katmanı) pencereye ulaşsın
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+        }}
+      >
+        <ActivityIcon activity={activity} size={18} />
+      </button>
+    );
+  }
   return null;
 }
 
