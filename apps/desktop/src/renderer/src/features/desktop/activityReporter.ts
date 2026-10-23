@@ -24,6 +24,7 @@ export function reportActivities(games: readonly ActivityGame[], readIcon: (key:
         name: game.name,
         icon: game.icon && ready.has(game.icon) ? game.icon : null,
         elapsedMs: Math.max(0, Date.now() - game.startedAt),
+        steamAppId: game.steamAppId,
       })),
     );
 

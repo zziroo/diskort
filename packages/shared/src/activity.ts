@@ -14,6 +14,12 @@ export interface Activity {
   icon: string | null;
   /** Başladığı an (ms, sunucu saati) */
   startedAt: number;
+  /**
+   * Steam uygulama kimliği (yalnızca rakam, en çok STEAM_APP_ID_MAX_LENGTH hane): oyun Steam kütüphane
+   * kaydından tanındıysa; Epic, Battle.net ve elle eklenen oyunlarda ya da eski istemciden gelen bildirimde
+   * yok/null. Oyun sayfasındaki mağaza bağlantıları bununla kurulur.
+   */
+  steamAppId?: string | null;
 }
 
 /**
@@ -25,9 +31,16 @@ export interface ActivityReport {
   name: string;
   icon: string | null;
   elapsedMs: number;
+  /** Bkz. Activity.steamAppId; eski istemci göndermez */
+  steamAppId?: string | null;
 }
 
 export const ACTIVITY_NAME_MAX_LENGTH = 64;
+/** Steam uygulama kimliği: yalnızca rakam, en çok bu kadar hane */
+export const STEAM_APP_ID_MAX_LENGTH = 10;
+export const STEAM_APP_ID_PATTERN = /^[0-9]{1,10}$/;
+/** Geçerli Steam uygulama kimliği mi (sunucu ve istemci aynı kuralı kullanır) */
+export const isSteamAppId = (value: unknown): value is string => typeof value === 'string' && STEAM_APP_ID_PATTERN.test(value);
 /** Bildirilebilecek en uzun geçmiş süre (saat hatası ya da kötü niyetli değerlere karşı) */
 export const ACTIVITY_ELAPSED_MAX_MS = 7 * 24 * 60 * 60_000;
 
@@ -52,7 +65,13 @@ export const isKnownActivity = (a: Activity): boolean => Object.hasOwn(ACTIVITY_
 
 export const sameActivity = (a: Activity | null | undefined, b: Activity | null | undefined): boolean =>
   (a ?? null) === (b ?? null) ||
-  (!!a && !!b && a.type === b.type && a.name === b.name && a.icon === b.icon && a.startedAt === b.startedAt);
+  (!!a &&
+    !!b &&
+    a.type === b.type &&
+    a.name === b.name &&
+    a.icon === b.icon &&
+    a.startedAt === b.startedAt &&
+    (a.steamAppId ?? null) === (b.steamAppId ?? null));
 
 export const sameActivities = (a: readonly Activity[] | undefined, b: readonly Activity[] | undefined): boolean => {
   const x = a ?? [];

@@ -29,6 +29,8 @@ export interface DetectedGame {
   name: string;
   startedAt: number;
   source: GameSource;
+  /** Steam kütüphane kaydından tanındıysa uygulama kimliği; öteki kaynaklarda null */
+  steamAppId: string | null;
 }
 
 export interface ClassifyContext {
@@ -189,12 +191,13 @@ export function classifyProcess(proc: ScannedProcess, ctx: ClassifyContext): Det
   if (!proc.path || isSelf(proc, ctx.selfPath)) return null;
   const key = pathKey(proc.path);
   if (ctx.hidden.some((path) => pathKey(path) === key)) return null;
-  const found = (name: string, source: GameSource): DetectedGame => ({
+  const found = (name: string, source: GameSource, steamAppId: string | null = null): DetectedGame => ({
     pid: proc.pid,
     path: proc.path,
     name,
     startedAt: proc.startedAt,
     source,
+    steamAppId,
   });
 
   const manual = ctx.manual.find((game) => pathKey(game.path) === key);
@@ -202,7 +205,7 @@ export function classifyProcess(proc: ScannedProcess, ctx: ClassifyContext): Det
 
   if (isExcludedExe(proc.path)) return null;
   const library = libraryGameOf(key, ctx.libraries);
-  if (library) return library.tool ? null : found(resolveName(proc, library.name), library.source);
+  if (library) return library.tool ? null : found(resolveName(proc, library.name), library.source, library.steamAppId ?? null);
   const folder = folderGameOf(proc.path);
   return folder ? found(resolveName(proc, null, folder), 'folder') : null;
 }

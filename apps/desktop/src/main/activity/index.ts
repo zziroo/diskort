@@ -263,7 +263,14 @@ export class ActivityMonitor {
       found.map(async (game) => {
         const same = previous.find((g) => g.pid === game.pid && pathKey(g.path) === pathKey(game.path));
         const icon = same?.icon ?? (await withTimeout(this.icons.keyFor(game.path), ICON_WAIT_MS));
-        return { pid: game.pid, path: game.path, name: game.name, startedAt: same?.startedAt ?? game.startedAt, icon };
+        return {
+          pid: game.pid,
+          path: game.path,
+          name: game.name,
+          startedAt: same?.startedAt ?? game.startedAt,
+          icon,
+          steamAppId: game.steamAppId,
+        };
       }),
     );
     if (!this.prefs.enabled || !this.active) return; // beklerken kapatıldı
@@ -271,7 +278,14 @@ export class ActivityMonitor {
       next.length === previous.length &&
       next.every((g, i) => {
         const p = previous[i]!;
-        return g.pid === p.pid && g.path === p.path && g.name === p.name && g.icon === p.icon && g.startedAt === p.startedAt;
+        return (
+          g.pid === p.pid &&
+          g.path === p.path &&
+          g.name === p.name &&
+          g.icon === p.icon &&
+          g.startedAt === p.startedAt &&
+          g.steamAppId === p.steamAppId
+        );
       });
     if (unchanged) return;
     this.games = next;

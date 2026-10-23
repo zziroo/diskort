@@ -115,6 +115,7 @@ export { voiceTrace, voiceTraceUploader, VoiceTraceUploader } from './voiceTrace
 export { serverClock, ServerClock } from './serverClock';
 export { gateway } from './gateway';
 export { ensureActivityIcon, setActivities } from './activity';
+export { activityLinks, ACTIVITY_LINK_GROUP_LABELS, type ActivityLink, type ActivityLinkGroup } from './activityLinks';
 export {
   activityIconUrl,
   displayStatusOf,

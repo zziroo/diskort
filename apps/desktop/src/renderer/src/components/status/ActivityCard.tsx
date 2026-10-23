@@ -14,6 +14,7 @@ import {
 import { cn } from '../../lib/utils';
 import { useNow } from '../sidebar/ElapsedTime';
 import { CustomStatusLine } from './CustomStatusLine';
+import { openActivityPopover } from './ActivityPopover';
 
 // Etkinlik (oynanan oyun) gösterimi: adın altındaki satır (durum simgeleri ve yazı) ve profil kartındaki
 // "Oynuyor" kartı. Türe özgü olan yalnızca simgedir; başlık ACTIVITY_TYPE_LABELS'tan gelir (ileride müzik de
@@ -29,20 +30,25 @@ const glyphOf = (activity: Pick<Activity, 'type'>): LucideIcon => GLYPHS[activit
 /**
  * Adın altındaki satır (üye listesi, DM'ler): önce küçük durum simgeleri (oynuyorsa oyun, `voice` verildiyse
  * ses), sonra tek bir yazı: özel durum, yoksa oyunun adı, o da yoksa "Sesli sohbette". Hiçbiri yoksa
- * `fallback` (ör. kullanıcı adı). Simgelerin yalnızca ipucu vardır (oyunun adı, ses kanalı): tıklama satıra
- * geçer. Satırda sayaç yoktur. `userId` null ise yalnızca `fallback`.
+ * `fallback` (ör. kullanıcı adı). Oyun simgesine tıklamak oyun sayfasını açar (satırın tıklaması çalışmaz);
+ * ses simgesinin yalnızca ipucu vardır. Satır zaten bir `<button>` ise (DM listesi, DM ana sayfası) düğme
+ * içinde düğme olmasın diye `interactive={false}` verilir: simge yalnızca ipucu taşır. Satırda sayaç yoktur.
+ * `userId` null ise yalnızca `fallback`.
  */
 export function PresenceSubline({
   userId,
   voice,
   className,
   fallback = null,
+  interactive = true,
 }: {
   userId: string | null | undefined;
   /** Kişi sesteyse ses simgesinin ipucu ("Sesli sohbette: Kanal"); seste değilse ya da DM'de verilmez */
   voice?: string | null;
   className?: string;
   fallback?: ReactNode;
+  /** false: oyun simgesi tıklanamaz (satırın kendisi bir düğmeyse) */
+  interactive?: boolean;
 }) {
   const custom = useCustomStatus(userId);
   // Satırda yalnızca asıl (en son başlanan) oyun
@@ -53,9 +59,30 @@ export function PresenceSubline({
   return (
     <div className={cn('flex min-w-0 items-center gap-1', className)}>
       {showGame && activity && Glyph && (
-        <span className="flex shrink-0" data-tooltip={activityLabel(activity)} data-tooltip-side="bottom">
-          <Glyph size={13} aria-hidden />
-        </span>
+        interactive && userId ? (
+          <button
+            type="button"
+            className="press-icon flex shrink-0 rounded-sm hover:text-text-head"
+            data-tooltip={activityLabel(activity)}
+            data-tooltip-side="bottom"
+            aria-label={`${activityLabel(activity)} (oyun sayfası)`}
+            onClick={(e) => {
+              e.stopPropagation();
+              openActivityPopover(userId, activity, e.currentTarget.getBoundingClientRect());
+            }}
+            // Enter/boşluk satırın profil kısayolunu tetiklemesin; öteki tuşlar (Esc katmanı) pencereye ulaşsın
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <Glyph size={13} aria-hidden />
+          </button>
+        ) : (
+          <span className="flex shrink-0" data-tooltip={activityLabel(activity)} data-tooltip-side="bottom">
+            <Glyph size={13} aria-hidden />
+          </span>
+        )
       )}
       {showVoice && (
         <span className="flex shrink-0" data-tooltip={voice ?? undefined} data-tooltip-side="bottom">
@@ -101,24 +128,27 @@ export function ActivityIcon({ activity, size }: { activity: Activity; size: num
 
 /**
  * "Oynuyor" kartı: başlık, ikon, ad ve canlı geçen süre. Zemini yoktur: konduğu yer verir (profil
- * kartında iç kutu, ses kanalındaki üyenin üstünde açılan küçük kart). `compact`: küçük ikon.
+ * kartında iç kutu, ses kanalındaki üyenin üstünde açılan küçük kart, oyun sayfası). `compact`: küçük ikon.
+ * `onOpen` verilirse kart bir düğmedir: tıklayınca (ya da Enter) oyun sayfası açılır.
  */
 export function ActivityCard({
   activity,
   compact = false,
   more = 0,
   className,
+  onOpen,
 }: {
   activity: Activity;
   compact?: boolean;
   /** Gösterilmeyen öbür etkinliklerin sayısı (başlığın yanında "+2") */
   more?: number;
   className?: string;
+  onOpen?: (el: HTMLElement) => void;
 }) {
   const now = useNow();
   const Glyph = glyphOf(activity);
-  return (
-    <div className={className} aria-label={activityLabel(activity)}>
+  const body = (
+    <>
       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] leading-none font-semibold text-text-muted">
         <span>{activityTitle(activity)}</span>
         {more > 0 && <span aria-label={`${more} etkinlik daha`}>+{more}</span>}
@@ -135,6 +165,20 @@ export function ActivityCard({
           </div>
         </div>
       </div>
+    </>
+  );
+  return onOpen ? (
+    <button
+      type="button"
+      className={cn('press w-full text-left transition-colors hover:bg-bg-hover', className)}
+      aria-label={`${activityLabel(activity)} (oyun sayfası)`}
+      onClick={(e) => onOpen(e.currentTarget)}
+    >
+      {body}
+    </button>
+  ) : (
+    <div className={className} aria-label={activityLabel(activity)}>
+      {body}
     </div>
   );
 }
@@ -146,8 +190,9 @@ export function useKnownActivities(userId: string | null | undefined): Activity[
 }
 
 /**
- * Profil kartındaki etkinlikler: her biri ayrı bir "Oynuyor" kartı, alt alta (asıl olan en üstte). Pencere
- * kısaysa kartlar kendi içinde kayar (profil kartı pencereden taşmasın). Etkinlik yoksa hiçbir şey çizmez.
+ * Profil kartındaki etkinlikler: her biri ayrı bir "Oynuyor" kartı, alt alta (asıl olan en üstte); tıklayınca
+ * oyun sayfası açılır. Pencere kısaysa kartlar kendi içinde kayar (profil kartı pencereden taşmasın).
+ * Etkinlik yoksa hiçbir şey çizmez.
  */
 export function ActivityCards({ userId, className }: { userId: string | null | undefined; className?: string }) {
   const activities = useKnownActivities(userId);
@@ -161,6 +206,7 @@ export function ActivityCards({ userId, className }: { userId: string | null | u
           // Asıl etkinlik büyük ikonla, öbürleri küçük
           compact={i > 0}
           className="shrink-0 rounded-lg bg-bg-side px-3 py-2.5"
+          onOpen={(el) => userId && openActivityPopover(userId, activity, el.getBoundingClientRect())}
         />
       ))}
     </div>

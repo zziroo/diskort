@@ -28,6 +28,7 @@ import {
 } from '../profile/ProfileLook';
 import { StatusIcon } from '../ui/StatusIcon';
 import { ActivityCards } from './ActivityCard';
+import { isInsideActivityPopover } from './ActivityPopover';
 
 const MARGIN = 8;
 
@@ -68,7 +69,8 @@ export function SelfProfilePopout() {
     if (!anchor) return;
     setStatusMenu(false);
     const onDown = (e: MouseEvent): void => {
-      if (!ref.current?.contains(e.target as Node)) closeSelfProfile();
+      // Oyun sayfası (ActivityPopover) kartın dışındadır; oradaki tıklama kartı kapatmaz
+      if (!ref.current?.contains(e.target as Node) && !isInsideActivityPopover(e.target)) closeSelfProfile();
     };
     const timer = window.setTimeout(() => window.addEventListener('mousedown', onDown));
     window.addEventListener('blur', closeSelfProfile);

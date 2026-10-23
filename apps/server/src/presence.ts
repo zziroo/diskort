@@ -3,6 +3,7 @@ import {
   ACTIVITY_ICON_KEY_PATTERN,
   ACTIVITY_MAX_COUNT,
   ACTIVITY_NAME_MAX_LENGTH,
+  isSteamAppId,
   type Activity,
   type CustomStatus,
   type SelfStatus,
@@ -120,7 +121,7 @@ const cleanActivityName = (raw: string): string => {
 /** Tek bir bildirimi (güvenilmez) doğrular; geçersizse null */
 function parseActivityReport(raw: unknown, iconExists: (key: string) => boolean, now: number): Activity | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const { type, name, icon, elapsedMs } = raw as Record<string, unknown>;
+  const { type, name, icon, elapsedMs, steamAppId } = raw as Record<string, unknown>;
   if (type !== 'game') return null;
   if (typeof name !== 'string' || name.length > ACTIVITY_NAME_MAX_LENGTH * 4) return null;
   const clean = cleanActivityName(name);
@@ -128,7 +129,14 @@ function parseActivityReport(raw: unknown, iconExists: (key: string) => boolean,
   if (typeof elapsedMs !== 'number' || !Number.isFinite(elapsedMs)) return null;
   const elapsed = Math.round(Math.min(ACTIVITY_ELAPSED_MAX_MS, Math.max(0, elapsedMs)));
   const known = typeof icon === 'string' && ACTIVITY_ICON_KEY_PATTERN.test(icon) && iconExists(icon);
-  return { type, name: clean, icon: known ? icon : null, startedAt: now - elapsed };
+  // Steam kimliği isteğe bağlıdır: eski istemci göndermez, geçersiz değer (rakam dışı, uzun) atılır
+  return {
+    type,
+    name: clean,
+    icon: known ? icon : null,
+    startedAt: now - elapsed,
+    ...(isSteamAppId(steamAppId) ? { steamAppId } : {}),
+  };
 }
 
 /**
@@ -194,7 +202,8 @@ export function combineActivities(lists: Iterable<readonly Activity[]>): Activit
         ? Math.min(other.startedAt, activity.startedAt)
         : Math.max(other.startedAt, activity.startedAt);
       const kept = startedAt === other.startedAt ? other : activity;
-      result.set(key, { ...kept, icon: kept.icon ?? other.icon ?? activity.icon });
+      const steamAppId = kept.steamAppId ?? other.steamAppId ?? activity.steamAppId;
+      result.set(key, { ...kept, icon: kept.icon ?? other.icon ?? activity.icon, ...(steamAppId ? { steamAppId } : {}) });
     }
   }
   return [...result.values()].sort(byLatest).slice(0, ACTIVITY_MAX_COUNT);
