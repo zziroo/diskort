@@ -281,12 +281,15 @@
 }
 
 /* Açılıp kapanan satır: dış öğe .collapse-*, iç öğe .collapse-inner (yalnızca dikeyde kırpar,
-   böylece yana kayan içerik ve gölgeler kesilmez) */
+   böylece yana kayan içerik ve gölgeler kesilmez). Sütun minmax(0, 1fr): varsayılan "auto" sütun
+   içeriğin en dar genişliğinden küçülemez; uzun ad + YAYINDA + küçük resim sığmayınca satır
+   kısalacağına sağa taşıyordu (sağ yuva hizası bozuluyordu). */
 .collapse-in,
 .collapse-out,
 .collapse-static {
   display: grid;
   grid-template-rows: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 .collapse-static > * {
   min-height: 0;
