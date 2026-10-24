@@ -17,6 +17,7 @@ import { DmSidebar } from './dms/DmSidebar';
 import { FriendsView } from './friends/FriendsView';
 import { GuildRail } from './GuildRail';
 import { LeftColumn } from './sidebar/LeftColumn';
+import { StreamPip } from './stage/StreamPip';
 import { VoiceStage } from './stage/VoiceStage';
 import { Welcome } from './stage/Welcome';
 import { AddGuildModal } from './modals/AddGuildModal';
@@ -145,7 +146,7 @@ export function MainLayout() {
           </div>
         )}
         {/* Kanal/görünüm değişince yeni içerik hafifçe belirir */}
-        <div className="min-h-0 flex-1 bg-bg-main">
+        <div className="relative min-h-0 flex-1 bg-bg-main">
           {view.kind === 'voice' ? (
             <div key="voice" className="anim-fade-in h-full">
               <VoiceStage />
@@ -163,6 +164,8 @@ export function MainLayout() {
               <Welcome />
             </div>
           )}
+          {/* Sahne dışındayken izlenen yayın köşede yüzen küçük pencerede sürer */}
+          <StreamPip />
         </div>
       </main>
 

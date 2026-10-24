@@ -77,6 +77,8 @@ export function VoiceStage({
   const sharing = useVoice((s) => s.sharing);
   const selfId = useSession((s) => s.user?.id);
   const call = useDmCall(dm ? channelId : null);
+  // Sahne ekrandayken izlenen yayının yüzen penceresi (StreamPip) gizlenir
+  useEffect(() => useUi.getState().registerStage(), []);
 
   const members = useMemo(() => membersOf(voiceStates, channelId), [voiceStates, channelId]);
   // DM aramasında olmayan katılımcılar (çalınıyor ya da "Tekrar çal")

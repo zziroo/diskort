@@ -23,10 +23,15 @@ interface Props {
   large?: boolean;
   /** Tek tık (çift tıkla çakışmasın diye kısa gecikmeyle çağrılır; yakınlaşmışken çağrılmaz) */
   onClick?: () => void;
+  /**
+   * false: ad şeridi ve izleyenler çizilmez (yüzen pencere StreamPip kendi başlık ve alt şeridini çizer).
+   * Varsayılan true.
+   */
+  overlay?: boolean;
 }
 
 /** Bir kullanıcının ekran yayınını video öğesine bağlar. */
-export function StreamView({ userId, large, onClick }: Props) {
+export function StreamView({ userId, large, onClick, overlay = true }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const tracksVersion = useVoice((s) => s.tracksVersion);
@@ -211,15 +216,19 @@ export function StreamView({ userId, large, onClick }: Props) {
         !hasVideo && <div className="absolute animate-pulse text-sm text-text-muted">Yayın yükleniyor…</div>
       )}
 
-      <div className="pointer-events-none absolute top-0 right-0 left-0 flex items-center gap-2 bg-gradient-to-b from-black/60 to-transparent p-3 pr-32 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 group-data-[idle]/stage:opacity-0!">
-        <LiveBadge />
-        <span className="truncate text-sm font-semibold text-white">
-          {isSelf ? 'Senin yayının' : user?.displayName}
-        </span>
-      </div>
+      {overlay && (
+        <>
+          <div className="pointer-events-none absolute top-0 right-0 left-0 flex items-center gap-2 bg-gradient-to-b from-black/60 to-transparent p-3 pr-32 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 group-data-[idle]/stage:opacity-0!">
+            <LiveBadge />
+            <span className="truncate text-sm font-semibold text-white">
+              {isSelf ? 'Senin yayının' : user?.displayName}
+            </span>
+          </div>
 
-      {/* İzleyenler her zaman görünür (yayıncı için asıl bilgi) */}
-      <StreamViewers userId={userId} className="absolute top-2.5 right-2.5" />
+          {/* İzleyenler her zaman görünür (yayıncı için asıl bilgi) */}
+          <StreamViewers userId={userId} className="absolute top-2.5 right-2.5" />
+        </>
+      )}
 
       {/* Ses sahnesinde fare durunca gizlenir (VoiceStage: useStageChrome) */}
       <div

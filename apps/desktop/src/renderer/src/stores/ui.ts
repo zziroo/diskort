@@ -115,6 +115,13 @@ interface UiStore {
   /** Direkt mesajlar bölümüne dönülünce açılacak konuşma */
   lastDmId: string | null;
   setView: (view: View) => void;
+  /**
+   * Ekranda kaç ses sahnesi (VoiceStage) var: ses görünümü ya da DM aramasının paneli. 0 iken izlenen
+   * yayın yüzen küçük pencerede (StreamPip) gösterilir. Sahne bunu `registerStage` ile kaydeder.
+   */
+  stageMounts: number;
+  /** Sahne çizildiğini kaydeder; dönen işlev kaydı siler (useEffect temizliği) */
+  registerStage: () => () => void;
   modal: Modal;
   contextMenu: ContextMenuState | null;
   emojiPicker: EmojiPickerState | null;
@@ -215,6 +222,11 @@ export const useUi = create<UiStore>()((set, get) => ({
     } else {
       set({ view });
     }
+  },
+  stageMounts: 0,
+  registerStage: () => {
+    set((s) => ({ stageMounts: s.stageMounts + 1 }));
+    return () => set((s) => ({ stageMounts: Math.max(0, s.stageMounts - 1) }));
   },
   modal: null,
   contextMenu: null,

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { HotkeyConfig } from '../../../shared/bridge';
 import { DEFAULT_THEME, isThemeId, type ThemeId } from '../../../shared/themes';
+import { DEFAULT_PIP_CORNER, isPipCorner, PIP_DEFAULT_WIDTH, PIP_MIN_WIDTH, type PipCorner } from '../components/stage/pip';
 
 export type InputMode = 'vad' | 'ptt';
 /** 'dpdfnet': DPDFNet-2 48 kHz (yapay zekâ); 'standard': tarayıcının yerleşik engellemesi */
@@ -70,6 +71,10 @@ export interface Settings {
   theme: ThemeId;
   /** Kanal/konuşma listesinin genişliği (px); sohbetle arasındaki çizgi sürüklenerek değişir */
   sidebarWidth: number;
+  /** İzlenen yayının yüzen küçük penceresinin yapıştığı köşe (ses sahnesi dışındayken; bkz. StreamPip) */
+  streamPipCorner: PipCorner;
+  /** O pencerenin genişliği (px, oran 16:9); kenarından sürüklenerek değişir, ekrana sığmazsa çizimde kırpılır */
+  streamPipWidth: number;
 
   selfMute: boolean;
   selfDeaf: boolean;
@@ -112,6 +117,8 @@ const defaults: Settings = {
   introSoundVolume: 1,
   theme: DEFAULT_THEME,
   sidebarWidth: SIDEBAR_WIDTH.default,
+  streamPipCorner: DEFAULT_PIP_CORNER,
+  streamPipWidth: PIP_DEFAULT_WIDTH,
   selfMute: false,
   selfDeaf: false,
 };
@@ -149,6 +156,10 @@ function sanitize(saved: Partial<Settings>): Partial<Settings> {
   if (s.sidebarWidth !== undefined) s.sidebarWidth = clampSidebarWidth(s.sidebarWidth);
   if (s.theme !== undefined && !isThemeId(s.theme)) s.theme = defaults.theme;
   if (s.screenCodec !== undefined && !SCREEN_CODEC_IDS.includes(s.screenCodec)) s.screenCodec = defaults.screenCodec;
+  if (s.streamPipCorner !== undefined && !isPipCorner(s.streamPipCorner)) s.streamPipCorner = defaults.streamPipCorner;
+  if (s.streamPipWidth !== undefined && !(Number.isFinite(s.streamPipWidth) && s.streamPipWidth >= PIP_MIN_WIDTH)) {
+    s.streamPipWidth = defaults.streamPipWidth;
+  }
   return s;
 }
 
