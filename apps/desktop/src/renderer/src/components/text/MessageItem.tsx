@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { memo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Pencil, Reply, SmilePlus, Trash2 } from 'lucide-react';
 import {
   isImageAttachment,
@@ -35,6 +35,7 @@ import {
   type MemberUser,
 } from '@diskort/client-core';
 import { renderMarkdown, type MarkdownContext } from '../../features/messages/markdown';
+import { MarkdownEditor, type MarkdownEditorHandle } from './MarkdownEditor';
 import { confirmDialog } from '../../lib/dialog';
 import { startDm } from '../../lib/dm';
 import { memberMenuItems } from '../../lib/memberMenu';
@@ -428,27 +429,12 @@ function EditBox({ message, md }: { message: LocalMessage; md: MarkdownContext }
   const isUsername = (name: string): boolean => md.usersByName[name] !== undefined;
   // @everyone ve "everyone"/"here" adlı roller gönderirkenki gibi düzenlemede de çevrilmez
   const guildId = useGuild((s) => s.channelGuild[message.channelId] ?? null);
-  const [value, setValue] = useState(() =>
+  const [initial] = useState(() =>
     md.roles ? decodeRoleMentions(message.content, md.roles, isUsername) : message.content,
   );
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = '0';
-    el.style.height = `${Math.min(el.scrollHeight, 400)}px`;
-  }, [value]);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
-  }, []);
-
+  const ref = useRef<MarkdownEditorHandle>(null);
   const save = (): void => {
-    const typed = value.trim();
+    const typed = (ref.current?.getText() ?? initial).trim();
     const content = md.roles && guildId ? encodeRoleMentions(typed, typableRoles(md.roles, guildId), isUsername) : typed;
     // Dosyası olmayan mesajın metni silinirse mesajın kendisi silinir (Discord gibi)
     if (!content && message.attachments.length === 0) {
@@ -464,7 +450,7 @@ function EditBox({ message, md }: { message: LocalMessage; md: MarkdownContext }
     if (content !== message.content) void editMessage(message, content);
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -478,13 +464,13 @@ function EditBox({ message, md }: { message: LocalMessage; md: MarkdownContext }
 
   return (
     <div className="anim-fade-in py-1">
-      <textarea
+      <MarkdownEditor
         ref={ref}
-        value={value}
-        rows={1}
-        onChange={(e) => setValue(e.target.value)}
+        initialValue={initial}
+        autoFocus
+        maxLength={MESSAGE_MAX_LENGTH * 2}
         onKeyDown={onKeyDown}
-        className="block w-full resize-none rounded-lg border border-transparent bg-bg-hover px-4 py-2.5 leading-[1.375rem] text-text-normal outline-none transition-colors focus:border-brand/50"
+        className="max-h-[400px] overflow-y-auto rounded-lg border border-transparent bg-bg-hover px-4 py-2.5 leading-[1.375rem] text-text-normal transition-colors focus:border-brand/50"
       />
       <div className="mt-1 text-xs text-text-muted">
         iptal için <span className="text-link">esc</span> • kaydetmek için{' '}

@@ -404,11 +404,14 @@ export {
 export {
   broadcastMention,
   DELETED_ROLE_LABEL,
+  markdownSegments,
   parseInline,
   parseMarkdown,
   plainText,
   type MdBlock,
   type MdInline,
+  type MdMark,
+  type MdSegment,
   type MdStyle,
 } from './markdown';
 export {

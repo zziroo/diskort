@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { broadcastMention, parseInline, parseMarkdown, plainText } from '../src/markdown';
+import { broadcastMention, markdownSegments, parseInline, parseMarkdown, plainText } from '../src/markdown';
 import { decodeRoleMentions, encodeRoleMentions, roleMentionText, roleSuggestions, typableRoles } from '../src/composer';
 import { isMentioned } from '../src/messages';
 import type { Role } from '@diskort/shared';
@@ -194,5 +194,50 @@ describe('rol etiketleri', () => {
     expect(isMentioned(message, me)).toBe(false);
     expect(isMentioned({ ...message, authorId: 'u1' }, me, ['r_ad'])).toBe(false);
     expect(isMentioned({ ...message, content: '`<@&r_ad>`' }, me, ['r_ad'])).toBe(false);
+  });
+});
+
+describe('yazma kutusu önizleme parçaları', () => {
+  const show = (text: string): [string, string][] =>
+    markdownSegments(text).map((s) => [text.slice(s.start, s.end), [...s.marks].sort().join('+')]);
+
+  it('işaretleri ve iç içe stilleri konumlarıyla verir', () => {
+    expect(show('a **b *c* e** d')).toEqual([
+      ['a ', ''],
+      ['**', 'marker'],
+      ['b ', 'bold'],
+      ['*', 'bold+marker'],
+      ['c', 'bold+italic'],
+      ['*', 'bold+marker'],
+      [' e', 'bold'],
+      ['**', 'marker'],
+      [' d', ''],
+    ]);
+  });
+
+  it('kapanmamış işareti biçimlendirmez', () => {
+    expect(show('**yarım')).toEqual([['**yarım', '']]);
+  });
+
+  it('kod bloğu, satır içi kod ve alıntı', () => {
+    expect(show('> x `y`\n```\n**z**\n```')).toEqual([
+      ['> ', 'marker+quote'],
+      ['x ', 'quote'],
+      ['`', 'code+marker+quote'],
+      ['y', 'code+quote'],
+      ['`', 'code+marker+quote'],
+      ['\n', ''],
+      ['```', 'codeblock+marker'],
+      ['\n**z**\n', 'codeblock'],
+      ['```', 'codeblock+marker'],
+    ]);
+  });
+
+  it('parçalar metnin tamamını boşluksuz kaplar', () => {
+    const text = 'selam @ali https://x.com ||gizli|| ~~eski~~ __alt__\n> alıntı\nson';
+    const segs = markdownSegments(text);
+    expect(segs[0]!.start).toBe(0);
+    expect(segs.at(-1)!.end).toBe(text.length);
+    for (let i = 1; i < segs.length; i++) expect(segs[i]!.start).toBe(segs[i - 1]!.end);
   });
 });

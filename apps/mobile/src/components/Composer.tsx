@@ -31,13 +31,14 @@ import {
 import { pickDocuments, pickMedia } from '../attachments';
 import { useAppear, useBump, useLayoutAnimationOn, useTimingTo } from '../motion';
 import { toast } from '../stores/ui';
-import { brandTint, colors, createStyles, font, radius, ripple, space, text as textStyles, tint } from '../theme';
+import { brandTint, colors, createStyles, font, radius, ripple, space, text as textStyles, tint, useTheme } from '../theme';
 import { fileIcon } from './Attachments';
 import { PresenceAvatar } from './Avatar';
 import { BottomSheet, SheetHeader } from './BottomSheet';
 import { ExpressionSheet, type ExpressionTab } from './ExpressionSheet';
 import { PressableScale } from './PressableScale';
 import { ContextBar } from './ContextBar';
+import { ComposerText } from './Markdown';
 import { ReplyBar } from './ReplyBar';
 
 /** Kanal değiştirince yarım kalan mesaj kaybolmasın */
@@ -182,21 +183,37 @@ export function Composer({
     };
   }, [editing, channel.id]);
 
+  /**
+   * Metni JS'ten değiştirdikten (bahsetme, emoji, dışarıdan ekleme) sonra imleci eklenenin sonuna koyar.
+   * Kutu `value` değil stilli çocuklarla çizildiği için yeni metin yerel görünüme bir durum güncellemesiyle,
+   * imleç ise ayrı bir komutla gider; Android komutları aynı karedeki metin güncellemesinden ÖNCE işler
+   * (imleç eski metnin boyuna kırpılır). Kısa bir gecikmeyle bir kez daha istenir: imleç zaten doğru
+   * yerdeyse TextInput komutu göndermez.
+   */
+  const caretRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(caretRetry.current), []);
+  const placeCaret = (at: number): void => {
+    clearTimeout(caretRetry.current);
+    setSelection({ start: at, end: at });
+    setForcedSelection({ start: at, end: at });
+    caretRetry.current = setTimeout(() => {
+      setSelection({ start: at, end: at });
+      setForcedSelection({ start: at, end: at });
+    }, 60);
+  };
+
   /** Öneriden seçilen: kullanıcı / @everyone adıyla; rol kutuda adıyla görünür, gönderirken çevrilir */
   const pick = (target: Pick<User, 'username'> | { role: Role }): void => {
     const inserted = 'role' in target ? roleMentionText(target.role, isUsername) : `@${target.username} `;
     const before = text.slice(0, selection.start).replace(/@[a-z0-9_.çğıöşüâîûÇĞİÖŞÜÂÎÛ]*$/i, () => inserted);
     setText(before + text.slice(selection.start));
-    setSelection({ start: before.length, end: before.length });
-    setForcedSelection({ start: before.length, end: before.length });
+    placeCaret(before.length);
   };
 
   /** Emoji: imlecin olduğu yere (seçiliyse yerine) eklenir */
   const insert = (emoji: string): void => {
     setText(text.slice(0, selection.start) + emoji + text.slice(selection.end));
-    const at = selection.start + emoji.length;
-    setSelection({ start: at, end: at });
-    setForcedSelection({ start: at, end: at });
+    placeCaret(selection.start + emoji.length);
   };
 
   // Dışarıdan erişim (yazarın adına dokununca bahsetme, "Yanıtla" deyince odaklanma): bkz. client-core/composer
@@ -205,8 +222,7 @@ export function Composer({
   insertAtCaret.current = (inserted: string): void => {
     const next = insertText(text, selection.start, selection.end, inserted);
     setText(next.value);
-    setSelection({ start: next.caret, end: next.caret });
-    setForcedSelection({ start: next.caret, end: next.caret });
+    placeCaret(next.caret);
     input.current?.focus();
   };
   useEffect(() => {
@@ -250,6 +266,14 @@ export function Composer({
       toast(err instanceof Error ? err.message : 'Dosya seçilemedi.', 'error');
     }
   };
+
+  // Tema değişince de yeniden çizilsin (stiller temaya bağlı)
+  const themeVersion = useTheme((s) => s.version);
+  const styledText = useMemo(
+    () => <ComposerText text={text} lineHeight={LINE_HEIGHT} />,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [text, themeVersion],
+  );
 
   const remaining = MESSAGE_MAX_LENGTH - text.trim().length;
   const hint = placeholder ?? `#${channel.name} kanalına mesaj gönder`;
@@ -367,10 +391,15 @@ export function Composer({
                 </Text>
               </View>
             )}
+            {/* `value` yerine stilli çocuklar: biçimlendirme yazarken canlı görünür (bkz. ComposerText). Metin
+                aynen kalır, onChangeText düz metni verir; gönderilen içerik yazılanın kendisidir. */}
             <TextInput
               ref={input}
-              value={text}
-              onChangeText={setText}
+              onChangeText={(t) => {
+                // Yazılırsa bekleyen imleç tekrarı iptal: imleci geri çekmesin
+                clearTimeout(caretRetry.current);
+                setText(t);
+              }}
               onSelectionChange={(e) => {
                 setSelection(e.nativeEvent.selection);
                 setForcedSelection(undefined);
@@ -382,7 +411,9 @@ export function Composer({
               multiline
               maxLength={MESSAGE_MAX_LENGTH * 2}
               style={styles.input}
-            />
+            >
+              {styledText}
+            </TextInput>
           </View>
           {remaining < 200 && <Text style={[styles.counter, remaining < 0 && { color: colors.danger }]}>{remaining}</Text>}
           {gifsEnabled && !editing && (

@@ -178,3 +178,100 @@ export function parseMarkdown(content: string): MdBlock[] {
   if (last < content.length) out.push(...parseText(content.slice(last)));
   return out;
 }
+
+/** Yazma kutusundaki canlı önizlemenin işaretleri; `marker` biçim işaretinin kendisidir (soluk çizilir). */
+export type MdMark = MdStyle | 'code' | 'codeblock' | 'quote' | 'link' | 'mention' | 'marker';
+
+/** Metnin `[start, end)` aralığı ve o aralıkta geçerli işaretler */
+export type MdSegment = { start: number; end: number; marks: MdMark[] };
+
+/**
+ * Yazma kutusunun canlı önizlemesi için metni, biçim işaretleri de dahil, boşluksuz ve konumlu parçalara
+ * böler (parçalar uç uca metnin tamamını kaplar). Kurallar `parseMarkdown` ile aynıdır, tek fark: alıntı
+ * satırları tek tek işlenir, bu yüzden bir biçim alıntının satırları arasında taşmaz.
+ */
+export function markdownSegments(text: string): MdSegment[] {
+  const marks: MdMark[][] = Array.from({ length: text.length }, () => []);
+  const add = (from: number, to: number, ...m: MdMark[]): void => {
+    for (let i = from; i < to; i++) marks[i]!.push(...m);
+  };
+
+  const inline = (start: number, end: number): void => {
+    const masked = text.slice(start, end).replace(/<@&[A-Za-z0-9_-]{1,64}>/g, (t) => t.replace(/[_*~|]/g, 'x'));
+    let pos = 0;
+    while (pos < masked.length) {
+      const rest = masked.slice(pos);
+      let best: { rule: InlineRule; m: RegExpExecArray } | null = null;
+      for (const rule of INLINE) {
+        const m = rule.re.exec(rest);
+        if (m && (!best || m.index < best.m.index)) best = { rule, m };
+      }
+      if (!best) break;
+      const { rule, m } = best;
+      const from = start + pos + m.index;
+      const to = from + m[0].length;
+      switch (rule.name) {
+        case 'code':
+          add(from, to, 'code');
+          add(from, from + 1, 'marker');
+          add(to - 1, to, 'marker');
+          break;
+        case 'url':
+          add(from, to, 'link');
+          break;
+        case 'mention':
+        case 'roleMention':
+          add(from, to, 'mention');
+          break;
+        default: {
+          const d = rule.name === 'italic' ? 1 : 2;
+          add(from, from + d, 'marker');
+          add(to - d, to, 'marker');
+          add(from + d, to - d, rule.name);
+          inline(from + d, to - d);
+        }
+      }
+      pos += m.index + m[0].length;
+    }
+  };
+
+  // Kod bloğu dışındaki kısım: "> " satırları alıntı, ardışık düz satırlar tek parça olarak işlenir
+  const textPart = (start: number, end: number): void => {
+    let plainStart = -1;
+    let i = start;
+    while (i <= end) {
+      const nl = text.indexOf('\n', i);
+      const lineEnd = nl === -1 || nl > end ? end : nl;
+      const q = /^> ?/.exec(text.slice(i, lineEnd));
+      if (q) {
+        if (plainStart !== -1) inline(plainStart, i);
+        plainStart = -1;
+        add(i, lineEnd, 'quote');
+        add(i, i + q[0].length, 'marker');
+        inline(i + q[0].length, lineEnd);
+      } else if (plainStart === -1) plainStart = i;
+      i = lineEnd + 1;
+    }
+    if (plainStart !== -1) inline(plainStart, end);
+  };
+
+  let last = 0;
+  for (const m of text.matchAll(CODE_BLOCK)) {
+    if (m.index > last) textPart(last, m.index);
+    const end = m.index + m[0].length;
+    add(m.index, end, 'codeblock');
+    add(m.index, m.index + 3, 'marker');
+    add(end - 3, end, 'marker');
+    last = end;
+  }
+  if (last < text.length) textPart(last, text.length);
+
+  const out: MdSegment[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const cur = marks[i]!.filter((m, k, a) => a.indexOf(m) === k);
+    const prev = out.at(-1);
+    if (prev && prev.end === i && prev.marks.length === cur.length && prev.marks.every((m) => cur.includes(m))) prev.end++;
+    else out.push({ start: i, end: i + 1, marks: cur });
+  }
+  return out;
+}

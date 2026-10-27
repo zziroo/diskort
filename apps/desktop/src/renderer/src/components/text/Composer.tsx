@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,6 +37,7 @@ import { toast } from '../../stores/ui';
 import { PresenceAvatar } from '../ui/Avatar';
 import { FileIcon } from './Attachments';
 import { ComposerToolbar } from './ComposerToolbar';
+import { MarkdownEditor, type MarkdownEditorHandle } from './MarkdownEditor';
 import { ReplyBar } from './ReplyBar';
 
 /** Kanal değiştirince yarım kalan mesaj kaybolmasın */
@@ -126,7 +126,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [caret, setCaret] = useState(0);
   const [selected, setSelected] = useState(0);
   const [dismissed, setDismissed] = useState<string | null>(null);
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const ref = useRef<MarkdownEditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const files = useMessages((s) => s.pendingFiles[channel.id] ?? NO_FILES);
   const users = useGuild((s) => s.users);
@@ -142,13 +142,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const canMentionEveryone = useCan(Permission.MENTION_EVERYONE, channel.id);
 
   useImperativeHandle(handle, () => ({ focus: () => ref.current?.focus() }), []);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = '0';
-    el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.5)}px`;
-  }, [value]);
 
   // ---------- @bahsetme önerileri ----------
   const query = MENTION_QUERY.exec(value.slice(0, caret))?.[1];
@@ -179,15 +172,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   /** Emoji panelinden: metni imlecin olduğu yere (seçiliyse yerine) ekler */
   const insert = (text: string): void => {
-    const el = ref.current;
-    const start = el?.selectionStart ?? value.length;
-    const end = el?.selectionEnd ?? start;
-    const next = value.slice(0, start) + text + value.slice(end);
-    update(next, start + text.length);
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(start + text.length, start + text.length);
-    });
+    const editor = ref.current;
+    if (!editor) return;
+    const { start, end } = editor.getSelection();
+    editor.replace(start, end, text);
   };
   const focusInput = useCallback(() => ref.current?.focus(), []);
 
@@ -197,22 +185,22 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       suggestion.kind === 'role'
         ? roleMentionText(suggestion.role, isUsername)
         : `@${suggestion.kind === 'user' ? suggestion.user.username : suggestion.mention.name} `;
-    const before = value.slice(0, caret).replace(/@[a-z0-9_.çğıöşüâîûÇĞİÖŞÜÂÎÛ]*$/i, () => text);
-    const next = before + value.slice(caret);
-    update(next, before.length);
-    requestAnimationFrame(() => ref.current?.setSelectionRange(before.length, before.length));
+    const typed = /@[a-z0-9_.çğıöşüâîûÇĞİÖŞÜÂÎÛ]*$/i.exec(value.slice(0, caret));
+    // Değer editörün onChange'iyle güncellenir (bkz. update)
+    ref.current?.replace(typed ? typed.index : caret, caret, text);
   };
 
   // Dışarıdan erişim (ada tıklayınca bahsetme, "Yanıtla" deyince odaklanma): bkz. client-core/composer
   const insertAtCaret = useRef((_text: string) => {});
   insertAtCaret.current = (text: string): void => {
-    const el = ref.current;
-    const next = insertText(value, el?.selectionStart ?? value.length, el?.selectionEnd ?? value.length, text);
-    update(next.value, next.caret);
-    requestAnimationFrame(() => {
-      ref.current?.focus();
-      ref.current?.setSelectionRange(next.caret, next.caret);
-    });
+    const editor = ref.current;
+    if (!editor) return;
+    const current = editor.getText();
+    const { start, end } = editor.getSelection();
+    const next = insertText(current, start, end, text);
+    // insertText araya boşluk koyabilir, sonraki boşluğu yutabilir: değişen aralık [start, sonrası başlangıcı)
+    const afterLength = next.value.length - next.caret;
+    editor.replace(start, current.length - afterLength, next.value.slice(start, next.caret));
   };
   useEffect(() => {
     if (!canSend) return;
@@ -232,11 +220,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return;
     }
     sendMessage(channel.id, content);
+    ref.current?.reset('');
     update('', 0);
     onSend();
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (e.nativeEvent.isComposing) return;
     if (suggestions.length) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -272,7 +261,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   };
 
   // Panodaki resim ya da dosya yapıştırılınca eklenir
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
+  const onPaste = (e: ClipboardEvent<HTMLDivElement>): void => {
     if (e.clipboardData.files.length === 0) return;
     e.preventDefault();
     if (!canAttach) {
@@ -392,21 +381,23 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               ref.current?.focus();
             }}
           />
-          <textarea
+          <MarkdownEditor
             ref={ref}
-            value={value}
-            rows={1}
+            initialValue={value}
             autoFocus
             maxLength={MESSAGE_MAX_LENGTH * 2}
             placeholder={placeholder ?? `#${channel.name} kanalına mesaj gönder`}
-            onChange={(e) => {
-              update(e.target.value, e.target.selectionStart);
-              if (e.target.value.trim()) notifyTyping(channel.id);
+            onChange={(text, nextCaret, textChanged) => {
+              if (!textChanged) {
+                setCaret(nextCaret);
+                return;
+              }
+              update(text, nextCaret);
+              if (text.trim()) notifyTyping(channel.id);
             }}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            className="block max-h-[50vh] min-h-11 w-full resize-none bg-transparent px-2.5 py-[11px] leading-[1.375rem] text-text-normal outline-none placeholder:text-text-faint"
+            className="max-h-[50vh] min-h-11 w-full min-w-0 flex-1 overflow-y-auto px-2.5 py-[11px] leading-[1.375rem] text-text-normal"
           />
           {remaining < 200 && (
             <span className={cn('shrink-0 px-3 py-3 text-xs', remaining < 0 ? 'text-danger' : 'text-text-muted')}>

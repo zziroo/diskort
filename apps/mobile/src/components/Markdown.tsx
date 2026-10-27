@@ -1,6 +1,14 @@
 import { Fragment, useState, type ReactNode } from 'react';
-import { Linking, Text, View } from 'react-native';
-import { broadcastMention, DELETED_ROLE_LABEL, isJumboEmoji, parseMarkdown, type MdInline } from '@diskort/client-core';
+import { Linking, Platform, Text, View, type StyleProp, type TextStyle } from 'react-native';
+import {
+  broadcastMention,
+  DELETED_ROLE_LABEL,
+  isJumboEmoji,
+  markdownSegments,
+  parseMarkdown,
+  type MdInline,
+  type MdMark,
+} from '@diskort/client-core';
 import type { Message, Role, User } from '@diskort/shared';
 import { brandTint, colors, createStyles, tint } from '../theme';
 
@@ -164,7 +172,85 @@ export function Markdown({ content, ctx, dim }: { content: string; ctx: Markdown
   );
 }
 
+/** Yazma kutusunda bundan uzun metin biçimlendirilmez (her tuşta ayrıştırma ve yüzlerce iç içe Text) */
+const LIVE_PREVIEW_MAX = 4000;
+
+/**
+ * Yazma kutusunun canlı önizlemesi: `TextInput`'a `value` yerine verilen stilli çocuklar (Discord gibi).
+ * Metin harfi harfine aynı kalır, yalnızca görünüş değişir: işaretler (`**`, `~~`, `||`, `` ` ``, `> `)
+ * soluk görünür; boyut (fontSize) hiçbir parçada değişmez, satır yüksekliği sabit kalır.
+ */
+export function ComposerText({ text, lineHeight }: { text: string; lineHeight: number }) {
+  if (!text) return null;
+  if (text.length > LIVE_PREVIEW_MAX) return <Text>{text}</Text>;
+  const parts: ReactNode[] = [];
+  for (const seg of markdownSegments(text)) {
+    const part = text.slice(seg.start, seg.end);
+    if (seg.marks.length === 0) {
+      parts.push(part);
+      continue;
+    }
+    // Alıntı işareti (satır başındaki `> `) dikey çizginin yerine vurgulu renkte; aynı parçada ardından
+    // gelen başka işaretler (ör. `> **`) normal soluk işaret olarak kalır
+    const lineStart = seg.start === 0 || text[seg.start - 1] === '\n';
+    if (lineStart && seg.marks.includes('quote') && seg.marks.includes('marker') && part.startsWith('>')) {
+      const q = part.startsWith('> ') ? 2 : 1;
+      parts.push(
+        <Text key={`q${seg.start}`} style={styles.composerQuoteMarker}>
+          {part.slice(0, q)}
+        </Text>,
+      );
+      if (q < part.length) {
+        parts.push(
+          <Text key={seg.start} style={composerStyle(seg.marks, lineHeight)}>
+            {part.slice(q)}
+          </Text>,
+        );
+      }
+      continue;
+    }
+    parts.push(
+      <Text key={seg.start} style={composerStyle(seg.marks, lineHeight)}>
+        {part}
+      </Text>,
+    );
+  }
+  return <Text>{parts}</Text>;
+}
+
+function composerStyle(marks: MdMark[], lineHeight: number): StyleProp<TextStyle> {
+  const has = (m: MdMark): boolean => marks.includes(m);
+  const code = has('code') || has('codeblock');
+  const decoration =
+    has('underline') && has('strike') ? 'underline line-through' : has('underline') ? 'underline' : has('strike') ? 'line-through' : null;
+  // Sıra önemli: sonraki öncekini ezer (kalın bahsetmenin kalınlığı, işaretin soluk rengi en son)
+  return [
+    has('quote') && styles.composerQuote,
+    has('spoiler') && styles.composerSpoiler,
+    has('link') && styles.link,
+    has('mention') && styles.mention,
+    has('bold') && styles.bold,
+    has('italic') && styles.italic,
+    decoration && { textDecorationLine: decoration },
+    // Monospace yazı tipinin kendi satır aralığı kutuyu büyütmesin: satır yüksekliği aynen verilir
+    code && [styles.composerCode, { lineHeight }],
+    has('marker') && styles.composerMarker,
+  ];
+}
+
 const mono = 'monospace';
+// iOS'ta "monospace" diye bir yazı tipi yok: yazma kutusunda sistemin sabit genişlikli yazı tipi
+const composerMono = Platform.select({ ios: 'Menlo', default: 'monospace' });
+
+/** Kod/sürpriz zemini: temanın kod rengi kutu zemininden yeterince ayrılmıyorsa (açık, AMOLED) saydam ton */
+function composerShade(alpha: number): string {
+  const rgb = (hex: string): number[] | null =>
+    /^#[0-9a-f]{6}$/i.test(hex) ? [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) : null;
+  const a = rgb(colors.code);
+  const b = rgb(colors.field);
+  const distinct = a && b && a.reduce((sum, v, i) => sum + Math.abs(v - b[i]!), 0) > 40;
+  return distinct ? colors.code : tint(alpha);
+}
 
 const styles = createStyles(() => ({
   text: { color: colors.text, fontSize: 15.5, lineHeight: 22 },
@@ -194,4 +280,10 @@ const styles = createStyles(() => ({
     marginVertical: 4,
   },
   codeBlockText: { fontFamily: mono, fontSize: 13, color: colors.text, lineHeight: 18 },
+  // Yazma kutusu (ComposerText)
+  composerMarker: { color: colors.faint },
+  composerQuoteMarker: { color: colors.brandText, fontWeight: '700' },
+  composerQuote: { color: colors.muted },
+  composerCode: { fontFamily: composerMono, backgroundColor: composerShade(0.1) },
+  composerSpoiler: { backgroundColor: composerShade(0.18) },
 }));
