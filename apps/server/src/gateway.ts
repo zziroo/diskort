@@ -3,6 +3,7 @@ import type { WebSocket } from 'ws';
 import {
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
+  CLIENT_FEATURE_SESSION_TOKEN,
   CLIENT_FEATURE_VOICE_TRACE,
   OFFLINE_PRESENCE,
   DEFAULT_ATTACHMENT_MAX_BYTES,
@@ -27,7 +28,7 @@ import {
   type VoiceTraceRequest,
 } from '@diskort/shared';
 import type { GatewayTraffic } from './apiStats.js';
-import type { AuthService } from './auth.js';
+import { SESSION_RENEW_AFTER_MS, type AuthService } from './auth.js';
 import type { ClientVersionPolicy } from './clientVersion.js';
 import type { Store } from './db.js';
 import type { PermissionService } from './permissions.js';
@@ -38,6 +39,8 @@ const IDENTIFY_TIMEOUT_MS = 10_000;
 const PING_INTERVAL_MS = 20_000;
 /** Aynı kanal için "yazıyor" bildirimleri arasındaki en kısa süre (sel koruması) */
 const TYPING_MIN_INTERVAL_MS = 1_000;
+/** SESSION_TOKEN_SET mesajları arasındaki en kısa süre (her biri imza doğrulaması + sorgu) */
+const TOKEN_SET_MIN_INTERVAL_MS = 1_000;
 /** Boşta ve ses (susturma/sağırlaştırma) durumu: art arda en fazla bu kadar anında uygulanır... */
 const STATE_BURST = 5;
 /** ...sonra en fazla bu aralıkla bir tane (fazlası birleştirilir; en son istenen durum mutlaka uygulanır) */
@@ -110,8 +113,17 @@ export class Coalescer<T> {
 interface Session {
   socket: WebSocket;
   userId: string | null;
-  /** IDENTIFY'da kullanılan oturum jetonu (şifre değişince bu cihazın bağlantısı açık kalır) */
+  /**
+   * Oturum jetonu: IDENTIFY'daki, ya da sonradan yenilenip istemciye gönderilen (şifre değişince bu
+   * cihazın bağlantısı açık kalır)
+   */
   token: string | null;
+  /** Jetonun verildiği an; bir günden yaşlıysa yenilenir (yalnızca renewsToken bildiren istemcide) */
+  tokenIssuedAt: number | null;
+  /** İstemci yenilenen jetonu saklayabiliyor (CLIENT_FEATURE_SESSION_TOKEN) */
+  renewsToken: boolean;
+  /** Son SESSION_TOKEN_SET (sel koruması) */
+  lastTokenSet: number;
   /** IDENTIFY sürüyor (ikinci bir IDENTIFY yok sayılır) */
   identifying: boolean;
   /** Oturum kapandı ya da iptal edildi: artık hiçbir mesajı işlenmez, hiçbir listede yer almaz */
@@ -593,6 +605,9 @@ export class Gateway {
       socket,
       userId: null,
       token: null,
+      tokenIssuedAt: null,
+      renewsToken: false,
+      lastTokenSet: 0,
       identifying: false,
       closed: false,
       alive: true,
@@ -745,6 +760,19 @@ export class Gateway {
       case 'IDLE_SET':
         s.idleUpdates.push(Boolean(msg.d?.idle));
         break;
+      case 'SESSION_TOKEN_SET': {
+        // İstemci yeni jeton aldı (şifre değişikliği yanıtı): yalnızca aynı hesabın geçerli jetonu kabul edilir.
+        // Her mesaj bir imza doğrulaması + sorgu: sel koruması
+        const token = typeof msg.d?.token === 'string' ? msg.d.token : '';
+        const now = Date.now();
+        if (!token || token === s.token || now - s.lastTokenSet < TOKEN_SET_MIN_INTERVAL_MS) break;
+        s.lastTokenSet = now;
+        const user = await this.auth.userFromToken(token);
+        if (!this.live(s) || !user || user.id !== s.userId) break;
+        s.token = token;
+        s.tokenIssuedAt = this.auth.tokenIssuedAt(token);
+        break;
+      }
       case 'STREAM_WATCH_SET': {
         // Doğrulama ses durumunda: kendisi, aynı kanalda olmayanlar ve yayında olmayanlar görünmez
         const ids: unknown = msg.d?.userIds;
@@ -808,11 +836,43 @@ export class Gateway {
     s.dm = features.includes(CLIENT_FEATURE_DM);
     s.reportsIdle = features.includes(CLIENT_FEATURE_PRESENCE);
     s.trace = features.includes(CLIENT_FEATURE_VOICE_TRACE);
+    s.renewsToken = features.includes(CLIENT_FEATURE_SESSION_TOKEN);
     const platform = d.platform;
     s.platform = platform === 'android' || platform === 'ios' ? platform : 'desktop';
     s.version = typeof d.version === 'string' && d.version ? d.version.slice(0, 32) : null;
     s.token = token;
+    s.tokenIssuedAt = this.auth.tokenIssuedAt(token);
     this.identify(s, user);
+    // READY'den sonra: eski jetonla gelen istemciye hemen yenisi
+    void this.renewToken(s);
+  }
+
+  /**
+   * Oturumun jetonu SESSION_RENEW_AFTER_MS'den yaşlıysa yenisini verir (SESSION_TOKEN). Bağlanırken ve
+   * bağlıyken (pingAll) çağrılır: uygulamayı açık tutan ya da ara sıra açan kişi 30 günlük süreye hiç
+   * takılmaz; eski jeton kendi süresi dolana dek geçerli kalır (durum tutulmaz).
+   */
+  private async renewToken(s: Session): Promise<void> {
+    if (!s.renewsToken || !s.userId || s.tokenIssuedAt === null) return;
+    const now = Date.now();
+    if (now - s.tokenIssuedAt < SESSION_RENEW_AFTER_MS) return;
+    // Şifre değiştikten sonra açık kalmış bir bağlantının artık geçersiz jetonu (bu cihazın kendisi yeni
+    // jetonla sürer, bkz. exceptToken; jetonu çalınmış bir yabancı da olabilir) yenilenmez: yenilense
+    // şifre değişikliği o oturumu hesaptan atamazdı
+    const validAfter = this.store.getSessionsValidAfter(s.userId);
+    if (validAfter === null || s.tokenIssuedAt < validAfter) return;
+    // İmza sürerken (ya da gönderim başarısızsa) tekrar denenmesin: bir sonraki yenileme bir gün sonra
+    s.tokenIssuedAt = now;
+    let token: string;
+    try {
+      token = await this.auth.issueToken(s.userId);
+    } catch {
+      return;
+    }
+    if (!this.live(s)) return;
+    s.token = token;
+    s.tokenIssuedAt = this.auth.tokenIssuedAt(token) ?? now;
+    this.send(s, { t: 'SESSION_TOKEN', d: { token } });
   }
 
   private identify(s: Session, user: User): void {
@@ -873,6 +933,7 @@ export class Gateway {
       }
       s.alive = false;
       s.socket.ping();
+      if (s.userId) void this.renewToken(s);
     }
   }
 }

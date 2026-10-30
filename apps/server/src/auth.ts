@@ -1,11 +1,17 @@
 import { hash, verify } from '@node-rs/argon2';
-import { SignJWT, jwtVerify } from 'jose';
+import { SignJWT, decodeJwt, jwtVerify } from 'jose';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { User } from '@diskort/shared';
 import type { Store } from './db.js';
 import type { PermissionService } from './permissions.js';
 
-const SESSION_TTL = '30d';
+/** Oturum jetonunun ömrü (verildiği andan). Bu süre içinde yenilenmeyen oturum düşer. */
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Bundan eski bir jetonla bağlanan (ya da bağlı kalan) istemciye gateway yeni jeton verir (SESSION_TOKEN):
+ * uygulamayı kullanmaya devam eden kişi hiç düşmez, bir ay uğramayan düşer.
+ */
+export const SESSION_RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export class AuthService {
   private readonly key: Uint8Array;
@@ -30,13 +36,28 @@ export class AuthService {
     }
   }
 
-  issueToken(userId: string): Promise<string> {
+  /** Oturum jetonu. `issuedAt` yalnızca testler için (eski tarihli jeton). */
+  issueToken(userId: string, issuedAt = Date.now()): Promise<string> {
+    const iat = Math.floor(issuedAt / 1000);
     return new SignJWT({})
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(userId)
-      .setIssuedAt()
-      .setExpirationTime(SESSION_TTL)
+      .setIssuedAt(iat)
+      .setExpirationTime(iat + Math.floor(SESSION_TTL_MS / 1000))
       .sign(this.key);
+  }
+
+  /**
+   * Jetonun verildiği an (ms). İmza doğrulanmaz: yalnızca userFromToken'dan geçmiş bir jeton için,
+   * yenileme zamanını hesaplamak üzere çağrılır.
+   */
+  tokenIssuedAt(token: string): number | null {
+    try {
+      const iat = decodeJwt(token).iat;
+      return typeof iat === 'number' ? iat * 1000 : null;
+    } catch {
+      return null;
+    }
   }
 
   /**

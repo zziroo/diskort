@@ -4,6 +4,7 @@ import {
   CLIENT_FEATURE_VOICE_TRACE,
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
+  CLIENT_FEATURE_SESSION_TOKEN,
   DM_PERMISSIONS,
   Permission as P,
   type DmChannel,
@@ -128,6 +129,7 @@ describe('direkt mesajlar', () => {
       CLIENT_FEATURE_DM,
       CLIENT_FEATURE_PRESENCE,
       CLIENT_FEATURE_VOICE_TRACE,
+      CLIENT_FEATURE_SESSION_TOKEN,
     ]);
   });
 

@@ -44,6 +44,7 @@ import type {
 import {
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
+  CLIENT_FEATURE_SESSION_TOKEN,
   CLIENT_FEATURE_VOICE_TRACE,
   CLIENT_FEATURES_HEADER,
 } from '@diskort/shared';
@@ -70,6 +71,7 @@ export const CLIENT_FEATURES: readonly string[] = [
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
   CLIENT_FEATURE_VOICE_TRACE,
+  CLIENT_FEATURE_SESSION_TOKEN,
 ];
 
 /** Her isteğe eklenen özellik başlığı (bugün sunucuda buna bakan bir uç yok; eski bir özelliği ayırt etmek için) */

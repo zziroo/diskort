@@ -1,6 +1,12 @@
 import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CLIENT_FEATURE_DM, CLIENT_FEATURE_PRESENCE, type GatewayServerMessage, type User } from '@diskort/shared';
+import {
+  CLIENT_FEATURE_DM,
+  CLIENT_FEATURE_PRESENCE,
+  CLIENT_FEATURE_SESSION_TOKEN,
+  type GatewayServerMessage,
+  type User,
+} from '@diskort/shared';
 import { Coalescer } from '../src/gateway.js';
 import { connectGateway, type GatewayClient, type TestServer, startServer } from './helpers.js';
 
@@ -155,6 +161,146 @@ describe('gateway oturumları', () => {
     ca.ws.send(JSON.stringify({ t: 'VOICE_STATE_SET', d: { selfMute: true, selfDeaf: true } }));
     await wait(1200);
     expect(s.ctx.voice.list().find((v) => v.userId === ali.user.id)).toMatchObject({ selfMute: true, selfDeaf: true });
+  });
+
+  describe('oturum jetonu yenileme', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const me = (token: string) => s.app.inject({ method: 'GET', url: '/api/me', headers: { authorization: `Bearer ${token}` } });
+
+    it('bir günden eski jetonla bağlanan istemciye READY sonrası yeni jeton gider; eskisi de geçerli kalır', async () => {
+      const ali = await s.member('ali');
+      const old = await s.ctx.auth.issueToken(ali.user.id, Date.now() - 2 * DAY_MS);
+      const client = await connectGateway(s.app, old, [CLIENT_FEATURE_DM, CLIENT_FEATURE_SESSION_TOKEN]);
+      clients.push(client);
+      await client.settle();
+      const [renewed] = client.of('SESSION_TOKEN') as { token: string }[];
+      expect(renewed?.token).toBeTypeOf('string');
+      expect(renewed!.token).not.toBe(old);
+      expect((await me(renewed!.token)).statusCode).toBe(200);
+      expect((await me(old)).statusCode).toBe(200);
+      // Yeni jeton taze: bir daha yenilenmez
+      expect(client.of('SESSION_TOKEN')).toHaveLength(1);
+    });
+
+    it('taze jetona ve özelliği bildirmeyen eski istemciye yeni jeton gönderilmez', async () => {
+      const ali = await s.member('ali');
+      const fresh = await connectGateway(s.app, ali.token, [CLIENT_FEATURE_DM, CLIENT_FEATURE_SESSION_TOKEN]);
+      clients.push(fresh);
+      const old = await s.ctx.auth.issueToken(ali.user.id, Date.now() - 2 * DAY_MS);
+      const legacy = await connectGateway(s.app, old, [CLIENT_FEATURE_DM]);
+      clients.push(legacy);
+      await fresh.settle();
+      expect(fresh.of('SESSION_TOKEN')).toHaveLength(0);
+      expect(legacy.of('SESSION_TOKEN')).toHaveLength(0);
+    });
+
+    it('yenilenen jeton oturumun jetonu olur: o jetonla şifre değiştiren cihazın bağlantısı açık kalır', async () => {
+      const ali = await s.member('ali', 'eski-sifre-123');
+      const old = await s.ctx.auth.issueToken(ali.user.id, Date.now() - 2 * DAY_MS);
+      const client = await connectGateway(s.app, old, [CLIENT_FEATURE_DM, CLIENT_FEATURE_SESSION_TOKEN]);
+      clients.push(client);
+      await client.settle();
+      const [renewed] = client.of('SESSION_TOKEN') as { token: string }[];
+      const res = await s.app.inject({
+        method: 'POST',
+        url: '/api/me/password',
+        headers: { authorization: `Bearer ${renewed!.token}` },
+        payload: { currentPassword: 'eski-sifre-123', newPassword: 'yeni-sifre-123' },
+      });
+      expect(res.statusCode).toBe(200);
+      await client.settle();
+      expect(client.ws.readyState).toBe(WebSocket.OPEN);
+      expect(client.of('INVALID_SESSION')).toHaveLength(0);
+    });
+
+    /** Açık oturumların jetonunu yaşlandırıp bağlıyken yapılan yenilemeyi (pingAll) tetikler */
+    const ageAndPing = (ms: number): void => {
+      const g = s.ctx.gateway as unknown as {
+        sessions: Set<{ userId: string | null; tokenIssuedAt: number | null }>;
+        pingAll: () => void;
+      };
+      for (const session of g.sessions) if (session.tokenIssuedAt !== null) session.tokenIssuedAt -= ms;
+      g.pingAll();
+    };
+
+    it('şifre değiştikten sonra aynı eski jetonla açık kalan bağlantılar (bu cihaz ya da jetonu çalmış biri) yenileme almaz', async () => {
+      const ali = await s.member('ali', 'eski-sifre-123');
+      // Birkaç saniye önce verilmiş jeton (şifre değişikliği anıyla aynı saniyede verilen jeton geçerli kalır)
+      const token = await s.ctx.auth.issueToken(ali.user.id, Date.now() - 5_000);
+      const features = [CLIENT_FEATURE_DM, CLIENT_FEATURE_SESSION_TOKEN];
+      const device = await connectGateway(s.app, token, features);
+      const thief = await connectGateway(s.app, token, features);
+      clients.push(device, thief);
+      const res = await s.app.inject({
+        method: 'POST',
+        url: '/api/me/password',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { currentPassword: 'eski-sifre-123', newPassword: 'yeni-sifre-123' },
+      });
+      expect(res.statusCode).toBe(200);
+      await device.settle();
+      // İkisi de açık kaldı (exceptToken aynı jeton) ama jetonları artık geçersiz: yenilenmez
+      ageAndPing(2 * DAY_MS);
+      await device.settle();
+      expect(device.of('SESSION_TOKEN')).toHaveLength(0);
+      expect(thief.of('SESSION_TOKEN')).toHaveLength(0);
+      expect((await me(token)).statusCode).toBe(401);
+    });
+
+    it('bağlıyken yenilenen jeton, başka cihazdan şifre değişince geçersizleşir', async () => {
+      const ali = await s.member('ali', 'eski-sifre-123');
+      const client = await connectGateway(s.app, ali.token, [CLIENT_FEATURE_DM, CLIENT_FEATURE_SESSION_TOKEN]);
+      clients.push(client);
+      ageAndPing(2 * DAY_MS);
+      await client.settle();
+      const [renewed] = client.of('SESSION_TOKEN') as { token: string }[];
+      expect(renewed?.token).toBeTypeOf('string');
+      expect((await me(renewed!.token)).statusCode).toBe(200);
+      // sessions_valid_after saniye çözünürlüklü: yenilenen jetonla aynı saniyede yapılan değişiklik onu geçersiz kılmaz
+      await wait(1100);
+      const other = await s.ctx.auth.issueToken(ali.user.id);
+      const res = await s.app.inject({
+        method: 'POST',
+        url: '/api/me/password',
+        headers: { authorization: `Bearer ${other}` },
+        payload: { currentPassword: 'eski-sifre-123', newPassword: 'yeni-sifre-123' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(await closed(client.ws)).toBe(4004);
+      expect((await me(renewed!.token)).statusCode).toBe(401);
+    });
+
+    it('SESSION_TOKEN_SET: istemcinin bildirdiği kendi yeni jetonu oturumun jetonu olur; başkasınınki yok sayılır', async () => {
+      const ali = await s.member('ali', 'sifre-1-123');
+      const veli = await s.member('veli');
+      const client = await connectGateway(s.app, ali.token, [CLIENT_FEATURE_DM, CLIENT_FEATURE_SESSION_TOKEN]);
+      clients.push(client);
+      // Başkasının jetonu: oturum değişmez (şifre değişince bağlantı yine ali.token ile açık kalır)
+      client.ws.send(JSON.stringify({ t: 'SESSION_TOKEN_SET', d: { token: veli.token } }));
+      await client.settle();
+      const change = (bearer: string, currentPassword: string, newPassword: string) =>
+        s.app.inject({
+          method: 'POST',
+          url: '/api/me/password',
+          headers: { authorization: `Bearer ${bearer}` },
+          payload: { currentPassword, newPassword },
+        });
+      const first = await change(ali.token, 'sifre-1-123', 'sifre-2-123');
+      expect(first.statusCode).toBe(200);
+      await client.settle();
+      expect(client.ws.readyState).toBe(WebSocket.OPEN);
+      const t2 = (first.json() as { token: string }).token;
+      // Bu cihaz yeni jetonunu bildirir (sel koruması: önceki bildirimden en az 1 sn sonra): ikinci şifre
+      // değişikliğinde de bağlantı açık kalır
+      await wait(1100);
+      client.ws.send(JSON.stringify({ t: 'SESSION_TOKEN_SET', d: { token: t2 } }));
+      await client.settle();
+      const second = await change(t2, 'sifre-2-123', 'sifre-3-123');
+      expect(second.statusCode).toBe(200);
+      const outcome = await Promise.race([closed(client.ws), wait(1000).then(() => 'açık' as const)]);
+      expect(outcome).toBe('açık');
+      expect(client.of('INVALID_SESSION')).toHaveLength(0);
+    });
   });
 
   it('Coalescer: kova dolana dek anında, sonra aralıklı; ara değerler atlanır, son değer uygulanır', async () => {

@@ -966,6 +966,12 @@ export type GatewayServerMessage =
    */
   | { t: 'FRIENDS_UPDATE'; d: FriendsList }
   | { t: 'INVALID_SESSION'; d: { reason: string } }
+  /**
+   * Oturum jetonu yenilendi (eskisi bir günden yaşlıysa, bağlanınca ya da bağlıyken): istemci bunu saklar ve
+   * bundan sonraki isteklerde ve yeniden bağlanırken kullanır. Yalnızca CLIENT_FEATURE_SESSION_TOKEN bildiren
+   * oturumlara gider; eski istemciler tanımadığı olayı yok sayar.
+   */
+  | { t: 'SESSION_TOKEN'; d: { token: string } }
   /** İstemci sürümü eski: bağlantı kapatılır, güncellemeden yeniden bağlanılamaz */
   | { t: 'UPDATE_REQUIRED'; d: { version: string } }
   /** Yeni sürüm yayınlandı: istemci arka planda indirmeye başlar */
@@ -1004,6 +1010,11 @@ export const CLIENT_FEATURE_DM = 'dm';
  * telefonlara bildirim gönderilmez: kişi mesajı zaten masaüstünde canlı görüyor.
  */
 export const CLIENT_FEATURE_PRESENCE = 'presence';
+/**
+ * İstemci yenilenen oturum jetonunu (SESSION_TOKEN) saklayabiliyor. Bildirmeyen eski istemciye yeni jeton
+ * gönderilmez: eski istemci onu kullanmaz, sunucu da oturumun jetonunu değiştirmiş olurdu (bkz. exceptToken).
+ */
+export const CLIENT_FEATURE_SESSION_TOKEN = 'session_token';
 /** İstemcinin tanıdığı özelliklerin (CLIENT_FEATURE_*) virgülle ayrılmış listesini taşıyan HTTP başlığı */
 export const CLIENT_FEATURES_HEADER = 'x-diskort-features';
 
@@ -1023,7 +1034,13 @@ export type GatewayClientMessage =
    * Bu oturumun etkinliklerinin tam listesi (açık oyunlar, en fazla ACTIVITY_MAX_COUNT); boş: hiçbiri.
    * Değişince ve yeniden bağlanınca gönderilir; eski sunucular tanımaz ve yok sayar.
    */
-  | { t: 'ACTIVITY_SET'; d: { activities: ActivityReport[] } };
+  | { t: 'ACTIVITY_SET'; d: { activities: ActivityReport[] } }
+  /**
+   * İstemci oturum jetonunu kendi değiştirdi (şifre değişikliği yanıtı): sunucu doğrular ve bu bağlantının
+   * jetonu sayar (bir sonraki şifre değişikliğinde bağlantı açık kalsın, yenileme bu jetondan sürsün).
+   * Eski sunucular tanımaz ve yok sayar.
+   */
+  | { t: 'SESSION_TOKEN_SET'; d: { token: string } };
 
 // ---------- Sabitler ----------
 

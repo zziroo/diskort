@@ -34,7 +34,6 @@ import { FeedbackModal } from './feedback/FeedbackModal';
 import { useFeedbackToasts } from '../features/feedback/useFeedbackToasts';
 
 export function MainLayout() {
-  const token = useSession((s) => s.token);
   const status = useGuild((s) => s.status);
   // İlk READY gelene kadar "Bağlanıyor…"; sonra sunucu olmasa da arayüz açılır
   const ready = useGuild((s) => s.status === 'ready' || s.guildOrder.length > 0);
@@ -54,13 +53,15 @@ export function MainLayout() {
     DURATION.base,
   );
 
+  // Oturum açıkken bir kez: jeton sonradan değişse de (sunucunun yenilemesi, şifre değişikliği) bağlantı ve
+  // ses kalır; yeniden bağlanırken yeni jeton kullanılır. Çıkışta bileşen kalkar, ses ve bağlantı kapanır.
   useEffect(() => {
     gateway.connect();
     return () => {
       void voice.leave();
       gateway.disconnect();
     };
-  }, [token]);
+  }, []);
 
   // Davet bağlantısıyla açıldıysa (diskort://davet/<kod>) katılma penceresi kodla hazır açılır; katılmak
   // için yine Katıl'a basılır

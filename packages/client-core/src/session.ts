@@ -8,7 +8,25 @@ interface SessionStore {
   user: User | null;
   setSession: (token: string, user: User) => void;
   setUser: (user: User) => void;
+  /** Sunucu jetonu yeniledi (SESSION_TOKEN): bundan sonraki istekler ve yeniden bağlanma bununla */
+  setToken: (token: string) => void;
   logout: () => void;
+}
+
+/**
+ * Oturum jetonunun (JWT) dolacağı an (ms); okunamıyorsa null. İmza doğrulanmaz: yalnızca süre dolunca
+ * uygulamanın sunucuya sormasını zamanlamak için.
+ */
+export function tokenExpiresAt(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
+    return typeof exp === 'number' ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 // Depolama platformdan gelir; configureClient() çağrılınca okunur (bkz. configure.ts).
@@ -25,6 +43,7 @@ export const useSession = create<SessionStore>()(
       user: null,
       setSession: (token, user) => set({ token, user }),
       setUser: (user) => set({ user }),
+      setToken: (token) => set((s) => (s.token ? { token } : {})),
       logout: () => set({ token: null, user: null }),
     }),
     {

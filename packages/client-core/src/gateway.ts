@@ -42,6 +42,18 @@ class GatewayClient {
   private watching: string[] = [];
   /** Bu bağlantıda READY geldi (kimlik doğrulandı) */
   private identified = false;
+  /** SESSION_TOKEN uygulanıyor: depodaki bu değişiklik sunucuya geri bildirilmez */
+  private applyingServerToken = false;
+
+  constructor() {
+    // Oturum jetonu uygulama içinde değişti (şifre değişikliği yanıtı): açık bağlantı bunu öğrensin ki bir
+    // sonraki şifre değişikliğinde bağlantı düşmesin ve yenileme bu jetondan sürsün. Giriş/çıkış (null'dan
+    // ya da null'a) bağlantının kendisini açıp kapatır, bildirime gerek yok.
+    useSession.subscribe((s, prev) => {
+      if (this.applyingServerToken || !s.token || !prev.token || s.token === prev.token) return;
+      if (this.identified) this.send({ t: 'SESSION_TOKEN_SET', d: { token: s.token } });
+    });
+  }
 
   /**
    * Bağlantıyı başlatır. Zaten bağlıysa ya da bağlanıyorsa bir şey yapmaz: telefonda Android ekranı
@@ -237,6 +249,15 @@ class GatewayClient {
         this.awaitingAck = false;
         if (this.probeTimer !== null) clearTimeout(this.probeTimer);
         this.probeTimer = null;
+        break;
+      case 'SESSION_TOKEN':
+        // Yenilenen jeton: istekler useSession'dan okur, yeniden bağlanırken open() de oradan alır
+        this.applyingServerToken = true;
+        try {
+          useSession.getState().setToken(msg.d.token);
+        } finally {
+          this.applyingServerToken = false;
+        }
         break;
       case 'INVALID_SESSION':
         // Ör. "Sunucudan çıkarıldın.", "Hesabın bir yönetici tarafından silindi."

@@ -131,7 +131,7 @@ export {
   useStatus,
   type DisplayStatus,
 } from './presence';
-export { useSession } from './session';
+export { tokenExpiresAt, useSession } from './session';
 export {
   clearPendingInvite,
   keepIfGuildInvite,
