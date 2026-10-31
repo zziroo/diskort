@@ -36,7 +36,7 @@ import {
 } from '@diskort/client-core';
 import { SCREEN_CODECS, SCREEN_PRESETS } from '../../features/voice/screenPresets';
 import { voice } from '../../features/voice/voiceClient';
-import { bridge, isWindows } from '../../lib/bridge';
+import { bridge } from '../../lib/bridge';
 import { confirmDialog } from '../../lib/dialog';
 import { useEscapeLayer } from '../../lib/escape';
 import { usePresenceClosing } from '../../lib/motion';
@@ -483,12 +483,12 @@ function StreamSection() {
       <Toggle
         label="Sistem sesini paylaş"
         description={
-          isWindows
+          bridge?.screen.supportsAudio
             ? 'Yayına oyun/video sesi eklenir; sohbetteki sesler otomatik hariç tutulur.'
-            : 'Sistem sesi paylaşımı şimdilik yalnızca Windows’ta destekleniyor.'
+            : 'Sistem sesi paylaşımı bu sistemde desteklenmiyor (Windows ya da macOS 14.2+ gerekir).'
         }
-        checked={s.shareAudio && isWindows}
-        disabled={!isWindows}
+        checked={s.shareAudio && Boolean(bridge?.screen.supportsAudio)}
+        disabled={!bridge?.screen.supportsAudio}
         onChange={(shareAudio) => s.set({ shareAudio })}
       />
       <p className="mt-4 text-sm text-text-muted">

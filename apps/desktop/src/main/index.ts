@@ -204,13 +204,13 @@ function setupDisplayMedia(): void {
         callback({});
         return;
       }
-      // Windows'ta sistem sesi; renderer restrictOwnAudio istediğinde Electron uygulamanın kendi
+      // Windows ve macOS'ta sistem sesi; renderer restrictOwnAudio istediğinde Electron uygulamanın kendi
       // sesini (arkadaşların konuşması) hariç tutar, böylece yankı oluşmaz.
-      const withAudio = Boolean(selection?.audio && request.audioRequested && isWindows);
+      const withAudio = Boolean(selection?.audio && request.audioRequested && (isWindows || isMac));
       callback(withAudio ? { video: source, audio: 'loopback' } : { video: source });
     },
-    // macOS 15+'da yerel sistem seçicisi kullanılır.
-    { useSystemPicker: isMac },
+    // Yerel macOS seçicisi kullanılmaz: o yolda bu işleyici çağrılmadığı için sistem sesi istenemiyor.
+    { useSystemPicker: false },
   );
 }
 
@@ -429,6 +429,10 @@ function registerIpc(): void {
   ipcMain.handle('screen:select', (_e, selection: ScreenSelection) => {
     pendingSelection = selection;
   });
+  ipcMain.handle('screen:access-denied', () => isMac && systemPreferences.getMediaAccessStatus('screen') !== 'granted');
+  ipcMain.handle('screen:open-access-settings', () =>
+    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'),
+  );
 
   ipcMain.handle('hotkeys:available', () => hotkeys.available);
   ipcMain.handle('hotkeys:set', (_e, config: HotkeyConfig) => hotkeys.setConfig(config));

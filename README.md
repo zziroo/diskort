@@ -42,7 +42,7 @@ yapılmış bir uygulamadır. Discord'a benzer, ama:
 ### 🖥️ Ekran paylaşımı
 
 - Pencere ya da ekran seçici; **720p60 / 1080p30 / 1080p60**
-- Windows'ta yayına **sistem sesi** (sohbet sesleri otomatik hariç tutulur, yankı olmaz)
+- Windows ve macOS 14.2+'da yayına **sistem sesi** (sohbet sesleri otomatik hariç tutulur, yankı olmaz)
 - **"Yayını İzle":** görüntü yalnızca izlemek isteyene gönderilir; tam ekran ve ayrı yayın sesi ayarı
 - Kanala girmeden kimin hangi kanalda olduğu ve kimin yayında olduğu görünür
 
@@ -69,7 +69,7 @@ yapılmış bir uygulamadır. Discord'a benzer, ama:
 | Ses, sohbet, direkt mesajlar | ✅ | ✅ | ✅ | ✅ |
 | Roller, yönetim, sunucu ayarları | ✅ | ✅ | ✅ | ✅ |
 | Ekran paylaşımı | ✅ | ✅ | ✅ | ✅ tüm ekran (720p) |
-| Yayına sistem sesi | ✅ | ❌ | ❌ | — |
+| Yayına sistem sesi | ✅ | ❌ | ✅ | — |
 | Bas-konuş / global kısayollar | ✅ | ✅ X11 · ⚠️ Wayland | ✅ | — |
 | Oynanan oyunu algılama | ✅ | ❌ | ❌ | ❌ |
 | Otomatik güncelleme | ✅ | ✅ | ✅ | ✅ |
@@ -228,7 +228,7 @@ Kod haritası: [docs/kod-haritasi.md](docs/kod-haritasi.md), önce onu oku.
 - [ ] Windows kod imzalama (SignPath Foundation)
 - [ ] Direkt mesajlarda sesli ve görüntülü arama
 - [ ] Kamera
-- [ ] Linux ve macOS'ta yayına sistem sesi
+- [ ] Linux'ta yayına sistem sesi
 - [ ] Sunucuya özel emojiler
 
 ## Lisans

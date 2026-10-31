@@ -4,7 +4,7 @@ import type { ScreenSource } from '../../../../shared/bridge';
 import { SCREEN_PRESETS } from '../../features/voice/screenPresets';
 import { voice } from '../../features/voice/voiceClient';
 import { errorMessage } from '@diskort/client-core';
-import { bridge, isMac } from '../../lib/bridge';
+import { bridge } from '../../lib/bridge';
 import { cn } from '../../lib/utils';
 import { useSettings, type ScreenPresetId } from '../../stores/settings';
 import { toast, useUi } from '../../stores/ui';
@@ -13,16 +13,17 @@ import { Button, Select, Toggle } from '../ui/controls';
 
 type Tab = 'window' | 'screen';
 
-/** Discord tarzı ekran/pencere seçici. macOS ve tarayıcıda sistem seçicisi kullanılır. */
+/** Discord tarzı ekran/pencere seçici. Tarayıcıda sistem seçicisi kullanılır. */
 export function ScreenSharePicker() {
   const close = useUi((s) => s.closeModal);
   const settings = useSettings();
-  const useCustomPicker = Boolean(bridge) && !isMac;
+  const useCustomPicker = Boolean(bridge);
   const [sources, setSources] = useState<ScreenSource[]>([]);
   const [loading, setLoading] = useState(useCustomPicker);
   const [tab, setTab] = useState<Tab>('window');
   const [selected, setSelected] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const load = async (): Promise<void> => {
     if (!bridge) return;
@@ -34,6 +35,8 @@ export function ScreenSharePicker() {
     } catch (err) {
       toast(`Kaynaklar alınamadı: ${errorMessage(err)}`, 'error');
     } finally {
+      // Kaynak listesi izin yokken hata verse de izin bildirimi çıksın
+      setAccessDenied(await bridge.screen.accessDenied());
       setLoading(false);
     }
   };
@@ -82,7 +85,13 @@ export function ScreenSharePicker() {
         </>
       }
     >
-      {useCustomPicker && (
+      {accessDenied && (
+        <div className="flex flex-col items-center gap-3 py-8 text-center text-sm text-text-muted">
+          <p>Ekran paylaşmak için Sistem Ayarları'nda Diskort'a Ekran Kaydı izni ver, sonra uygulamayı yeniden başlat.</p>
+          <Button onClick={() => void bridge?.screen.openAccessSettings()}>Sistem Ayarlarını Aç</Button>
+        </div>
+      )}
+      {useCustomPicker && !accessDenied && (
         <>
           <div className="mb-3 flex items-center gap-2">
             <TabButton active={tab === 'window'} onClick={() => setTab('window')} icon={<AppWindow size={16} className="ico-lift" />}>

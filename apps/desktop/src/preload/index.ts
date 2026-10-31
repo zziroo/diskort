@@ -9,6 +9,13 @@ import type {
   UpdateSupport,
 } from '../shared/bridge';
 
+/** macOS sistem sesi CoreAudio Tap ile yakalanır; bu API 14.2'de geldi, öncesinde yayın başlamayabilir. */
+function macHasSystemAudio(): boolean {
+  if (process.platform !== 'darwin') return false;
+  const [major = 0, minor = 0] = process.getSystemVersion().split('.').map(Number);
+  return major > 14 || (major === 14 && minor >= 2);
+}
+
 function listen<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload);
   ipcRenderer.on(channel, listener);
@@ -52,9 +59,11 @@ const bridge: DiskortBridge = {
   },
 
   screen: {
-    supportsAudio: process.platform === 'win32',
+    supportsAudio: process.platform === 'win32' || macHasSystemAudio(),
     getSources: () => ipcRenderer.invoke('screen:get-sources'),
     select: (selection) => ipcRenderer.invoke('screen:select', selection),
+    accessDenied: () => ipcRenderer.invoke('screen:access-denied'),
+    openAccessSettings: () => ipcRenderer.invoke('screen:open-access-settings'),
   },
 
   hotkeys: {

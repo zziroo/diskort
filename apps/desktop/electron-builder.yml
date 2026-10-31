@@ -92,6 +92,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: Diskort sesli sohbet için mikrofonunu kullanır.
+    NSAudioCaptureUsageDescription: Diskort ekran paylaşımına sistem sesini ekler.
     NSCameraUsageDescription: Diskort ileride görüntülü sohbet için kamerayı kullanabilir.
 
 # Sürüm dosyaları GitHub Releases'e yüklenir. Uygulamalar güncellemeyi GitHub'dan değil

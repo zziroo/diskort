@@ -42,7 +42,7 @@ import {
   type TelemetryContext,
   type TransportStats,
 } from '@diskort/client-core';
-import { bridge } from '../../lib/bridge';
+import { bridge, isMac } from '../../lib/bridge';
 import {
   introSoundsEnabled,
   playIntroSound,
@@ -1378,7 +1378,14 @@ class VoiceClient {
     let warning: string | null = null;
     if (audioTrack) {
       const settings = audioTrack.getSettings() as MediaTrackSettings & { restrictOwnAudio?: boolean };
-      if (settings.restrictOwnAudio === false) {
+      if (audioTrack.readyState === 'ended') {
+        // macOS'ta izin yoksa hata verilmez: iz bitmiş başlar, hiç örnek gelmez (izleyiciye boş ses çubuğu çıkmasın)
+        audioTrack.stop();
+        audioTrack = undefined;
+        warning = isMac
+          ? 'Sistem sesi izni yok; yayın sessiz devam ediyor. Sistem Ayarları > Gizlilik ve Güvenlik > Ekran ve Sistem Sesi Kaydı bölümünden açabilirsin.'
+          : 'Sistem sesi yakalanamadı; yayın sessiz devam ediyor.';
+      } else if (settings.restrictOwnAudio === false) {
         audioTrack.stop();
         audioTrack = undefined;
         warning = 'Sistem sesi bu sistemde yankısız paylaşılamadığı için kapatıldı.';

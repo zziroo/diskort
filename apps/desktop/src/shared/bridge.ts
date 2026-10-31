@@ -237,10 +237,14 @@ export interface DiskortBridge {
   };
 
   screen: {
-    /** Sistem sesi paylaşımı destekleniyor mu (şu an yalnızca Windows) */
+    /** Sistem sesi paylaşımı destekleniyor mu (Windows ve macOS 14.2+) */
     supportsAudio: boolean;
     getSources(): Promise<ScreenSource[]>;
     select(selection: ScreenSelection): Promise<void>;
+    /** macOS'ta Ekran Kaydı izni kapalı mı (diğer sistemlerde hep false) */
+    accessDenied(): Promise<boolean>;
+    /** macOS: Sistem Ayarları'nda Ekran Kaydı iznini açar */
+    openAccessSettings(): Promise<void>;
   };
 
   hotkeys: {
