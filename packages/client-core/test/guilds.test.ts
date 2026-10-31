@@ -10,6 +10,7 @@ import {
   type User,
 } from '@diskort/shared';
 import {
+  allSounds,
   channelById,
   configureClient,
   dmBlockedReason,
@@ -18,9 +19,11 @@ import {
   inviteLink,
   isGuildUnread,
   permissionsOf,
+  soundsOf,
   useGuild,
   useSession,
 } from '../src';
+import type { GuildSound } from '@diskort/shared';
 
 const user = (id: string): User => ({ id, username: id, displayName: id.toUpperCase(), avatarColor: '#fff', isAdmin: false });
 
@@ -33,17 +36,38 @@ const channel = (id: string, guildId: string, type: 'text' | 'voice'): Channel =
   overwrites: [],
 });
 
-const guild = (id: string, ownerId: string, memberIds: string[], channels: Channel[]): GuildData => ({
+const sound = (id: string, guildId: string, name: string, emoji: string | null = null): GuildSound => ({
+  id,
+  guildId,
+  name,
+  emoji,
+  url: `/api/sounds/${guildId}/${id}.mp3`,
+  uploaderId: 'ben',
+  createdAt: 1,
+  durationMs: 5000,
+});
+
+const guild = (
+  id: string,
+  ownerId: string,
+  memberIds: string[],
+  channels: Channel[],
+  sounds: GuildSound[] = [],
+): GuildData => ({
   guild: { id, name: `Sunucu ${id}`, ownerId, iconUrl: null },
   channels,
   roles: [{ id, name: '@everyone', color: null, position: 0, hoist: false, permissions: DEFAULT_EVERYONE_PERMISSIONS }],
   members: memberIds.map((userId) => ({ userId, roles: [], joinedAt: 1, removed: false })),
+  sounds,
 });
 
 const ready = (): ReadyPayload => ({
   user: user('ben'),
   guilds: [
-    guild('a', 'ben', ['ben', 'ali'], [channel('a-yazi', 'a', 'text'), channel('a-ses', 'a', 'voice')]),
+    guild('a', 'ben', ['ben', 'ali'], [channel('a-yazi', 'a', 'text'), channel('a-ses', 'a', 'voice')], [
+      sound('s2', 'a', 'Zil'),
+      sound('s1', 'a', 'Alkış', '👏'),
+    ]),
     guild('b', 'veli', ['ben', 'veli'], [channel('b-yazi', 'b', 'text')]),
   ],
   users: [user('ben'), user('ali'), user('veli')],
@@ -181,5 +205,74 @@ describe('sunucular', () => {
     expect(inviteLink('ABCD2345')).toBe('http://sunucu.test/davet/ABCD2345');
     expect(guildInitials('hafta sonu ekibi')).toBe('HSE');
     expect(guildInitials('İzmir')).toBe('İ');
+  });
+});
+
+describe('ses paneli', () => {
+  it('READY ile gelen sesler ada göre sıralıdır; eski sunucuda alan yoksa boş', () => {
+    const s = useGuild.getState();
+    expect(soundsOf(s, 'a').map((x) => x.name)).toEqual(['Alkış', 'Zil']);
+    expect(soundsOf(s, 'b')).toEqual([]);
+    expect(soundsOf(s, 'yok')).toEqual([]);
+    // Alanı göndermeyen eski sunucu
+    const old = guild('c', 'ali', ['ben', 'ali'], []) as Partial<GuildData>;
+    delete old.sounds;
+    receive({
+      t: 'GUILD_CREATE',
+      d: {
+        ...(old as GuildData),
+        users: [user('ali'), user('ben')],
+        voiceStates: [],
+        online: [],
+        lastMessageIds: {},
+        readStates: {},
+        mentionCounts: {},
+      },
+    });
+    expect(soundsOf(useGuild.getState(), 'c')).toEqual([]);
+  });
+
+  it('ekleme, güncelleme ve silme olayları ad sırasını korur; başka sunucuya dokunmaz', () => {
+    const before = useGuild.getState();
+    receive({ t: 'GUILD_SOUND_CREATE', d: { sound: sound('s3', 'a', 'Boru', '🎺') } });
+    let s = useGuild.getState();
+    expect(soundsOf(s, 'a').map((x) => x.id)).toEqual(['s1', 's3', 's2']);
+    expect(s.guilds.b!.sounds).toBe(before.guilds.b!.sounds);
+    // Seçili görünüm yeniden hesaplanmaz
+    expect(s.users).toBe(before.users);
+    expect(s.channels).toBe(before.channels);
+
+    receive({ t: 'GUILD_SOUND_UPDATE', d: { sound: sound('s3', 'a', 'Çan', null) } });
+    s = useGuild.getState();
+    expect(soundsOf(s, 'a').map((x) => x.name)).toEqual(['Alkış', 'Çan', 'Zil']);
+    expect(soundsOf(s, 'a').find((x) => x.id === 's3')?.emoji).toBeNull();
+
+    receive({ t: 'GUILD_SOUND_DELETE', d: { guildId: 'a', soundId: 's1' } });
+    s = useGuild.getState();
+    expect(soundsOf(s, 'a').map((x) => x.id)).toEqual(['s3', 's2']);
+    // Bilinmeyen ses ya da sunucu: değişiklik yok
+    const same = soundsOf(s, 'a');
+    receive({ t: 'GUILD_SOUND_DELETE', d: { guildId: 'a', soundId: 'yok' } });
+    receive({ t: 'GUILD_SOUND_CREATE', d: { sound: sound('s9', 'yok', 'X') } });
+    expect(soundsOf(useGuild.getState(), 'a')).toBe(same);
+  });
+
+  it('çalma olayı depoyu değiştirmez; sunucu silinince sesleri de gider', () => {
+    const before = useGuild.getState();
+    receive({ t: 'SOUNDBOARD_PLAY', d: { channelId: 'a-ses', guildId: 'a', userId: 'ali', sound: sound('s1', 'a', 'Alkış') } });
+    expect(useGuild.getState().guilds).toBe(before.guilds);
+    receive({ t: 'GUILD_DELETE', d: { id: 'a' } });
+    expect(soundsOf(useGuild.getState(), 'a')).toEqual([]);
+  });
+
+  it('allSounds bütün sunucuları ada göre gruplar (boş olanlar dahil)', () => {
+    receive({ t: 'GUILD_SOUND_CREATE', d: { sound: sound('s5', 'b', 'Düdük') } });
+    const groups = allSounds(useGuild.getState());
+    expect(groups.map((g) => [g.guild.id, g.sounds.map((x) => x.name)])).toEqual([
+      ['a', ['Alkış', 'Zil']],
+      ['b', ['Düdük']],
+    ]);
+    receive({ t: 'GUILD_SOUND_DELETE', d: { guildId: 'b', soundId: 's5' } });
+    expect(allSounds(useGuild.getState()).map((g) => g.sounds.length)).toEqual([2, 0]);
   });
 });

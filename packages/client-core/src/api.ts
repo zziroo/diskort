@@ -23,6 +23,7 @@ import type {
   CreateInviteRequest,
   GuildData,
   GuildMember,
+  GuildSound,
   Invite,
   InvitePreview,
   LoginRequest,
@@ -270,6 +271,24 @@ export const api = {
   /** Aramadaki biri, aramada olmayan bir katılımcıyı (userId yoksa hepsini) yeniden çalar; aramada değilsen 409 */
   ringDmCall: (id: string, userId?: string) =>
     request<void>('POST', `/api/dms/${id}/call/ring`, userId ? { userId } : {}),
+
+  // Ses paneli: sunucuya bağlı sesler (sözleşme docs/ses-paneli.md); değişiklikler GUILD_SOUND_* olaylarıyla da gelir
+  /** Sunucunun sesleri, ada göre sıralı (üye) */
+  listGuildSounds: (guildId: string) =>
+    request<{ sounds: GuildSound[] }>('GET', `/api/guilds/${guildId}/sounds`).then((r) => r.sounds),
+  /** Ad ve/veya emoji (null: emojiyi kaldır); MANAGE_SOUNDBOARD */
+  updateGuildSound: (guildId: string, soundId: string, body: { name?: string; emoji?: string | null }) =>
+    request<{ sound: GuildSound }>('PATCH', `/api/guilds/${guildId}/sounds/${soundId}`, body).then((r) => r.sound),
+  /** MANAGE_SOUNDBOARD ya da hesap yöneticisi */
+  removeGuildSound: (guildId: string, soundId: string) =>
+    request<void>('DELETE', `/api/guilds/${guildId}/sounds/${soundId}`),
+  /**
+   * Bulunulan ses kanalındaki herkese çalar (SOUNDBOARD_PLAY). Seste değilken 409 'not_in_voice', DM
+   * aramasında 400 'not_guild_voice', susturulmuşken 403 'muted', ses yoksa/üye değilse 404 'unknown_sound',
+   * sık basınca 429 'rate_limited'.
+   */
+  playGuildSound: (guildId: string, soundId: string) =>
+    request<void>('POST', '/api/voice/soundboard/play', { guildId, soundId }),
 
   // Engellemeler (yalnızca kendi listen)
   listBlocks: () => request<UserBlock[]>('GET', '/api/me/blocks'),

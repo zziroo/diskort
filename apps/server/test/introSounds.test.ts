@@ -10,7 +10,7 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import type { AppContext } from '../src/context.js';
 import { ffmpegTranscode, type IntroSoundTranscode } from '../src/introSounds.js';
-import { parseRange } from '../src/routes/introSounds.js';
+import { parseRange } from '../src/fileInfo.js';
 import { joinGuild } from './helpers.js';
 
 const config = loadConfig({ NODE_ENV: 'test', DATA_DIR: '.' });
@@ -258,16 +258,17 @@ describe('giriş sesi', () => {
 
 describe('parseRange', () => {
   it('tek aralıkları çözer', () => {
-    expect(parseRange(undefined, 10)).toBeNull();
-    expect(parseRange('bytes=0-', 10)).toEqual({ start: 0, end: 9 });
-    expect(parseRange('bytes=2-4', 10)).toEqual({ start: 2, end: 4 });
-    expect(parseRange('bytes=2-400', 10)).toEqual({ start: 2, end: 9 });
-    expect(parseRange('bytes=-3', 10)).toEqual({ start: 7, end: 9 });
-    expect(parseRange('bytes=-30', 10)).toEqual({ start: 0, end: 9 });
-    expect(parseRange('bytes=0-1,4-5', 10)).toBeNull();
-    expect(parseRange('bytes=10-', 10)).toBe('invalid');
-    expect(parseRange('bytes=5-2', 10)).toBe('invalid');
-    expect(parseRange('bytes=-0', 10)).toBe('invalid');
+    // Giriş sesi ve ses paneli uçları dosya eklerindeki parseRange'i (fileInfo.ts) kullanır
+    expect(parseRange(undefined, 10)).toEqual({ kind: 'full' });
+    expect(parseRange('bytes=0-', 10)).toEqual({ kind: 'range', start: 0, end: 9 });
+    expect(parseRange('bytes=2-4', 10)).toEqual({ kind: 'range', start: 2, end: 4 });
+    expect(parseRange('bytes=2-400', 10)).toEqual({ kind: 'range', start: 2, end: 9 });
+    expect(parseRange('bytes=-3', 10)).toEqual({ kind: 'range', start: 7, end: 9 });
+    expect(parseRange('bytes=-30', 10)).toEqual({ kind: 'range', start: 0, end: 9 });
+    expect(parseRange('bytes=0-1,4-5', 10)).toEqual({ kind: 'full' });
+    expect(parseRange('bytes=10-', 10)).toEqual({ kind: 'invalid' });
+    expect(parseRange('bytes=5-2', 10)).toEqual({ kind: 'invalid' });
+    expect(parseRange('bytes=-0', 10)).toEqual({ kind: 'invalid' });
   });
 });
 

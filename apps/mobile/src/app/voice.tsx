@@ -13,9 +13,11 @@ import { StreamViewer } from '../components/StreamViewer';
 import { StreamViewers } from '../components/StreamViewers';
 import { VoiceControl } from '../components/VoiceBar';
 import { ConnectionQualityBadge } from '../components/VoiceQuality';
+import { SoundboardSheet } from '../components/SoundboardSheet';
 import { MemberTile, StreamTile, TILE_MIN_HEIGHT } from '../components/VoiceTiles';
 import { UserVolume } from '../components/VolumeControl';
 import { useLayoutAnimationOn } from '../motion';
+import { soundsAvailable } from '../sounds';
 import { useSettings } from '../stores/settings';
 import { toast } from '../stores/ui';
 import { colors, createStyles, font, radius, space } from '../theme';
@@ -25,6 +27,16 @@ import { useVoice, voice, type ScreenShareStats } from '../voice/voice';
 
 const GRID_PADDING = space.md;
 const GRID_GAP = 10;
+
+/**
+ * Kontrol düğmelerinin boyu. Ses paneliyle altı düğme olur; en geniş altyazılar ("Ses paneli" ~53, "Mikrofon" ~47 px)
+ * sütunu düğmeden biraz genişletir: 52'lik düğmelerin toplamı ~313, 48'liklerin ~293, 46'lıkların ~284 px. Böylece
+ * 380+ px'te 52, 340–379'da 48, daha darda 46 (320 px'te düğme arası ~5 px). Yazı tipi büyütülmüşse sıra alta sarar.
+ */
+function controlSize(width: number, soundboard: boolean): number {
+  if (!soundboard || width >= 380) return 52;
+  return width >= 340 ? 48 : 46;
+}
 
 export default function VoiceScreen() {
   const router = useRouter();
@@ -51,6 +63,11 @@ export default function VoiceScreen() {
   const { width } = useWindowDimensions();
   // Uzun basılan (yönetilecek / sesi ayarlanacak) üye
   const [member, setMember] = useState<string | null>(null);
+  const [soundboardOpen, setSoundboardOpen] = useState(false);
+  // Sesten ayrılınca kapanır: yeniden katılınca kendiliğinden açılmasın
+  useEffect(() => {
+    if (status === 'idle') setSoundboardOpen(false);
+  }, [status]);
   const { fullscreen, setFullscreen, rotate, screenOptions } = useStreamFullscreen(viewing, watching);
   // Yayın yapan kişinin hemen ardından yayınının kendi kutucuğu (masaüstündeki gibi); izlenen yayın
   // üstte büyük görünür, ızgarada tekrarlanmaz
@@ -99,6 +116,9 @@ export default function VoiceScreen() {
   }
 
   const micOff = selfMute || selfDeaf || !micAllowed;
+  // DM aramasında ses paneli yok; eski APK'larda (expo-audio yok) ses çalınamaz
+  const showSoundboard = !dmCall && soundsAvailable();
+  const buttonSize = controlSize(width, showSoundboard);
 
   return (
     <SafeAreaView style={styles.page} edges={['bottom']}>
@@ -156,7 +176,7 @@ export default function VoiceScreen() {
           icon={speaker ? 'volume-high' : 'ear'}
           caption={speaker ? 'Hoparlör' : 'Kulaklık'}
           label={speaker ? 'Hoparlör açık, kulaklığa geç' : 'Ahize, hoparlöre geç'}
-          size={52}
+          size={buttonSize}
           motion="flip"
           onPress={toggleSpeaker}
         />
@@ -165,16 +185,25 @@ export default function VoiceScreen() {
           caption={sharing ? 'Durdur' : 'Ekran'}
           label={sharing ? 'Ekran paylaşımını durdur' : 'Ekranını paylaş'}
           on={sharing}
-          size={52}
+          size={buttonSize}
           motion="rise"
           onPress={() => toggleScreenShare(canStream)}
         />
+        {showSoundboard && (
+          <VoiceControl
+            icon="musical-notes"
+            caption="Ses paneli"
+            label="Ses panelini aç"
+            size={buttonSize}
+            onPress={() => setSoundboardOpen(true)}
+          />
+        )}
         <VoiceControl
           icon={micOff ? 'mic-off' : 'mic'}
           caption={micOff ? 'Sessiz' : 'Mikrofon'}
           label={micOff ? 'Mikrofonu aç' : 'Sustur'}
           off={micOff}
-          size={52}
+          size={buttonSize}
           onPress={toggleMute}
         />
         <VoiceControl
@@ -182,7 +211,7 @@ export default function VoiceScreen() {
           caption={selfDeaf ? 'Sağır' : 'Ses'}
           label={selfDeaf ? 'Sağırlaştırmayı kaldır' : 'Sağırlaştır'}
           off={selfDeaf}
-          size={52}
+          size={buttonSize}
           motion="tilt"
           onPress={toggleDeafen}
         />
@@ -191,7 +220,7 @@ export default function VoiceScreen() {
           danger
           caption="Ayrıl"
           label="Bağlantıyı kes"
-          size={52}
+          size={buttonSize}
           onPress={() => {
             leaveVoice();
             router.back();
@@ -206,6 +235,7 @@ export default function VoiceScreen() {
         // Seste başka biri: sesini yalnızca kendin için ayarla
         renderExtra={(userId) => (userId !== selfId && voiceStates[userId]?.channelId === channelId ? <UserVolume userId={userId} /> : null)}
       />
+      {showSoundboard && <SoundboardSheet visible={soundboardOpen} onClose={() => setSoundboardOpen(false)} />}
     </SafeAreaView>
   );
 }
@@ -414,8 +444,10 @@ const styles = createStyles(() => ({
   ringAgainText: { color: '#fff', fontSize: font.small, fontWeight: '700' },
   controls: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-evenly',
     alignItems: 'flex-start',
+    rowGap: space.sm,
     paddingTop: space.md,
     paddingBottom: space.md,
     backgroundColor: colors.rail,

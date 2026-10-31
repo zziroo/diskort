@@ -13,7 +13,6 @@ import {
   useStatus,
 } from '@diskort/client-core';
 import { confirmDialog } from '../../lib/dialog';
-import { IntroSoundPicker } from './IntroSoundPicker';
 import { PresenceProvider, usePresence } from '../../lib/motion';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/ui';
@@ -31,8 +30,8 @@ const sameTheme = (a: ProfileTheme | null | undefined, b: ProfileTheme | null | 
   (a ?? null) === (b ?? null) || (Boolean(a && b) && a!.primary === b!.primary && a!.accent === b!.accent);
 
 /**
- * Ayarlar → Profil'deki görünüm: afiş, giriş sesi ve profil teması (hazır ya da elle iki renk). Yanda kendi
- * profil kartının canlı önizlemesi (üyelerin gördüğü kartın üst kısmıyla aynı).
+ * Ayarlar → Profil'deki görünüm: afiş ve profil teması (hazır ya da elle iki renk). Yanda kendi profil kartının
+ * canlı önizlemesi (üyelerin gördüğü kartın üst kısmıyla aynı).
  */
 export function ProfileLookSettings({ user }: { user: User }) {
   // Renk seçici sürüklenirken kart hemen değişsin: taslak önizlemede gösterilir, kısa süre sonra kaydedilir
@@ -93,7 +92,6 @@ export function ProfileLookSettings({ user }: { user: User }) {
     <div className="flex flex-wrap-reverse items-start gap-x-8">
       <div className="min-w-[260px] flex-1">
         <BannerPicker user={preview} />
-        <IntroSoundPicker user={preview} />
 
         <SectionTitle>Profil Teması</SectionTitle>
         <p className="mb-3 text-sm text-text-muted">Profil kartının zemini: yukarıdan aşağıya iki renk.</p>

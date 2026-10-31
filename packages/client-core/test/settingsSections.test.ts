@@ -44,6 +44,8 @@ describe('ayarlarda arama', () => {
     expect(ids(searchSettings(groups, 'gorunum'))).toEqual(['appearance']);
     expect(ids(searchSettings(groups, 'şifre'))).toEqual(['account']);
     expect(ids(searchSettings(groups, 'tema'))).toEqual(['appearance']);
+    expect(ids(searchSettings(groups, 'ses paneli'))).toEqual(['voice']);
+    expect(ids(searchSettings(groups, 'giriş sesi'))).toEqual(['voice']);
     expect(ids(searchSettings(groups, 'destek'))).toEqual(['feedback', 'whatsNew', 'privacy']);
   });
 

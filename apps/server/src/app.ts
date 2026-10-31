@@ -26,6 +26,7 @@ import { registerTelemetryRoutes } from './routes/telemetry.js';
 import { AttachmentService } from './attachments.js';
 import { AvatarService } from './avatars.js';
 import { IntroSoundService, type IntroSoundTranscode } from './introSounds.js';
+import { SoundboardService } from './soundboard.js';
 import { AuthService } from './auth.js';
 import { ClientVersionPolicy } from './clientVersion.js';
 import type { Config } from './config.js';
@@ -61,6 +62,7 @@ import { registerIosDeviceRoutes } from './routes/iosDevices.js';
 import { IosDeviceService } from './iosDevices.js';
 import { registerAvatarRoutes } from './routes/avatars.js';
 import { registerIntroSoundRoutes } from './routes/introSounds.js';
+import { registerSoundboardRoutes } from './routes/soundboard.js';
 import { registerDmRoutes } from './routes/dms.js';
 import { registerDownloadRoutes } from './routes/download.js';
 import { registerFriendRoutes } from './routes/friends.js';
@@ -90,6 +92,8 @@ export interface BuildOptions {
   avatarsDir?: string;
   /** Giriş seslerinin klasörü (varsayılan: <DATA_DIR>/intro-sounds) */
   introSoundsDir?: string;
+  /** Ses paneli seslerinin klasörü (varsayılan: <DATA_DIR>/sounds); dönüştürücü introSoundTranscode ile ortak */
+  soundsDir?: string;
   /** Testler için sahte ses dönüştürücü (varsayılan: ffmpeg) */
   introSoundTranscode?: IntroSoundTranscode;
   /** Etkinlik (oyun) ikonlarının klasörü (varsayılan: <DATA_DIR>/activity-icons) */
@@ -206,6 +210,8 @@ export async function buildApp(
     opts.introSoundTranscode,
     app.log,
   );
+  const soundsDir = opts.soundsDir ?? path.join(config.dataDir, 'sounds');
+  const soundboard = new SoundboardService(store, soundsDir, opts.introSoundTranscode, app.log);
   const embedMedia = new EmbedMediaService(
     opts.embedMediaDir ?? path.join(config.dataDir, 'embed-media'),
     config.jwtSecret,
@@ -323,6 +329,7 @@ export async function buildApp(
     attachments,
     avatars,
     introSounds,
+    soundboard,
     activityIcons,
     gifs,
     linkPreviews,
@@ -350,6 +357,7 @@ export async function buildApp(
     attachments.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'dosya eki temizliği başarısız'));
     avatars.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'profil fotoğrafı temizliği başarısız'));
     introSounds.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'giriş sesi temizliği başarısız'));
+    soundboard.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'ses paneli temizliği başarısız'));
     embedMedia.sweep().catch((err: unknown) => app.log.warn({ err: String(err) }, 'önizleme resmi temizliği başarısız'));
     try {
       linkPreviews?.sweep();
@@ -434,6 +442,7 @@ export async function buildApp(
       avatars: opts.avatarsDir ?? path.join(config.dataDir, 'avatars'),
       feedback: opts.feedbackDir ?? path.join(config.dataDir, 'feedback'),
       linkPreviews: opts.embedMediaDir ?? path.join(config.dataDir, 'embed-media'),
+      sounds: soundsDir,
     },
     telemetry,
     livekitMetrics,
@@ -501,6 +510,7 @@ export async function buildApp(
   registerEmbedRoutes(app, ctx);
   registerAvatarRoutes(app, ctx);
   registerIntroSoundRoutes(app, ctx);
+  registerSoundboardRoutes(app, ctx);
   registerActivityIconRoutes(app, ctx);
   registerGifRoutes(app, ctx);
   registerUpdateRoutes(app, ctx);

@@ -775,7 +775,7 @@ function overview(d, now) {
       }),
     card({
       label: 'Depolama',
-      value: bytes(s.database + s.attachments + (s.avatars ?? 0) + (s.feedback ?? 0) + (s.linkPreviews ?? 0)),
+      value: bytes(s.database + s.attachments + (s.avatars ?? 0) + (s.feedback ?? 0) + (s.linkPreviews ?? 0) + (s.sounds ?? 0)),
       children: h(
         'div',
         'adm-kvs',
@@ -784,6 +784,7 @@ function overview(d, now) {
         kv('Profil ve sunucu resimleri', bytes(s.avatars)),
         kv('Geri bildirim görüntüleri', bytes(s.feedback)),
         kv('Bağlantı önizlemeleri', bytes(s.linkPreviews)),
+        kv('Ses paneli sesleri', bytes(s.sounds)),
       ),
     }),
     card({
@@ -3717,6 +3718,7 @@ function guilds(x) {
         metric('Mesajlar', `${num(g.messages.total)} (7 gün: ${num(g.messages.last7d)})`),
         metric('Son mesaj', g.messages.lastAt ? ago(g.messages.lastAt, x.generatedAt) : '—'),
         metric('Dosya ekleri', `${num(g.attachments.count)} · ${bytes(g.attachments.bytes)}`),
+        metric('Sesler', g.sounds ? `${num(g.sounds.count)} · ${bytes(g.sounds.bytes)}` : '—'),
         metric('Ses (7 gün)', minutes(g.voice7d.voiceMin)),
         metric('Yayın (7 gün)', minutes(g.voice7d.streamMin)),
         metric('Etkin davet', num(g.invites)),

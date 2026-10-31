@@ -518,6 +518,7 @@ export class Gateway {
       channels: this.permissions.visibleChannels(guildId, userId),
       roles: sortRoles(this.store.guildRoles(guildId)),
       members: this.store.listMembers(guildId),
+      sounds: this.store.listSounds(guildId),
     };
   }
 

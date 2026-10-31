@@ -116,6 +116,8 @@ export interface AdminDashboard {
       avatars: number | null;
       feedback: number | null;
       linkPreviews: number | null;
+      /** Ses paneli sesleri (<DATA_DIR>/sounds); eski panel verisinde yok */
+      sounds?: number | null;
     };
   };
   voice: {
@@ -183,7 +185,7 @@ interface DbStats {
   attachmentCount: number;
 }
 
-type DirSizes = { avatars: number; feedback: number; linkPreviews: number };
+type DirSizes = { avatars: number; feedback: number; linkPreviews: number; sounds: number };
 
 interface LiveKitStatus {
   rooms: LiveRoom[] | null;
@@ -241,7 +243,7 @@ export interface DashboardOptions {
   feedback: FeedbackStore;
   /** Veritabanı dosyası (':memory:' olabilir; WAL boyutu için) */
   dbFile: string;
-  dirs: { avatars: string; feedback: string; linkPreviews: string };
+  dirs: { avatars: string; feedback: string; linkPreviews: string; sounds: string };
   /** Ses kalitesi özetleri (canlı tablo) */
   telemetry?: VoiceTelemetryStore;
   /** LiveKit'in Prometheus ölçümleri */
@@ -443,6 +445,7 @@ export class DashboardService {
           avatars: dirs?.avatars ?? null,
           feedback: dirs?.feedback ?? null,
           linkPreviews: dirs?.linkPreviews ?? null,
+          sounds: dirs?.sounds ?? null,
         },
       },
       voice: {
@@ -506,9 +509,9 @@ export class DashboardService {
   private async dirSizes(now: number): Promise<DirSizes | null> {
     if (this.dirCache && now - this.dirCache.at < DIR_CACHE_MS) return this.dirCache.value;
     this.dirInflight ??= (async () => {
-      const { avatars, feedback, linkPreviews } = this.opts.dirs;
-      const [a, f, l] = await Promise.all([dirSize(avatars), dirSize(feedback), dirSize(linkPreviews)]);
-      const value = { avatars: a, feedback: f, linkPreviews: l };
+      const { avatars, feedback, linkPreviews, sounds } = this.opts.dirs;
+      const [a, f, l, so] = await Promise.all([dirSize(avatars), dirSize(feedback), dirSize(linkPreviews), dirSize(sounds)]);
+      const value = { avatars: a, feedback: f, linkPreviews: l, sounds: so };
       this.dirCache = { at: Date.now(), value };
       return value;
     })().finally(() => {

@@ -64,6 +64,7 @@ function navigate(e: ReactKeyboardEvent<HTMLElement>): boolean {
 export function PanelMenu({
   open,
   anchorRef,
+  placeAboveRef,
   onClose,
   label,
   width = 240,
@@ -72,6 +73,8 @@ export function PanelMenu({
 }: {
   open: boolean;
   anchorRef: RefObject<HTMLElement | null>;
+  /** Menünün üstünde açılacağı öğe (yoksa açan düğme); dışarı tıklama ve odak yine açan düğmeye göre işler */
+  placeAboveRef?: RefObject<HTMLElement | null>;
   onClose: () => void;
   /** Ekran okuyucular için menü adı */
   label: string;
@@ -86,7 +89,7 @@ export function PanelMenu({
   useEscapeLayer(onClose, open);
 
   useLayoutEffect(() => {
-    const anchor = anchorRef.current;
+    const anchor = placeAboveRef?.current ?? anchorRef.current;
     if (!shown || !anchor) return;
     const place = (): void => {
       const a = anchor.getBoundingClientRect();
@@ -99,8 +102,14 @@ export function PanelMenu({
     };
     place();
     window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
-  }, [shown, anchorRef, align, width]);
+    // Üstünde açılan öğenin boyu değişirse (ör. ses çalınca kart büyür) menü yeniden konumlanır
+    const observer = placeAboveRef && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
+    observer?.observe(anchor);
+    return () => {
+      window.removeEventListener('resize', place);
+      observer?.disconnect();
+    };
+  }, [shown, anchorRef, placeAboveRef, align, width]);
 
   // Açılınca ilk öğe odaklanır (klavyeyle hemen gezilebilsin); kapanınca odak açan düğmeye döner
   useEffect(() => {

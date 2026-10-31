@@ -16,13 +16,14 @@ import {
   type RemoteTrackPublication,
   type RemoteVideoTrack,
 } from 'livekit-client';
-import type { TelemetryVoiceSettings, VoiceJoinResponse, VoiceTraceUplinkKind } from '@diskort/shared';
+import type { GuildSound, TelemetryVoiceSettings, VoiceJoinResponse, VoiceTraceUplinkKind } from '@diskort/shared';
 import {
   api,
   ChannelSoundGate,
   describeTransport,
   errorMessage,
   gateway,
+  guildSoundUrl,
   introSoundUrl,
   linkQuality,
   outboundDelta,
@@ -47,9 +48,12 @@ import {
   introSoundsEnabled,
   playIntroSound,
   playSound,
+  playSoundboardSound,
+  stopSoundboardForDeaf,
   prepareSounds,
   sharedAudioContext,
   stopIntroSound,
+  stopSoundboardSounds,
 } from '../../lib/sfx';
 import { getSettings, useSettings, type Settings } from '../../stores/settings';
 import { setVoice, useVoice, type MicLevel } from '../../stores/voice';
@@ -112,10 +116,14 @@ const RECONNECT_SOUND_DELAY_MS = 2500;
 /** LiveKit protokolündeki kaynak numaraları (ParticipantPermission.canPublishSources) */
 const PROTO_SOURCE = { microphone: 2, screenShare: 3 } as const;
 
+/** Ses paneli sesi çalınınca çalanın avatarındaki halkanın süresi */
+const SOUNDBOARD_RING_MS = 3000;
+
 const RESET_ROOM_STATE = {
   micAllowed: true,
   speaking: {},
   introPlayingUserId: null,
+  lastSoundboard: null,
   streams: {},
   watching: {},
   focusedStream: null,
@@ -254,6 +262,8 @@ class VoiceClient {
   private readonly introOwners = new Map<string, string>();
   /** Bağlantı kısa süre içinde geri gelmezse "koptu" sesi; geri gelince "geri geldi" */
   private reconnectTimer: number | null = null;
+  /** Ses paneli sesinin avatar halkasını söndüren zamanlayıcı */
+  private soundboardRingTimer: number | null = null;
   private lostSoundPlayed = false;
 
   /** Odada yayınlanan mikrofonun işlemcisi; seviye/hata/yeniden kurulum yalnızca ondan dikkate alınır */
@@ -281,6 +291,7 @@ class VoiceClient {
       if (msg.t === 'READY') this.syncVoiceState();
       // Yetkili biri seni başka ses kanalına taşıdı: o kanala geç
       if (msg.t === 'VOICE_MOVE' && useVoice.getState().channelId) void this.join(msg.d.channelId);
+      if (msg.t === 'SOUNDBOARD_PLAY') this.onSoundboardPlay(msg.d);
     });
     // Sunucuda sağırlaştırılınca kimse duyulmaz (dinleme LiveKit'te kesilmez, istemci uygular)
     useGuild.subscribe((next, prev) => {
@@ -288,7 +299,11 @@ class VoiceClient {
       if (!selfId) return;
       const now = next.voiceStates[selfId];
       const before = prev.voiceStates[selfId];
-      if (now?.serverDeaf !== before?.serverDeaf) this.applyVolumes();
+      if (now?.serverDeaf !== before?.serverDeaf) {
+        this.applyVolumes();
+        // Sunucuca sağırlaştırılınca çalan ses paneli sesleri hemen söner
+        if (now?.serverDeaf) stopSoundboardForDeaf();
+      }
       // Yetkili biri seni sunucuda susturdu / sağırlaştırdı (ya da kaldırdı): kendi düğmendeki gibi ses
       if (now && before && useVoice.getState().status === 'connected') {
         if (now.serverDeaf !== before.serverDeaf) playSound(now.serverDeaf ? 'deafen' : 'undeafen');
@@ -493,9 +508,30 @@ class VoiceClient {
     });
   }
 
+  /** Kanalda biri ses paneli sesi çaldı (kendin dahil): çalar, çalanın avatarında 3 saniye halka yanar */
+  private onSoundboardPlay({ channelId, userId, sound }: { channelId: string; userId: string; sound: GuildSound }): void {
+    const { channelId: current, status } = useVoice.getState();
+    // Söküm sürerken (oda null) gelen olay çalmaz
+    if (!this.room || channelId !== current || status !== 'connected') return;
+    void playSoundboardSound(guildSoundUrl(sound));
+    setVoice({ introPlayingUserId: userId, lastSoundboard: { userId, sound, at: Date.now() } });
+    this.clearSoundboardRing();
+    this.soundboardRingTimer = window.setTimeout(() => {
+      this.soundboardRingTimer = null;
+      if (useVoice.getState().introPlayingUserId === userId) setVoice({ introPlayingUserId: null });
+    }, SOUNDBOARD_RING_MS);
+  }
+
+  private clearSoundboardRing(): void {
+    if (this.soundboardRingTimer !== null) window.clearTimeout(this.soundboardRingTimer);
+    this.soundboardRingTimer = null;
+  }
+
   private async teardownRoom(): Promise<void> {
     this.channelSounds.cancel();
     stopIntroSound();
+    stopSoundboardSounds();
+    this.clearSoundboardRing();
     this.clearReconnectTimer();
     this.scheduleReupgrade(null);
     this.clearAutoRetry();

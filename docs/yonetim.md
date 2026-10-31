@@ -20,6 +20,8 @@ cd /opt/diskort/infra
 docker compose exec api node dist/admin-cli.js list              # hesap yöneticileri (--json)
 docker compose exec api node dist/admin-cli.js grant <kullanıcı>
 docker compose exec api node dist/admin-cli.js revoke <kullanıcı>   # son yönetici alınamaz
+docker compose exec api node dist/admin-cli.js intro-sound-remove <kullanıcı | kimlik>   # uygunsuz giriş sesi
+docker compose exec api node dist/admin-cli.js sound-remove <sunucu kimliği> <ses kimliği>  # ses paneli sesi (dosyasıyla)
 ```
 
 İlgili API uçları: `GET /api/users`, `GET /api/admins`, `PUT /api/admins/:id`, `DELETE /api/admins/:id`

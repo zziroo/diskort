@@ -11,6 +11,7 @@ import {
   type GuildCreatePayload,
   type GuildData,
   type GuildMember,
+  type GuildSound,
   type Presence,
   type ReadyPayload,
   type SelfStatus,
@@ -37,6 +38,8 @@ export interface GuildState {
   roles: Record<string, Role>;
   /** Üyeler; eski üyeler `removed` */
   members: Record<string, GuildMember>;
+  /** Ses panelindeki sesler, ada göre sıralı (ses panelini tanımayan eski sunucuda boş) */
+  sounds: GuildSound[];
 }
 
 export interface GuildStore {
@@ -119,6 +122,10 @@ export interface GuildStore {
 const sortChannels = (channels: Channel[]): Channel[] =>
   [...channels].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, 'tr'));
 
+/** Ses paneli sıralaması: ad (Türkçe), eşitlikte kimlik (sunucunun sırasıyla aynı) */
+const sortSounds = (sounds: GuildSound[]): GuildSound[] =>
+  [...sounds].sort((a, b) => a.name.localeCompare(b.name, 'tr') || a.id.localeCompare(b.id));
+
 const byId = <T extends { id: string }>(items: T[]): Record<string, T> =>
   Object.fromEntries(items.map((item) => [item.id, item]));
 
@@ -127,6 +134,8 @@ const toGuildState = (d: GuildData): GuildState => ({
   channels: sortChannels(d.channels),
   roles: byId(d.roles),
   members: Object.fromEntries(d.members.map((m) => [m.userId, m])),
+  // Eski sunucu alanı göndermez
+  sounds: sortSounds(d.sounds ?? []),
 });
 
 /** Seçili sunucuyu cihazda hatırlamak için anahtar */
@@ -169,6 +178,7 @@ type Derived = Pick<GuildStore, 'guild' | 'channels' | 'roles' | 'users' | 'reac
 
 const NO_ROLES: Record<string, Role> = {};
 const NO_CHANNELS: Channel[] = [];
+const NO_SOUNDS: GuildSound[] = [];
 
 /** Kanal → sunucu haritası */
 function channelIndex(guilds: Record<string, GuildState>): Record<string, string> {
@@ -598,6 +608,23 @@ function applyEvent(s: GuildStore, msg: GatewayServerMessage): Partial<GuildStor
     }
     case 'ROLES_UPDATE':
       return updateGuild(s, msg.d.guildId, (g) => ({ ...g, roles: byId(msg.d.roles) }));
+    case 'GUILD_SOUND_CREATE':
+    case 'GUILD_SOUND_UPDATE': {
+      // Ekleme ya da ad/emoji değişikliği; ad sırası korunur (REST yanıtı da aynı yoldan uygulanır, tekrar zararsız)
+      const sound = msg.d.sound;
+      return updateGuild(s, sound.guildId, (g) => ({
+        ...g,
+        sounds: sortSounds([...g.sounds.filter((x) => x.id !== sound.id), sound]),
+      }));
+    }
+    case 'GUILD_SOUND_DELETE': {
+      const { guildId, soundId } = msg.d;
+      if (!s.guilds[guildId]?.sounds.some((x) => x.id === soundId)) return {};
+      return updateGuild(s, guildId, (g) => ({ ...g, sounds: g.sounds.filter((x) => x.id !== soundId) }));
+    }
+    case 'SOUNDBOARD_PLAY':
+      // Depoyu değiştirmez: istemciler gateway.on ile dinleyip sesi çalar
+      return {};
     case 'MESSAGE_CREATE': {
       if (Number(msg.d.id) <= Number(s.lastMessageIds[msg.d.channelId] ?? 0)) return {};
       const lastMessageIds = { ...s.lastMessageIds, [msg.d.channelId]: msg.d.id };
@@ -646,6 +673,29 @@ function applyEvent(s: GuildStore, msg: GatewayServerMessage): Partial<GuildStor
     default:
       return {};
   }
+}
+
+/** Sunucunun ses panelindeki sesler, ada göre sıralı (üye olunmayan ya da eski sunucuda boş; aynı dizi, yeniden çizdirmez) */
+export function soundsOf(state: Pick<GuildStore, 'guilds'>, guildId: string | null | undefined): GuildSound[] {
+  return (guildId ? state.guilds[guildId]?.sounds : undefined) ?? NO_SOUNDS;
+}
+
+/** Ses panelinde bir sunucunun grubu */
+export interface GuildSoundGroup {
+  guild: Guild;
+  /** Ada göre sıralı */
+  sounds: GuildSound[];
+}
+
+/**
+ * Üye olunan bütün sunucuların sesleri, sunucuya göre gruplu ve sunucu adına göre sıralı; sesi olmayan
+ * sunucular da listededir (grup başlığındaki "Ses ekle" için). Bulunulan sunucuyu üste almak çağıranın işi.
+ * Her çağrıda yeni dizi üretir: seçici olarak değil, `guilds` üzerinden (useMemo ile) kullanılmalı.
+ */
+export function allSounds(state: Pick<GuildStore, 'guilds'>): GuildSoundGroup[] {
+  return Object.values(state.guilds)
+    .map((g) => ({ guild: g.guild, sounds: g.sounds }))
+    .sort((a, b) => a.guild.name.localeCompare(b.guild.name, 'tr') || a.guild.id.localeCompare(b.guild.id));
 }
 
 /** Kanalda okunmamış mesaj var mı */

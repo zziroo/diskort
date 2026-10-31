@@ -39,6 +39,7 @@ const ready = (): ReadyPayload => ({
       channels: [],
       roles: [{ id: 'a', name: '@everyone', color: null, position: 0, hoist: false, permissions: DEFAULT_EVERYONE_PERMISSIONS }],
       members: ['ben', 'ali'].map((userId) => ({ userId, roles: [], joinedAt: 1, removed: false })),
+      sounds: [],
     },
   ],
   users: [user('ben'), user('ali'), user('zeki')],

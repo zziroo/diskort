@@ -110,14 +110,15 @@ Sunucu, Google'ın FCM HTTP v1 arayüzüne doğrudan gönderir. Firebase → Pro
 | Ne | Nasıl | Nerede | Süre |
 |---|---|---|---|
 | Veritabanı | `diskort-backup.timer`, her gece 04:00 → `infra/backup-db.sh` (tutarlı kopya + bütünlük kontrolü) | `/var/backups/diskort/` (`latest.db.gz` en yenisi) | 14 gün |
-| Dosya ekleri, profil fotoğrafları, geri bildirim görüntüleri | Aynı zamanlayıcı → `infra/backup-attachments.sh` (sabit bağlantıyla, ek yer kaplamaz) | `/var/backups/diskort/` | silinen dosya 30 gün daha |
+| Dosya ekleri, profil fotoğrafları, geri bildirim görüntüleri, giriş sesleri, ses paneli sesleri | Aynı zamanlayıcı → `infra/backup-attachments.sh` (sabit bağlantıyla, ek yer kaplamaz) | `/var/backups/diskort/` (`attachments/`, `avatars/`, `feedback/`, `intro-sounds/`, `sounds/`) | silinen dosya 30 gün daha |
 | Sunucu dışı kopya | Windows Görev Zamanlayıcı → [`scripts/pull-db-backups.ps1`](../scripts/pull-db-backups.ps1), her gün 12:00 | `OneDrive\Yedekler\Diskort` | 60 gün |
 | Sunucu dışı kopya (Mac) | launchd `net.ziroo.diskort-yedek` → [`scripts/pull-db-backups.sh`](../scripts/pull-db-backups.sh), her gün 12:00; aynı sunucudaki Tussle'ın gece yedeğini de çeker | `~/Yedekler/Diskort`, Tussle `~/Yedekler/Tussle` | 60 gün; Tussle 14 gün (gizlilik sayfası) |
 
 Notlar:
 
-- Veritabanı yedeği yalnızca dosyaların kayıtlarını kapsar; dosyaların kendisi `/data/attachments/` ve
-  `/data/avatars/` altındadır ve ayrı yedeklenir.
+- Veritabanı yedeği yalnızca dosyaların kayıtlarını kapsar; dosyaların kendisi `/data/attachments/`,
+  `/data/avatars/`, `/data/intro-sounds/` (giriş sesleri) ve `/data/sounds/` (ses paneli) altındadır ve ayrı
+  yedeklenir.
 - Eski bir veritabanı yedeği geri yüklenirse, yedekte karşılığı olmayan dosyalar bir saat içinde kendiliğinden silinir.
 - Diskte 1 GB'tan az yer kalınca yeni yüklemeler reddedilir.
 

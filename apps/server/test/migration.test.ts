@@ -695,7 +695,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(28);
+      expect(MIGRATIONS.length).toBe(29);
       // Var olan mesajlar olduğu gibi; türleri yok (sıradan mesaj biçimi değişmez)
       expect(store.db.prepare('SELECT id, channel_id, author_id, content, created_at FROM messages ORDER BY id').all()).toEqual(before);
       const old = store.getMessage(Number((before[0] as { id: number }).id))!;
@@ -727,7 +727,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
       // Göç tekrar çalıştırılamaz (sütun ekler) ama açılışta tekrar çalışmaz
       store.close();
       const again = new Store(file);
-      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 28 });
+      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 29 });
       again.close();
     } finally {
       try {
@@ -751,7 +751,7 @@ describe('göç 26: arkadaşlar', () => {
 
     const store = new Store(file);
     try {
-      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 28 });
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 29 });
       const [a, b] = userIds as [string, string];
       const permissions = new PermissionService(store);
       expect(store.listFriends(a)).toEqual({ friends: [], incoming: [], outgoing: [] });
@@ -801,7 +801,7 @@ describe('göç 28: profil kozmetikleri kaldırıldı', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(28);
+      expect(MIGRATIONS.length).toBe(29);
       const columns = (store.db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((c) => c.name);
       for (const gone of ['profile_effect', 'avatar_decoration', 'profile_frame', 'nameplate']) expect(columns).not.toContain(gone);
       expect(store.db.prepare(kept).all()).toEqual(others);
@@ -811,6 +811,45 @@ describe('göç 28: profil kozmetikleri kaldırıldı', () => {
       for (const key of ['profileEffect', 'animatedEffect', 'avatarDecoration', 'profileFrame', 'nameplate']) {
         expect(key in user).toBe(false);
       }
+      expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe('göç 29: ses paneli', () => {
+  it('şema 28 veritabanına tablo eklenir; MANAGE_GUILD yetkili roller Ses Panelini Yönet alır, @everyone almaz', () => {
+    const file = schema19Database();
+    const db = new DatabaseSync(file);
+    for (let v = 19; v < 28; v++) db.exec(MIGRATIONS[v]!);
+    db.exec('PRAGMA user_version = 28');
+    const guildId = (db.prepare('SELECT id FROM guilds ORDER BY created_at, rowid LIMIT 1').get() as { id: string }).id;
+    const role = db.prepare('INSERT INTO roles (id, guild_id, name, position, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+    role.run('r-mod', guildId, 'Mod', 5, P.MANAGE_GUILD | P.KICK_MEMBERS, 1);
+    role.run('r-uye', guildId, 'Üye', 4, P.SEND_MESSAGES | P.CONNECT, 1);
+    const everyoneBefore = (db.prepare('SELECT permissions FROM roles WHERE id = ?').get(guildId) as { permissions: number }).permissions;
+    expect(everyoneBefore & P.MANAGE_GUILD).toBe(0);
+    // Bir başka sunucunun @everyone rolü MANAGE_GUILD taşıyor (id = guild_id): ses paneli biti almamalı
+    const g2 = 'g-ozel';
+    db.prepare('INSERT INTO guilds (id, name, created_at) VALUES (?, ?, ?)').run(g2, 'Özel', 1);
+    db.prepare('INSERT INTO roles (id, guild_id, name, position, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(g2, g2, '@everyone', 0, P.MANAGE_GUILD | P.SEND_MESSAGES, 1);
+    db.close();
+
+    const store = new Store(file);
+    try {
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
+      expect(MIGRATIONS.length).toBe(29);
+      const tables = (store.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'guild_sounds'`).all() as { name: string }[]).map((t) => t.name);
+      expect(tables).toEqual(['guild_sounds']);
+      const perms = (id: string) => (store.db.prepare('SELECT permissions FROM roles WHERE id = ?').get(id) as { permissions: number }).permissions;
+      expect(perms('r-mod')).toBe(P.MANAGE_GUILD | P.KICK_MEMBERS | P.MANAGE_SOUNDBOARD);
+      expect(perms('r-uye')).toBe(P.SEND_MESSAGES | P.CONNECT);
+      expect(perms(guildId)).toBe(everyoneBefore);
+      expect(perms('g-ozel')).toBe(P.MANAGE_GUILD | P.SEND_MESSAGES); // MANAGE_GUILD taşıyan @everyone biti almaz
+      // Yönetici rolü ADMINISTRATOR biti taşır; MANAGE_GUILD biti yoksa ses paneli biti de eklenmez (zaten her yetkiye sahip)
+      expect(store.listSounds(guildId)).toEqual([]);
+      expect(store.countSounds(guildId)).toBe(0);
       expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally {
       store.close();

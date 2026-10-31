@@ -21,6 +21,7 @@ export const SECTION_INFO: Record<GuildSettingsSection, { label: string; icon: I
   channels: { label: 'Kanallar', icon: 'chatbubbles', color: '#3ba55d', detail: 'Sırala, yeniden adlandır, izinler, sil' },
   roles: { label: 'Roller', icon: 'shield-half', color: '#eb459e', detail: 'Oluştur, renk, yetkiler, sıralama' },
   members: { label: 'Üyeler', icon: 'people', color: '#00a8fc', detail: 'Roller, atma, yasaklama' },
+  sounds: { label: 'Sesler', icon: 'musical-notes', color: '#9b59b6', detail: 'Ses panelinin sesleri' },
   invites: { label: 'Davetler', icon: 'link', color: '#faa61a', detail: 'Oluştur, paylaş, sil' },
   bans: { label: 'Yasaklar', icon: 'ban', color: '#f23f43', detail: 'Yasaklı kişiler, yasağı kaldır' },
 };

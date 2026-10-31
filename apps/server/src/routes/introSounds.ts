@@ -3,6 +3,7 @@ import type { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { UploadError } from '../attachments.js';
 import { sendError, type AppContext } from '../context.js';
+import { parseRange } from '../fileInfo.js';
 import { INTRO_SOUND_HASH, parseIntroDuration, parseIntroStart } from '../introSounds.js';
 import { createRateLimiter } from './messages.js';
 
@@ -101,10 +102,10 @@ export function registerIntroSoundRoutes(app: FastifyInstance, ctx: AppContext):
       void reply.header('Content-Type', 'audio/mpeg');
 
       const range = parseRange(req.headers.range, stat.size);
-      if (range === 'invalid') {
+      if (range.kind === 'invalid') {
         return reply.code(416).header('Content-Range', `bytes */${stat.size}`).send();
       }
-      if (range) {
+      if (range.kind === 'range') {
         return reply
           .code(206)
           .header('Content-Range', `bytes ${range.start}-${range.end}/${stat.size}`)
@@ -114,30 +115,4 @@ export function registerIntroSoundRoutes(app: FastifyInstance, ctx: AppContext):
       return reply.header('Content-Length', stat.size).send(fs.createReadStream(file));
     },
   );
-}
-
-/**
- * Tek aralıklı "bytes=a-b", "bytes=a-" ya da "bytes=-n" başlığını çözer. Başlık yoksa ya da birden çok aralık
- * isteniyorsa null (bütün dosya gönderilir); karşılanamayan aralıkta 'invalid' (416).
- */
-export function parseRange(header: string | undefined, size: number): { start: number; end: number } | 'invalid' | null {
-  if (!header) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!match) return null;
-  const [, from, to] = match as unknown as [string, string, string];
-  if (from === '' && to === '') return null;
-  let start: number;
-  let end: number;
-  if (from === '') {
-    // Son n bayt
-    const n = Number(to);
-    if (n === 0) return 'invalid';
-    start = Math.max(0, size - n);
-    end = size - 1;
-  } else {
-    start = Number(from);
-    end = to === '' ? size - 1 : Math.min(Number(to), size - 1);
-  }
-  if (start >= size || start > end) return 'invalid';
-  return { start, end };
 }

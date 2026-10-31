@@ -87,6 +87,24 @@ export interface GuildData {
   roles: Role[];
   /** Üyeler (eski üyeler `removed` olarak) */
   members: GuildMember[];
+  /** Ses panelindeki sesler (ada göre sıralı; eski sunucu göndermezse istemci `[]` sayar) */
+  sounds: GuildSound[];
+}
+
+/** Sunucunun ses panelindeki bir ses (bkz. docs/ses-paneli.md) */
+export interface GuildSound {
+  id: string;
+  guildId: string;
+  /** 1..SOUNDBOARD_NAME_MAX karakter */
+  name: string;
+  /** Tek bir emoji (unicode) ya da null */
+  emoji: string | null;
+  /** Sunucu köküne göre adres: /api/sounds/<guildId>/<özet>.mp3 (kimliksiz, immutable) */
+  url: string;
+  /** Yükleyen; hesabı silindiyse null */
+  uploaderId: string | null;
+  createdAt: number;
+  durationMs: number;
 }
 
 /**
@@ -916,6 +934,15 @@ export type GatewayServerMessage =
   | { t: 'GUILD_MEMBER_ADD'; d: { guildId: string; member: GuildMember; user: User } }
   /** Üyenin rolleri değişti */
   | { t: 'GUILD_MEMBER_UPDATE'; d: { guildId: string; member: GuildMember } }
+  /** Ses paneline ses eklendi / değişti / silindi (sunucunun üyelerine; eski istemciler yok sayar) */
+  | { t: 'GUILD_SOUND_CREATE'; d: { sound: GuildSound } }
+  | { t: 'GUILD_SOUND_UPDATE'; d: { sound: GuildSound } }
+  | { t: 'GUILD_SOUND_DELETE'; d: { guildId: string; soundId: string } }
+  /**
+   * Biri ses panelinden ses çaldı: yalnızca o ses kanalındaki üyelere (çalan dahil). `sound` tam nesnedir ki
+   * kullanıcının üyesi olduğu başka bir sunucunun sesi de (kanaldakiler o sunucuda olmasa da) çalınabilsin.
+   */
+  | { t: 'SOUNDBOARD_PLAY'; d: { channelId: string; guildId: string; userId: string; sound: GuildSound } }
   /** Üye sunucudan ayrıldı, atıldı ya da yasaklandı (eski üye olarak kalır) */
   | { t: 'GUILD_MEMBER_REMOVE'; d: { guildId: string; userId: string } }
   /** Sunucunun rollerinden biri eklendi, değişti, silindi ya da sıralama değişti: tüm liste */
@@ -1105,6 +1132,14 @@ export const AVATAR_MAX_BYTES = 8 * 1024 * 1024;
 export const INTRO_SOUND_MAX_BYTES = 8 * 1024 * 1024;
 /** Giriş sesinin en uzun süresi (saniye): sunucu yüklenen sesin bu kadarını (başlangıç noktasından) saklar */
 export const INTRO_SOUND_MAX_SECONDS = 5;
+/** Ses paneli: sunucu başına en çok ses sayısı */
+export const SOUNDBOARD_MAX_SOUNDS = 64;
+/** Ses paneli: ses adı 1..32 karakter (boşluklar kırpıldıktan sonra) */
+export const SOUNDBOARD_NAME_MAX = 32;
+/** Ses paneli sesinin en uzun süresi (saniye); giriş sesiyle aynı işleme hattı */
+export const SOUNDBOARD_SOUND_MAX_SECONDS = INTRO_SOUND_MAX_SECONDS;
+/** Ses paneline yüklenen dosyanın en büyük boyutu (girdi; sunucu kırpar ve MP3'e çevirir) */
+export const SOUNDBOARD_SOUND_MAX_BYTES = INTRO_SOUND_MAX_BYTES;
 /** "Yazıyor…" göstergesinin geçerlilik süresi; istemci bu aralıkta en fazla bir kez bildirir */
 export const TYPING_TIMEOUT_MS = 8000;
 

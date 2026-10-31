@@ -21,6 +21,7 @@ describe('sunucu ayarları bölümleri', () => {
       'channels',
       'roles',
       'members',
+      'sounds',
       'invites',
       'bans',
     ]);
@@ -30,6 +31,7 @@ describe('sunucu ayarları bölümleri', () => {
     expect(guildSettingsSections(P.MANAGE_ROLES, false)).toEqual(['channels', 'roles', 'members']);
     expect(guildSettingsSections(P.MANAGE_CHANNELS, false)).toEqual(['channels']);
     expect(guildSettingsSections(P.BAN_MEMBERS, false)).toEqual(['members', 'bans']);
+    expect(guildSettingsSections(P.MANAGE_SOUNDBOARD, false)).toEqual(['sounds']);
     expect(guildSettingsSections(P.MOVE_MEMBERS, false)).toEqual(['members']);
     expect(guildSettingsSections(P.MANAGE_INVITES, false)).toEqual(['invites']);
   });

@@ -6,7 +6,8 @@ import { useVoice } from './voice';
 const voiceChannelId = (): string | null => useVoice.getState().channelId;
 
 export type Modal =
-  | { type: 'settings'; section?: SettingsSection }
+  /** `anchor`: bölüm açılınca kaydırılacak alt başlık */
+  | { type: 'settings'; section?: SettingsSection; anchor?: 'soundboard' }
   | { type: 'serverSettings'; section?: ServerSettingsSection }
   | { type: 'screenPicker' }
   | { type: 'channel'; channel?: Channel; channelType?: ChannelType }
@@ -33,7 +34,7 @@ export type Modal =
  */
 export type SettingsSection = Exclude<SettingsSectionId, 'webAdmin' | 'privacy'>;
 
-export type ServerSettingsSection = 'overview' | 'roles' | 'members' | 'invites' | 'bans';
+export type ServerSettingsSection = 'overview' | 'roles' | 'members' | 'sounds' | 'invites' | 'bans';
 
 export interface ContextMenuItem {
   label: string;
@@ -55,8 +56,6 @@ export interface ContextMenuState {
   y: number;
   /** Özel içerik (ör. ses seviyesi kaydırıcısı) veya basit menü öğeleri */
   userId?: string;
-  /** Giriş sesleri seviyesi kaydırıcısı (ses bağlantısı kartı) */
-  introVolume?: boolean;
   items?: ContextMenuItem[];
 }
 
@@ -125,6 +124,8 @@ interface UiStore {
   modal: Modal;
   contextMenu: ContextMenuState | null;
   emojiPicker: EmojiPickerState | null;
+  /** Ses paneline ses ekleme penceresi (açık pencerenin üstünde de açılabilir); yoksa null */
+  soundUpload: { guildId: string } | null;
   toasts: Toast[];
   openModal: (modal: Modal) => void;
   closeModal: () => void;
@@ -132,6 +133,8 @@ interface UiStore {
   closeContextMenu: () => void;
   openEmojiPicker: (picker: EmojiPickerState) => void;
   closeEmojiPicker: () => void;
+  openSoundUpload: (guildId: string) => void;
+  closeSoundUpload: () => void;
   toast: (text: string, kind?: Toast['kind']) => void;
   dismissToast: (id: number) => void;
 }
@@ -231,6 +234,7 @@ export const useUi = create<UiStore>()((set, get) => ({
   modal: null,
   contextMenu: null,
   emojiPicker: null,
+  soundUpload: null,
   toasts: [],
   openModal: (modal) => set({ modal, contextMenu: null, emojiPicker: null }),
   closeModal: () => set({ modal: null }),
@@ -238,6 +242,8 @@ export const useUi = create<UiStore>()((set, get) => ({
   closeContextMenu: () => set({ contextMenu: null }),
   openEmojiPicker: (emojiPicker) => set({ emojiPicker, contextMenu: null }),
   closeEmojiPicker: () => set({ emojiPicker: null }),
+  openSoundUpload: (guildId) => set({ soundUpload: { guildId }, contextMenu: null, emojiPicker: null }),
+  closeSoundUpload: () => set({ soundUpload: null }),
   toast: (text, kind = 'info') => {
     const id = ++toastId;
     set({ toasts: [...get().toasts, { id, text, kind }].slice(-4) });

@@ -27,6 +27,7 @@ const guild = (id: string, ownerId: string, channels: Channel[]): GuildData => (
   channels,
   roles: [{ id, name: '@everyone', color: null, position: 0, hoist: false, permissions: DEFAULT_EVERYONE_PERMISSIONS }],
   members: ['ben', 'ali'].map((userId) => ({ userId, roles: [], joinedAt: 1, removed: false })),
+  sounds: [],
 });
 
 const vs = (userId: string, channelId: string, extra: Partial<VoiceState> = {}): VoiceState => ({

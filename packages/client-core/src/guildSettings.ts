@@ -3,7 +3,7 @@ import { hasPermission, Permission, type ChannelType } from '@diskort/shared';
 // Sunucu ayarlarının hangi bölümlerinin kime görüneceği ve kanal adı kuralı. Arayüzler yalnızca yetkisi
 // olmayanın göremeyeceği işleri gizler; asıl denetim sunucudadır.
 
-export type GuildSettingsSection = 'overview' | 'roles' | 'members' | 'invites' | 'bans' | 'channels';
+export type GuildSettingsSection = 'overview' | 'roles' | 'members' | 'invites' | 'bans' | 'channels' | 'sounds';
 
 const P = Permission;
 
@@ -13,6 +13,7 @@ export const GUILD_SETTINGS_SECTIONS: readonly { id: GuildSettingsSection; any: 
   { id: 'channels', any: [P.MANAGE_CHANNELS, P.MANAGE_ROLES] },
   { id: 'roles', any: [P.MANAGE_ROLES] },
   { id: 'members', any: [P.MANAGE_ROLES, P.KICK_MEMBERS, P.BAN_MEMBERS, P.MUTE_MEMBERS, P.DEAFEN_MEMBERS, P.MOVE_MEMBERS] },
+  { id: 'sounds', any: [P.MANAGE_SOUNDBOARD] },
   { id: 'invites', any: [P.CREATE_INVITE, P.MANAGE_INVITES] },
   { id: 'bans', any: [P.BAN_MEMBERS] },
 ];

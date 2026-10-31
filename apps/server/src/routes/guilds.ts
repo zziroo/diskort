@@ -51,7 +51,7 @@ type GuildParams = { guildId: string };
  * sohbette yönetme. Üyesi olunmayan sunucunun her ucu "yok" (404) döner.
  */
 export function registerGuildRoutes(app: FastifyInstance, ctx: AppContext): void {
-  const { store, auth, gateway, permissions, moderation, voice, avatars, attachments } = ctx;
+  const { store, auth, gateway, permissions, moderation, voice, avatars, attachments, soundboard } = ctx;
   const allowCreate = createRateLimiter(5, 10 * 60_000);
   const allowIcon = createRateLimiter(10, 10 * 60_000);
   const allowJoin = createRateLimiter(20, 10 * 60_000);
@@ -131,6 +131,7 @@ export function registerGuildRoutes(app: FastifyInstance, ctx: AppContext): void
     gateway.sendToUsers(members, { t: 'GUILD_DELETE', d: { id: guildId, reason: 'Sunucu silindi.' } });
     await attachments.remove(result.files);
     await avatars.removeDeletedIcon(result.icon).catch(() => undefined);
+    await soundboard.removeDeleted(result.sounds).catch(() => undefined);
     return reply.code(204).send();
   });
 

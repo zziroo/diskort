@@ -4,6 +4,7 @@ import {
   ChannelSoundGate,
   errorMessage,
   gateway,
+  guildSoundUrl,
   introSoundUrl,
   reportClientError,
   reportVoiceLog,
@@ -37,7 +38,14 @@ import { Dimensions, PermissionsAndroid, PixelRatio, Platform } from 'react-nati
 import { create } from 'zustand';
 import { VoiceService } from '../../modules/voice-service';
 import { soundCue, type SoundEvent } from '../haptics';
-import { INTRO_AFTER_CUE_MS, introSoundsEnabled, playIntroSound, stopIntroSound } from '../sounds';
+import {
+  INTRO_AFTER_CUE_MS,
+  introSoundsEnabled,
+  playIntroSound,
+  playSoundboardSound,
+  stopIntroSound,
+  stopSoundboardSounds,
+} from '../sounds';
 import { getSettings, useSettings } from '../stores/settings';
 import { toast } from '../stores/ui';
 import { MicGate, SILENT_LEVEL, type GateConfig, type MicLevel } from './micGate';
@@ -144,6 +152,9 @@ const IDLE: Omit<VoiceStore, 'channelId' | 'status'> = {
 };
 
 export const useVoice = create<VoiceStore>()(() => ({ channelId: null, status: 'idle', ...IDLE }));
+
+/** Ses paneli sesi çalanın avatarındaki halkanın süresi */
+const SOUNDBOARD_RING_MS = 3000;
 
 /** LiveKit protokolündeki kaynak numaraları (ParticipantPermission.canPublishSources) */
 const PROTO_SOURCE = { microphone: 2, screenShare: 3 } as const;
@@ -288,6 +299,7 @@ class MobileVoiceClient {
       if (msg.t === 'VOICE_MOVE' && useVoice.getState().channelId && useVoice.getState().channelId !== msg.d.channelId) {
         this.join(msg.d.channelId, { rejoin: true }).catch((err: Error) => toast(err.message, 'error'));
       }
+      if (msg.t === 'SOUNDBOARD_PLAY') this.onSoundboardPlay(msg.d.channelId, msg.d.userId, guildSoundUrl(msg.d.sound));
     });
     // Sunucuda sağırlaştırılınca kimse duyulmaz (dinleme LiveKit'te kesilmez, uygulama uygular)
     useGuild.subscribe((next, prev) => {
@@ -296,6 +308,7 @@ class MobileVoiceClient {
       const now = next.voiceStates[selfId];
       const before = prev.voiceStates[selfId];
       if (now?.serverDeaf !== before?.serverDeaf) void this.applyLocalState();
+      if (now?.serverDeaf && !before?.serverDeaf) stopSoundboardSounds();
       // Yetkili biri seni sunucuda susturdu / sağırlaştırdı (ya da kaldırdı): kendi düğmendeki gibi ses
       if (now && before && useVoice.getState().status === 'connected') {
         if (now.serverDeaf !== before.serverDeaf) soundCue(now.serverDeaf ? 'deafen' : 'undeafen');
@@ -304,6 +317,7 @@ class MobileVoiceClient {
     });
     // Kişi/yayın ses seviyeleri ve ses algılama ayarları anında uygulanır
     useSettings.subscribe((next, prev) => {
+      if (next.selfDeaf && !prev.selfDeaf) stopSoundboardSounds();
       if (
         next.userVolumes !== prev.userVolumes ||
         next.streamVolumes !== prev.streamVolumes ||
@@ -909,6 +923,35 @@ class MobileVoiceClient {
     });
   }
 
+  /** Halkanın bitiş zamanlayıcısı (bkz. onSoundboardPlay) */
+  private boardRingTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Kanalda ses paneli sesi çalındı (kendi çaldığın da gelir): bağlı ve aynı kanaldaysan çalar, çalanın
+   * avatarında giriş sesi halkası SOUNDBOARD_RING_MS yanar.
+   */
+  private onSoundboardPlay(channelId: string, userId: string, url: string): void {
+    const state = useVoice.getState();
+    // Söküm sürerken (room bırakıldı, durum henüz bağlı) gelen olay ayrıldıktan sonra duyulmasın
+    if (!this.room || state.status !== 'connected' || state.channelId !== channelId) return;
+    playSoundboardSound(url);
+    if (this.boardRingTimer !== null) clearTimeout(this.boardRingTimer);
+    useVoice.setState({ introPlayingUserId: userId });
+    this.boardRingTimer = setTimeout(() => {
+      this.boardRingTimer = null;
+      if (useVoice.getState().introPlayingUserId === userId) useVoice.setState({ introPlayingUserId: null });
+    }, SOUNDBOARD_RING_MS);
+  }
+
+  /** Ses paneli seslerini keser, halkayı söndürür (odadan çıkılırken) */
+  private stopSoundboard(): void {
+    stopSoundboardSounds();
+    if (this.boardRingTimer === null) return;
+    clearTimeout(this.boardRingTimer);
+    this.boardRingTimer = null;
+    useVoice.setState({ introPlayingUserId: null });
+  }
+
   /**
    * Odayı kapatır, ses oturumunu ve ön plan servisini durdurur. Kapatmalar sırayla yapılır: önceki
    * kapatma (ör. yavaş kapanan oda) yeni katılmadan sonra bitip yeni bağlantının ses oturumunu ve ön
@@ -920,6 +963,7 @@ class MobileVoiceClient {
     this.room = null;
     this.channelSounds.cancel();
     stopIntroSound();
+    this.stopSoundboard();
     this.introOwners.clear();
     this.clearReconnectTimer();
     this.gate.detach();

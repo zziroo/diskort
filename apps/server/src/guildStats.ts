@@ -2,7 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { firstMessageIdSince } from './dashboard.js';
 
 // Yönetim paneli: sunucu (topluluk) başına ayrıntılar — üyeler, kanallar, mesajlar (toplam ve son 7 gün),
-// ses/yayın süreleri (göç 20 sonrası kayıtlardan), en çok yazanlar (yalnızca sayılar) ve dosya ekleri.
+// ses/yayın süreleri (göç 20 sonrası kayıtlardan), en çok yazanlar (yalnızca sayılar), dosya ekleri ve ses
+// paneli sesleri.
 // Direkt mesajlar ayrı satırdır. Mesaj içerikleri okunmaz.
 
 const DAY = 86_400_000;
@@ -19,6 +20,8 @@ export interface GuildStat {
   channels: { text: number; voice: number };
   messages: { total: number; last7d: number; lastAt: number | null };
   attachments: { count: number; bytes: number };
+  /** Ses paneli sesleri (guild_sounds) */
+  sounds: { count: number; bytes: number };
   voice7d: { voiceMin: number; streamMin: number };
   /** Son 7 günde en çok mesaj yazanlar (en fazla 5) */
   topPosters: { userId: string; count: number }[];
@@ -49,6 +52,7 @@ export function computeGuildStats(db: DatabaseSync, now = Date.now()): GuildStat
       channels: { text: 0, voice: 0 },
       messages: { total: 0, last7d: 0, lastAt: null },
       attachments: { count: 0, bytes: 0 },
+      sounds: { count: 0, bytes: 0 },
       voice7d: { voiceMin: 0, streamMin: 0 },
       topPosters: [],
       invites: 0,
@@ -106,6 +110,12 @@ export function computeGuildStats(db: DatabaseSync, now = Date.now()): GuildStat
     const s = r.g ? byGuild.get(r.g) : null;
     if (s) s.attachments = { count: r.n, bytes: r.size };
     else if (!r.g) dms.attachments = { count: r.n, bytes: r.size };
+  }
+  for (const r of all<{ g: string; n: number; size: number }>(
+    'SELECT guild_id AS g, COUNT(*) AS n, COALESCE(SUM(size), 0) AS size FROM guild_sounds GROUP BY guild_id',
+  )) {
+    const s = byGuild.get(r.g);
+    if (s) s.sounds = { count: r.n, bytes: r.size };
   }
   const from = now - 7 * DAY;
   for (const r of all<{ g: string | null; kind: string; ms: number }>(

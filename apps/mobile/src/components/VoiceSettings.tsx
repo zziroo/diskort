@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SOUND_LABELS } from '@diskort/client-core';
+import { errorMessage, introSoundUrl, removeIntroSound, SOUND_LABELS, uploadIntroSound, useSession } from '@diskort/client-core';
+import { pickIntroSound } from '../attachments';
 import { feedback, soundCue, useHapticsAvailable } from '../haptics';
-import { MOBILE_SOUND_NAMES, previewSound, soundsAvailable } from '../sounds';
+import { MOBILE_SOUND_NAMES, playIntroSound, previewSound, soundsAvailable } from '../sounds';
 import { useSettings, type NoiseMode, type NoiseStrengthDb } from '../stores/settings';
+import { toast } from '../stores/ui';
 import { colors, createStyles } from '../theme';
 import { dpdfnetAvailable, effectiveNoiseMode, useNoiseFilter } from '../voice/noiseFilter';
 import { useVoice, voice } from '../voice/voice';
+import { confirmDialog } from './Dialog';
 import { Slider } from './Slider';
-import { Card, SectionTitle } from './ui';
+import { SoundboardVolume } from './SoundboardVolume';
+import { Button, Card, SectionTitle } from './ui';
 
 /** Göstergenin ölçeği (dBFS): -80 en sol, 0 en sağ */
 const METER_MIN = -80;
@@ -17,7 +21,7 @@ const toRatio = (db: number): number => Math.min(1, Math.max(0, (db - METER_MIN)
 
 /**
  * Ayarlar → Ses ve Görüntü: titreşim, gürültü/yankı engelleme, otomatik ses seviyesi ve ses algılama (masaüstündeki
- * "ses aktivitesi"nin telefondaki karşılığı; canlı seviye göstergesiyle).
+ * "ses aktivitesi"nin telefondaki karşılığı; canlı seviye göstergesiyle); altında ses paneli seviyesi ve giriş sesi.
  */
 export function VoiceSettings() {
   const echoCancellation = useSettings((s) => s.echoCancellation);
@@ -105,20 +109,117 @@ export function VoiceSettings() {
           </View>
         )}
       </Card>
+      <SoundboardSettings />
     </View>
   );
+}
+
+/** Ses Paneli kartı: giriş sesleri ve ses paneli seslerinin ortak seviyesi, kişisel giriş sesi */
+function SoundboardSettings() {
+  const user = useSession((s) => s.user);
+  const intro = useIntroSound();
+  const introUrl = introSoundUrl(user);
+  return (
+    <>
+      <SectionTitle>Ses Paneli</SectionTitle>
+      {/* Eski APK'larda (expo-audio yok) ses çalınamaz; ayarlar gösterilmez */}
+      {soundsAvailable() ? (
+        <Card style={styles.card}>
+          <View style={styles.choiceBlock}>
+            <SoundboardVolume description="Giriş sesleri ve ses paneli sesleri. 0 = kapalı." />
+          </View>
+          <View style={styles.choiceBlock}>
+            <Text style={styles.label}>Giriş sesi</Text>
+            <Text style={styles.description}>MP3, WAV, OGG, M4A… İlk 5 saniyesi alınır. Kanala girince herkes duyar.</Text>
+            <View style={styles.buttons}>
+              <View style={styles.button}>
+                <Button
+                  title={introUrl ? 'Değiştir' : 'Ses seç'}
+                  busy={intro.busy === 'upload'}
+                  disabled={intro.busy !== null}
+                  onPress={() => void intro.change()}
+                />
+              </View>
+              {introUrl ? (
+                <View style={styles.button}>
+                  <Button title="Dinle" variant="secondary" onPress={() => playIntroSound(introUrl, { preview: true })} />
+                </View>
+              ) : null}
+              {introUrl ? (
+                <View style={styles.button}>
+                  <Button
+                    title="Kaldır"
+                    variant="secondary"
+                    busy={intro.busy === 'remove'}
+                    disabled={intro.busy !== null}
+                    onPress={() => void intro.remove()}
+                  />
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </Card>
+      ) : (
+        <Card style={styles.card}>
+          <Text style={styles.unavailable}>Bu uygulama sürümünde sesler çalınamıyor; yeni sürümü kurunca açılır.</Text>
+        </Card>
+      )}
+    </>
+  );
+}
+
+/**
+ * Kişisel giriş sesi: dosya seçicisinden bir ses seçilir, sunucu ilk 5 saniyesini alır (telefonda başlangıç
+ * noktası seçilmez). Kaldırmadan önce onay sorulur.
+ */
+function useIntroSound() {
+  const [busy, setBusy] = useState<'upload' | 'remove' | null>(null);
+
+  const change = async (): Promise<void> => {
+    const file = await pickIntroSound().catch((err: unknown) => {
+      toast(errorMessage(err), 'error');
+      return null;
+    });
+    if (!file) return;
+    setBusy('upload');
+    try {
+      await uploadIntroSound(file);
+      toast('Giriş sesi güncellendi.');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: 'Giriş sesi kaldırılsın mı?',
+      message: 'Kanala girince yeniden genel katılma sesi çalar.',
+      confirmLabel: 'Kaldır',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy('remove');
+    try {
+      await removeIntroSound();
+      toast('Giriş sesi kaldırıldı.');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return { busy, change, remove };
 }
 
 /** Arayüz sesleri: aç/kapat, bildirim sesi ve her sesi dinleme listesi */
 export function SoundSettings() {
   const sounds = useSettings((s) => s.sounds);
   const notificationSound = useSettings((s) => s.notificationSound);
-  const introVolume = useSettings((s) => s.introSoundVolume);
   const set = useSettings((s) => s.set);
   const [listOpen, setListOpen] = useState(false);
-  // Giriş sesi seviyesi sürüklenirken yüzde anında güncellenir; bırakınca kaydedilir
-  const [introPreview, setIntroPreview] = useState<number | null>(null);
-  const introPercent = Math.round((introPreview ?? introVolume) * 100);
   // Eski APK'larda (expo-audio yok) ses çalınamaz; ayarlar gösterilmez
   if (!soundsAvailable()) return null;
   return (
@@ -132,28 +233,6 @@ export function SoundSettings() {
           if (v) soundCue('unmute');
         }}
       />
-      {sounds && (
-        <View style={styles.choiceBlock}>
-          <View style={styles.sliderHead}>
-            <Text style={styles.label}>Giriş sesleri</Text>
-            <Text style={styles.sliderValue}>{introPercent === 0 ? 'Kapalı' : `%${introPercent}`}</Text>
-          </View>
-          <Slider
-            value={introVolume}
-            min={0}
-            max={1}
-            step={0.05}
-            accessibilityLabel="Giriş seslerinin seviyesi"
-            accessibilityText={(v) => (v <= 0 ? 'Kapalı' : `Yüzde ${Math.round(v * 100)}`)}
-            onChange={setIntroPreview}
-            onChangeEnd={(v) => {
-              setIntroPreview(null);
-              set({ introSoundVolume: Math.round(v * 100) / 100 });
-            }}
-          />
-          <Text style={styles.description}>Kanala girenlerin kendi yüklediği kısa ses. 0 = kapalı</Text>
-        </View>
-      )}
       <ToggleRow
         label="Bildirim sesi"
         description="Uygulama açıkken senden bahsedilince ya da direkt mesaj gelince. Rahatsız Etmeyin durumunda çalmaz."
@@ -370,8 +449,9 @@ const styles = createStyles(() => ({
   listToggleText: { color: colors.muted, fontSize: 14, fontWeight: '500' },
   soundRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
   soundLabel: { color: colors.text, fontSize: 14.5 },
-  sliderHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sliderValue: { color: colors.muted, fontSize: 14, fontVariant: ['tabular-nums'] },
+  unavailable: { color: colors.muted, fontSize: 13, lineHeight: 19, paddingVertical: 12 },
+  buttons: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  button: { flex: 1 },
   // Kaydırıcıyla hizalı olsun diye iki yanda başparmak payı bırakılır
   meter: { height: 22, justifyContent: 'center', marginHorizontal: THUMB_PAD, marginTop: 6 },
   meterTrack: { height: 8, borderRadius: 4, backgroundColor: colors.control, overflow: 'hidden' },

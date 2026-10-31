@@ -142,6 +142,7 @@ export {
   usePendingInvite,
 } from './pendingInvite';
 export {
+  allSounds,
   channelById,
   guildVoiceStateOf,
   isDmVoiceChannel,
@@ -149,13 +150,24 @@ export {
   isGuildUnread,
   isUnread,
   membersOf,
+  soundsOf,
   streamersFirst,
   useGuild,
   type GatewayStatus,
+  type GuildSoundGroup,
   type GuildState,
   type GuildStore,
   type MemberUser,
 } from './guild';
+export {
+  fetchGuildSounds,
+  guildSoundUrl,
+  playGuildSound,
+  removeGuildSound,
+  updateGuildSound,
+  uploadGuildSound,
+  type UploadGuildSoundOptions,
+} from './soundboard';
 export {
   createGuild,
   deleteGuild,

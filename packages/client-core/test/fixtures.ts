@@ -30,7 +30,7 @@ export function toReady(
   return {
     ...rest,
     user: profile(rest.user as TestUser),
-    guilds: [{ guild, channels, roles, members: users.map(member) }],
+    guilds: [{ guild, channels, roles, members: users.map(member), sounds: [] }],
     users: users.map(profile),
     primaryGuildId: primaryGuildId ?? guild.id,
   };

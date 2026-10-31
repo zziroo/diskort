@@ -29,6 +29,7 @@ import { ChannelModal } from './modals/ChannelModal';
 import { ScreenSharePicker } from './modals/ScreenSharePicker';
 import { ServerSettingsModal } from './serverSettings/ServerSettingsModal';
 import { SettingsModal } from './settings/SettingsModal';
+import { SoundUploadModal } from './sounds/SoundUploadModal';
 import { CustomStatusModal } from './status/CustomStatusModal';
 import { FeedbackModal } from './feedback/FeedbackModal';
 import { useFeedbackToasts } from '../features/feedback/useFeedbackToasts';
@@ -114,6 +115,7 @@ export function MainLayout() {
           <ReactionsModal channelId={modal.channelId} messageId={modal.messageId} emoji={modal.emoji} />
         )}
       </PresenceProvider>
+      <SoundUploadModal />
       <BanModal />
       <IncomingCall />
     </>

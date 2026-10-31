@@ -40,10 +40,10 @@ interface MobileSettings {
   /** Sesli sohbet sesleri: katıl/ayrıl, sustur, sağırlaştır, yayın, biri girdi/çıktı (bkz. sounds.ts) */
   sounds: boolean;
   /**
-   * Giriş seslerinin seviyesi (0..1): kanala girenin kendi yüklediği kısa ses (bkz. sounds.ts playIntroSound).
-   * 0 = kapalı, onun yerine genel katılma sesi çalar.
+   * Ses paneli ses seviyesi (0..1): giriş sesleri ve ses paneli sesleri aynı değeri kullanır (bkz. sounds.ts
+   * playIntroSound, playSoundboardSound). 0 = kapalı; giriş sesi yerine genel katılma sesi çalar.
    */
-  introSoundVolume: number;
+  soundboardVolume: number;
   /** Uygulama açıkken bahsedilince ve direkt mesaj gelince ses (Rahatsız Etmeyin durumunda çalmaz) */
   notificationSound: boolean;
   set: (patch: Partial<Omit<MobileSettings, 'set'>>) => void;
@@ -68,7 +68,7 @@ export const useSettings = create<MobileSettings>()(
       vadThresholdDb: -50,
       haptics: true,
       sounds: true,
-      introSoundVolume: 1,
+      soundboardVolume: 1,
       notificationSound: true,
       set: (patch) => set(patch),
     }),
@@ -81,7 +81,8 @@ export const useSettings = create<MobileSettings>()(
       // Sürüm 1 → 2: ses paketleri kaldırıldı (tek ses takımı); kayıtlı soundPack ayarı silinir; ses efekti
       // seviyesi ayarı da kaldırıldı (sesler tek, sabit seviyede).
       // Sürüm 2 → 3: bağlantı önizlemesi ayarı kaldırıldı (önizlemeler hep gösterilir); kayıtlı değer silinir.
-      version: 3,
+      // Sürüm 3 → 4: giriş sesi seviyesi ses paneliyle ortak oldu (introSoundVolume → soundboardVolume).
+      version: 4,
       migrate: (persisted, version) => {
         let state = (persisted ?? {}) as Record<string, unknown>;
         if (version < 1) {
@@ -95,6 +96,10 @@ export const useSettings = create<MobileSettings>()(
         if (version < 3) {
           const { linkPreviews: _linkPreviews, ...rest } = state;
           state = rest;
+        }
+        if (version < 4) {
+          const { introSoundVolume, ...rest } = state;
+          state = typeof introSoundVolume === 'number' ? { ...rest, soundboardVolume: introSoundVolume } : rest;
         }
         return state as unknown as MobileSettings;
       },

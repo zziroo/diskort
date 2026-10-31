@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sunucudaki Diskort yedeklerini bu bilgisayara indirir (Mac karşılığı; Windows'ta scripts/pull-db-backups.ps1):
-# en son veritabanı yedeği (60 gün tutulur), dosya eklerinin, profil fotoğraflarının ve geri bildirim ekran
-# görüntülerinin aynası. Böylece sunucu tamamen kaybolsa bile bir kopya burada kalır. Aynı sunucudaki Tussle'ın
+# en son veritabanı yedeği (60 gün tutulur), dosya eklerinin, profil fotoğraflarının, geri bildirim ekran
+# görüntülerinin, giriş seslerinin ve ses paneli seslerinin aynası. Böylece sunucu tamamen kaybolsa bile bir kopya burada kalır. Aynı sunucudaki Tussle'ın
 # gece yedeğini de indirir (~/Yedekler/Tussle, 14 gün: Tussle gizlilik sayfası yedekleri en çok 14 gün tutar).
 # launchd her gün 12:00'de çalıştırır (net.ziroo.diskort-yedek). Elle: bash scripts/pull-db-backups.sh
 #
@@ -35,9 +35,12 @@ mirror() {
   local -a remote_files=() missing=()
   [ -n "$listing" ] && while IFS= read -r f; do remote_files+=("$f"); done <<<"$listing"
   local f
-  for f in "${remote_files[@]}"; do
-    [ -e "$local_dir/$f" ] || missing+=("$f")
-  done
+  # macOS /bin/bash 3.2 boş diziyi set -u altında tanımsız sayar: sunucuda dosya yokken betik düşmesin
+  if [ "${#remote_files[@]}" -gt 0 ]; then
+    for f in "${remote_files[@]}"; do
+      [ -e "$local_dir/$f" ] || missing+=("$f")
+    done
+  fi
   local tmp_tar="${TMPDIR:-/tmp}/diskort-yedek-$$.tar"
   local i batch remote_tar="/tmp/diskort-yedek-$$.tar"
   for ((i = 0; i < ${#missing[@]}; i += 400)); do
@@ -83,15 +86,17 @@ pull_latest() {
 db="$(pull_latest "$REMOTE_ROOT" "$DEST")"
 find "$DEST" -maxdepth 1 -name 'diskort-*.db.gz' -mtime +"$KEEP_DAYS" -delete
 
-# 2) Ekler, profil fotoğrafları, geri bildirim görüntüleri (sunucudaki günlük kopyanın aynası)
+# 2) Ekler, profil fotoğrafları, geri bildirim görüntüleri, giriş sesleri, ses paneli sesleri (sunucudaki günlük kopyanın aynası)
 a="$(mirror "$REMOTE_ROOT/attachments" "$DEST/ekler" '^[0-9a-f]{32}$' 'ekler')"
 b="$(mirror "$REMOTE_ROOT/avatars" "$DEST/profil-fotograflari" '^[0-9a-f]{32}\.webp$' 'profil fotoğrafları')"
 c="$(mirror "$REMOTE_ROOT/feedback" "$DEST/geri-bildirim" '^[0-9a-f]{32}\.webp$' 'geri bildirim görüntüleri')"
+d="$(mirror "$REMOTE_ROOT/intro-sounds" "$DEST/giris-sesleri" '^[0-9a-f]{32}\.mp3$' 'giriş sesleri')"
+e="$(mirror "$REMOTE_ROOT/sounds" "$DEST/ses-paneli" '^[0-9a-f]{32}\.mp3$' 'ses paneli sesleri')"
 
 # 3) Tussle veritabanı yedeği. Dosyanın zamanı indiği an (sunucuda alınıştan ~8 saat sonra), bu yüzden
 # indirilişinden 13 gün sonra silinir; böylece hiçbir kopya alınışından 14 gün sonra burada durmaz.
 t="$(pull_latest /var/backups/tussle "$TUSSLE_DEST")"
 find "$TUSSLE_DEST" -maxdepth 1 -name 'tussle-*.db.gz' -mmin +"$(((TUSSLE_KEEP_DAYS - 1) * 1440))" -delete
 
-echo "$(now) TAMAM  $db; $a; $b; $c; tussle $t" >>"$LOG"
-echo "TAMAM: $db; $a; $b; $c; tussle $t"
+echo "$(now) TAMAM  $db; $a; $b; $c; $d; $e; tussle $t" >>"$LOG"
+echo "TAMAM: $db; $a; $b; $c; $d; $e; tussle $t"

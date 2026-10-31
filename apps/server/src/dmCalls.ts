@@ -354,7 +354,7 @@ export class DmCallService {
   private ringUsers(call: CallState, ringerId: string, targets: string[] | null): number {
     const { permissions, voice, gateway, push, store } = this.deps;
     const participants = permissions.dmParticipants(call.channelId);
-    const inRoom = new Set(voice.list().filter((v) => v.channelId === call.channelId).map((v) => v.userId));
+    const inRoom = new Set(voice.membersOf(call.channelId));
     const candidates = (targets ?? participants).filter(
       (id) =>
         id !== ringerId &&

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { GuildSound } from '@diskort/shared';
 import type { NoiseFallbackState, NoiseNotice } from '../features/voice/noiseFallback';
 
 export type VoiceStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting';
@@ -14,6 +15,13 @@ export interface RemoteStream {
   hasAudio: boolean;
 }
 
+export interface LastSoundboard {
+  userId: string;
+  sound: GuildSound;
+  /** Çalındığı an (ms) */
+  at: number;
+}
+
 interface VoiceStore {
   channelId: string | null;
   status: VoiceStatus;
@@ -21,6 +29,8 @@ interface VoiceStore {
   speaking: Record<string, true>;
   /** Giriş sesi şu an çalan kullanıcı (avatarında konuşma halkası yerine giriş sesi halkası yanar); yoksa null */
   introPlayingUserId: string | null;
+  /** Bulunduğun kanalda en son çalınan ses paneli sesi (bağlantı kartındaki 3 saniyelik durum satırı için) */
+  lastSoundboard: LastSoundboard | null;
   pingMs: number | null;
   quality: ConnectionQualityLabel;
   /** Bulunduğun kanalda yayın yapan kullanıcılar */
@@ -60,6 +70,7 @@ export const useVoice = create<VoiceStore>()(() => ({
   status: 'idle',
   speaking: {},
   introPlayingUserId: null,
+  lastSoundboard: null,
   pingMs: null,
   quality: 'unknown',
   streams: {},

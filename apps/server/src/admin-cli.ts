@@ -4,6 +4,7 @@
 //   docker compose exec api node dist/admin-cli.js grant <kullanıcı adı>
 //   docker compose exec api node dist/admin-cli.js revoke <kullanıcı adı>
 //   docker compose exec api node dist/admin-cli.js intro-sound-remove <kullanıcı adı | kimlik>
+//   docker compose exec api node dist/admin-cli.js sound-remove <sunucu kimliği> <ses kimliği>
 //
 // Hesap yöneticiliği hesabın kendi bayrağıdır (users.is_admin), hiçbir sunucuya bağlı değildir: geri
 // bildirimleri yönetir, sıfırlama kodu üretir, hesap siler, hesap daveti oluşturur. Son yönetici
@@ -15,6 +16,10 @@
 // dosyayı siler). Araç sunucunun gateway'ine bağlı değildir: ses adresi hemen 404 döner, ama açık
 // istemciler kullanıcının yeni hâlini sonraki USER_UPDATE'te ya da yeniden bağlanınca alır. Anında yayılsın
 // isteniyorsa yönetici uç noktası kullanılır: DELETE /api/users/<kimlik>/intro-sound.
+//
+// sound-remove: sunucunun ses panelinden bir sesi kaldırır (satırı siler, <veri klasörü>/sounds'taki dosyayı
+// başka ses kullanmıyorsa siler). Gateway olayı gitmez: açık istemciler listeyi yeniden bağlanınca alır. Anında
+// yayılsın isteniyorsa hesap yöneticisi uç noktayı kullanır: DELETE /api/guilds/<sunucu>/sounds/<ses>.
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -24,6 +29,8 @@ import { DatabaseSync } from 'node:sqlite';
 const MIN_SCHEMA = 17;
 /** users.intro_sound_hash'in geldiği şema (göç 27) */
 const INTRO_SOUND_SCHEMA = 27;
+/** guild_sounds tablosunun geldiği şema (göç 29) */
+const SOUNDBOARD_SCHEMA = 29;
 
 const USAGE = `Kullanım: node dist/admin-cli.js <komut> [seçenekler]
 
@@ -33,6 +40,8 @@ Komutlar:
   revoke <kullanıcı adı>     Hesap yöneticiliğini alır (son yönetici alınamaz)
   intro-sound-remove <kullanıcı adı | kimlik>
                              Kişisel giriş sesini kaldırır (dosyası da silinir)
+  sound-remove <sunucu kimliği> <ses kimliği>
+                             Sunucunun ses panelinden sesi kaldırır (dosyası da silinir)
 
 Seçenek:  --db <dosya>  (varsayılan: $DATA_DIR/diskort.db)`;
 
@@ -68,7 +77,7 @@ function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, s
 
 function main(argv: string[]): void {
   const args = parseArgs(argv);
-  const [command, username] = args.positional;
+  const [command, username, second] = args.positional;
   if (!command || args.flags.has('help') || args.flags.has('h') || command === 'help') {
     console.log(USAGE);
     return;
@@ -159,6 +168,25 @@ function main(argv: string[]): void {
         console.log(
           `@${user.username} kullanıcısının giriş sesi kaldırıldı. Açık uygulamalar yeniden bağlanınca güncellenir.`,
         );
+        return;
+      }
+      case 'sound-remove': {
+        if (version < SOUNDBOARD_SCHEMA) {
+          throw new CliError(`Veritabanı şeması ${version}: ses paneli şema ${SOUNDBOARD_SCHEMA} ile gelir.`);
+        }
+        if (!username || !second) throw new CliError('Sunucu ve ses kimliği ver (ör. sound-remove g1 s1).');
+        const sound = db
+          .prepare('SELECT id, name, hash FROM guild_sounds WHERE guild_id = ? AND id = ?')
+          .get(username, second) as { id: string; name: string; hash: string } | undefined;
+        if (!sound) throw new CliError(`"${username}" sunucusunda "${second}" kimlikli ses yok.`);
+        db.prepare('DELETE FROM guild_sounds WHERE id = ?').run(sound.id);
+        const stillUsed = db.prepare('SELECT 1 FROM guild_sounds WHERE hash = ? LIMIT 1').get(sound.hash);
+        // Dosya veritabanının yanındaki sounds klasöründe (<DATA_DIR>/sounds); silinemezse sunucunun temizlik
+        // görevi bir saat sonra siler
+        if (!stillUsed && /^[0-9a-f]{32}$/.test(sound.hash)) {
+          fs.rmSync(path.join(path.dirname(dbFile), 'sounds', `${sound.hash}.mp3`), { force: true });
+        }
+        console.log(`"${sound.name}" sesi kaldırıldı. Açık uygulamalar yeniden bağlanınca güncellenir.`);
         return;
       }
       default:

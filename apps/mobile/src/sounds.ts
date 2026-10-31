@@ -27,6 +27,7 @@ import {
 import { requireOptionalNativeModule } from 'expo';
 import { Platform } from 'react-native';
 import type * as ExpoAudio from 'expo-audio';
+import { cachedSoundFile } from './attachments';
 import { setFeedbackSound, type SoundEvent } from './haptics';
 import { getSettings } from './stores/settings';
 
@@ -156,8 +157,12 @@ export const INTRO_AFTER_CUE_MS = 350;
 /**
  * Giriş sesinin sabit kısılması (ayardaki seviyenin üstüne): kaydırıcı %100'de eski seviyenin yarısı.
  * Sunucu da yeni yüklemelerde loudnorm hedefini -20 LUFS'a indirdi; eski dosyalar biraz daha yüksek kalır.
+ * Ses paneli sesleri de aynı kazançla çalar.
  */
 const INTRO_GAIN = 0.5;
+
+/** Giriş sesi ve ses paneli sesinin oynatıcı seviyesi */
+const soundboardGain = (): number => Math.min(1, Math.max(0, getSettings().soundboardVolume)) * INTRO_GAIN;
 
 /**
  * Giriş sesleri çalınabilir mi (yerel modül var, sesler açık, giriş sesi seviyesi 0 değil). Değilse çağıran
@@ -165,7 +170,7 @@ const INTRO_GAIN = 0.5;
  */
 export function introSoundsEnabled(): boolean {
   const s = getSettings();
-  return audio !== null && s.sounds && s.introSoundVolume > 0;
+  return audio !== null && s.sounds && s.soundboardVolume > 0;
 }
 
 /** Çalan (ya da başlamayı bekleyen) giriş sesini keser, oynatıcısını bırakır; `onEnd` çağrılır */
@@ -203,7 +208,7 @@ export function playIntroSound(
   if (!audio) return;
   if (!opts.preview) {
     const s = getSettings();
-    if (!s.sounds || s.introSoundVolume <= 0) return;
+    if (!s.sounds || s.soundboardVolume <= 0) return;
     if (!opts.own && deafened()) return;
   }
   stopIntroSound();
@@ -244,7 +249,7 @@ function startIntro(url: string, opts: { preview?: boolean; onStart?: () => void
   };
   intro = current;
   try {
-    p.volume = opts.preview ? 1 : Math.min(1, Math.max(0, getSettings().introSoundVolume)) * INTRO_GAIN;
+    p.volume = opts.preview ? 1 : soundboardGain();
     p.addListener('playbackStatusUpdate', (status) => {
       if (intro !== current) return;
       if (status.error || status.didJustFinish) {
@@ -264,6 +269,116 @@ function startIntro(url: string, opts: { preview?: boolean; onStart?: () => void
     p.play();
   } catch {
     if (intro === current) stopIntroSound();
+  }
+}
+
+/**
+ * Ses paneli sesleri (sunucuya bağlı, en fazla 5 saniyelik MP3; docs/ses-paneli.md). Giriş sesinden ayrıdır:
+ * her çalış kendi oynatıcısını kurar, sesler üst üste binebilir, bitince oynatıcı bırakılır. Dosyalar önbellekten
+ * çalınır (adresleri içerik özeti taşır). Ses modu (setAudioModeAsync) burada da değiştirilmez: bkz. dosyanın başı.
+ */
+/** `preview`: kendine dinleme oynatıcısı; ses paneli seviyesinden etkilenmez */
+type BoardPlayer = { player: ExpoAudio.AudioPlayer; timer: ReturnType<typeof setTimeout>; preview: boolean };
+
+/** Aynı anda en çok bu kadar ses çalar; fazlası en eskisini keser */
+const BOARD_MAX_PLAYERS = 4;
+/** Bitiş olayı hiç gelmezse oynatıcı en geç bu sürede bırakılır */
+const BOARD_MAX_LIFETIME_MS = 6000;
+/** İndirme bundan uzun sürerse ses artık geç kalmıştır, çalınmaz (dosya sonraki sefere önbellekte kalır) */
+const BOARD_START_TIMEOUT_MS = 3000;
+
+const board: BoardPlayer[] = [];
+/** stopSoundboardSounds ile artar: o sırada indirilmekte olan sesler artık çalınmaz */
+let boardEpoch = 0;
+
+function releaseBoardPlayer(entry: BoardPlayer): void {
+  const index = board.indexOf(entry);
+  if (index < 0) return;
+  board.splice(index, 1);
+  clearTimeout(entry.timer);
+  try {
+    entry.player.pause();
+  } catch {
+    // oynatıcı kapatılmış olabilir: önemli değil
+  }
+  try {
+    entry.player.remove();
+  } catch {
+    // önemli değil
+  }
+}
+
+function startBoardPlayer(uri: string, volume: number, preview: boolean): void {
+  if (!audio) return;
+  while (board.length >= BOARD_MAX_PLAYERS) releaseBoardPlayer(board[0]!);
+  let p: ExpoAudio.AudioPlayer;
+  try {
+    p = audio.createAudioPlayer({ uri }, { keepAudioSessionActive: Platform.OS === 'ios' });
+  } catch {
+    return;
+  }
+  const entry: BoardPlayer = { player: p, preview, timer: setTimeout(() => releaseBoardPlayer(entry), BOARD_MAX_LIFETIME_MS) };
+  board.push(entry);
+  try {
+    p.volume = volume;
+    p.addListener('playbackStatusUpdate', (status) => {
+      if (status.error || status.didJustFinish) releaseBoardPlayer(entry);
+    });
+    // Yükleme bitmeden çağrılabilir: hazır olunca çalar
+    p.play();
+  } catch {
+    releaseBoardPlayer(entry);
+  }
+}
+
+/** Ses paneli sesi şu an duyulabilir mi: sağırken (kendi çaldığın dahil) ve seviye 0 iken çalmaz */
+function boardAudible(): boolean {
+  return audio !== null && getSettings().soundboardVolume > 0 && !deafened();
+}
+
+/** Önbellekten çalar (indirme olmazsa adresten akıtır); bu arada durdurulduysa ya da geç kaldıysa çalmaz */
+async function loadBoardSound(url: string, preview: boolean): Promise<void> {
+  const epoch = boardEpoch;
+  const askedAt = Date.now();
+  const uri = await cachedSoundFile(url).catch(() => url);
+  if (epoch !== boardEpoch || Date.now() - askedAt > BOARD_START_TIMEOUT_MS) return;
+  if (preview) startBoardPlayer(uri, 1, true);
+  else if (boardAudible()) startBoardPlayer(uri, soundboardGain(), false);
+}
+
+/** Kanalda çalınan ses paneli sesi (SOUNDBOARD_PLAY olayı, kendi çaldığın da bu yoldan gelir) */
+export function playSoundboardSound(url: string): void {
+  if (boardAudible()) void loadBoardSound(url, false);
+}
+
+/** Yalnız kendine dinleme: sağırlık ve seviye ayarına bakılmaz, tam seviyede çalar */
+export function previewSoundboardSound(url: string): void {
+  if (audio) void loadBoardSound(url, true);
+}
+
+/** Çalan bütün ses paneli seslerini keser (sesten ayrılınca, sağırlaşınca) */
+export function stopSoundboardSounds(): void {
+  boardEpoch++;
+  while (board.length > 0) releaseBoardPlayer(board[0]!);
+}
+
+/**
+ * Seviye kaydırıcısı çalan ses paneli seslerine de hemen uygulanır (spam sırasında kısabilmek için); 0 ise hepsi
+ * kesilir. Dinleme (preview) oynatıcıları ve indirilmekte olan sesler etkilenmez.
+ */
+export function applySoundboardVolume(volume: number): void {
+  const level = Math.min(1, Math.max(0, volume));
+  for (const entry of [...board]) {
+    if (entry.preview) continue;
+    if (level <= 0) {
+      releaseBoardPlayer(entry);
+      continue;
+    }
+    try {
+      entry.player.volume = level * INTRO_GAIN;
+    } catch {
+      // oynatıcı kapatılmış olabilir: önemli değil
+    }
   }
 }
 

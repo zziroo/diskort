@@ -26,6 +26,7 @@ import {
   type Embed,
   type Guild,
   type GuildMember,
+  type GuildSound,
   type Invite,
   type LinkEmbed,
   type Message,
@@ -498,6 +499,26 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE users DROP COLUMN profile_frame;
   ALTER TABLE users DROP COLUMN nameplate;
   `,
+  // 29: ses paneli (bkz. docs/ses-paneli.md, soundboard.ts). Sesler sunucuya bağlıdır; dosya
+  // <DATA_DIR>/sounds/<hash>.mp3 (hash sunucu kimliğini de içerir). Yeni MANAGE_SOUNDBOARD yetkisi
+  // MANAGE_GUILD yetkili rollere verilir (göç 18 deseni); @everyone'da kapalı kalır (Yönetici ve sahip
+  // zaten her yetkiye sahip). Tekrar çalışsa da zararsızdır (IF NOT EXISTS, bit OR'u).
+  `
+  CREATE TABLE IF NOT EXISTS guild_sounds (
+    id          TEXT PRIMARY KEY,
+    guild_id    TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    emoji       TEXT,
+    hash        TEXT NOT NULL,
+    size        INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    uploader_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS guild_sounds_guild ON guild_sounds(guild_id);
+  UPDATE roles SET permissions = permissions | ${Permission.MANAGE_SOUNDBOARD}
+    WHERE (permissions & ${Permission.MANAGE_GUILD}) != 0 AND id != guild_id;
+  `,
 ];
 
 type Param = string | number | null;
@@ -514,6 +535,18 @@ export interface StatusRow {
   custom_emoji: string | null;
   custom_expires_at: number | null;
   updated_at: number;
+}
+
+interface SoundRow {
+  id: string;
+  guild_id: string;
+  name: string;
+  emoji: string | null;
+  hash: string;
+  size: number;
+  duration_ms: number;
+  uploader_id: string | null;
+  created_at: number;
 }
 
 interface UserRow {
@@ -1799,10 +1832,10 @@ export class Store {
   }
 
   /**
-   * Sunucuyu kanalları, mesajları, rolleri, üyelikleri ve davetleriyle siler. Diskten silinecek dosya
-   * eklerinin kimlikleri ve simgenin özeti döner.
+   * Sunucuyu kanalları, mesajları, rolleri, üyelikleri, davetleri ve ses paneliyle siler. Diskten silinecek
+   * dosya eklerinin kimlikleri, simgenin özeti ve ses paneli seslerinin özetleri döner.
    */
-  deleteGuild(guildId: string): { files: string[]; icon: string | null } | null {
+  deleteGuild(guildId: string): { files: string[]; icon: string | null; sounds: string[] } | null {
     return this.tx(() => {
       const icon = this.getGuildIconHash(guildId);
       if (!this.one('SELECT 1 FROM guilds WHERE id = ?', guildId)) return null;
@@ -1810,8 +1843,9 @@ export class Store {
         'SELECT a.id FROM attachments a JOIN channels c ON c.id = a.channel_id WHERE c.guild_id = ?',
         guildId,
       ).map((r) => r.id);
+      const sounds = this.all<{ hash: string }>('SELECT hash FROM guild_sounds WHERE guild_id = ?', guildId).map((r) => r.hash);
       this.run('DELETE FROM guilds WHERE id = ?', guildId);
-      return { files, icon };
+      return { files, icon, sounds };
     });
   }
 
@@ -1874,6 +1908,102 @@ export class Store {
 
   deleteChannel(id: string): boolean {
     return this.run("DELETE FROM channels WHERE id = ? AND type != 'dm'", id) > 0;
+  }
+
+  // ---------- Ses paneli (guild_sounds; bkz. soundboard.ts) ----------
+
+  private toSound(r: SoundRow): GuildSound {
+    return {
+      id: r.id,
+      guildId: r.guild_id,
+      name: r.name,
+      emoji: r.emoji,
+      url: `/api/sounds/${r.guild_id}/${r.hash}.mp3`,
+      uploaderId: r.uploader_id,
+      createdAt: r.created_at,
+      durationMs: r.duration_ms,
+    };
+  }
+
+  /** Sunucunun sesleri, ada göre (Türkçe sıralama istemcide; burada kararlı: ad, sonra kimlik) */
+  listSounds(guildId: string): GuildSound[] {
+    return this.all<SoundRow>(
+      'SELECT * FROM guild_sounds WHERE guild_id = ? ORDER BY name COLLATE NOCASE, id',
+      guildId,
+    ).map((r) => this.toSound(r));
+  }
+
+  /** Ses; verilirse yalnızca o sunucudaysa */
+  getSound(soundId: string, guildId?: string): GuildSound | null {
+    const row = guildId
+      ? this.one<SoundRow>('SELECT * FROM guild_sounds WHERE id = ? AND guild_id = ?', soundId, guildId)
+      : this.one<SoundRow>('SELECT * FROM guild_sounds WHERE id = ?', soundId);
+    return row ? this.toSound(row) : null;
+  }
+
+  countSounds(guildId: string): number {
+    return this.one<{ n: number }>('SELECT COUNT(*) AS n FROM guild_sounds WHERE guild_id = ?', guildId)?.n ?? 0;
+  }
+
+  /**
+   * Yeni ses; sunucu yoksa ya da sınır (`max`) dolduysa null. Sayım ve ekleme aynı işlemde: iki eşzamanlı
+   * yükleme sınırı aşamaz.
+   */
+  insertSound(
+    guildId: string,
+    data: { name: string; emoji: string | null; hash: string; size: number; durationMs: number; uploaderId: string | null },
+    max: number,
+  ): GuildSound | 'limit' | null {
+    return this.tx(() => {
+      if (!this.one('SELECT 1 FROM guilds WHERE id = ?', guildId)) return null;
+      if (this.countSounds(guildId) >= max) return 'limit';
+      const id = nanoid(12);
+      this.run(
+        `INSERT INTO guild_sounds (id, guild_id, name, emoji, hash, size, duration_ms, uploader_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        guildId,
+        data.name,
+        data.emoji,
+        data.hash,
+        data.size,
+        data.durationMs,
+        data.uploaderId,
+        Date.now(),
+      );
+      return this.getSound(id)!;
+    });
+  }
+
+  /** Ad ve/veya emoji değişir; ses o sunucuda yoksa null */
+  renameSound(guildId: string, soundId: string, patch: { name?: string; emoji?: string | null }): GuildSound | null {
+    return this.tx(() => {
+      if (!this.getSound(soundId, guildId)) return null;
+      if (patch.name !== undefined) this.run('UPDATE guild_sounds SET name = ? WHERE id = ?', patch.name, soundId);
+      if (patch.emoji !== undefined) this.run('UPDATE guild_sounds SET emoji = ? WHERE id = ?', patch.emoji, soundId);
+      return this.getSound(soundId, guildId);
+    });
+  }
+
+  /** Sesi siler; diskten silinecek özet döner (başka ses aynı özeti kullanıyorsa null), ses yoksa undefined */
+  deleteSound(guildId: string, soundId: string): string | null | undefined {
+    return this.tx(() => {
+      const row = this.one<SoundRow>('SELECT * FROM guild_sounds WHERE id = ? AND guild_id = ?', soundId, guildId);
+      if (!row) return undefined;
+      this.run('DELETE FROM guild_sounds WHERE id = ?', soundId);
+      const shared = this.one('SELECT 1 FROM guild_sounds WHERE hash = ? LIMIT 1', row.hash);
+      return shared ? null : row.hash;
+    });
+  }
+
+  /** Kullanılan tüm ses paneli özetleri (artık dosyaların temizliği için) */
+  soundHashes(): Set<string> {
+    return new Set(this.all<{ h: string }>('SELECT DISTINCT hash AS h FROM guild_sounds').map((r) => r.h));
+  }
+
+  /** Özetin ait olduğu sunucu (kimliksiz sunumda doğrulama); yoksa null */
+  guildSoundOf(hash: string): string | null {
+    return this.one<{ g: string }>('SELECT guild_id AS g FROM guild_sounds WHERE hash = ? LIMIT 1', hash)?.g ?? null;
   }
 
   // ---------- Direkt mesajlar ----------

@@ -60,6 +60,13 @@ export class VoiceStateStore extends EventEmitter<VoiceEvents> {
     return this.states.get(userId);
   }
 
+  /** Kanaldaki kullanıcılar */
+  membersOf(channelId: string): string[] {
+    const out: string[] = [];
+    for (const state of this.states.values()) if (state.channelId === channelId) out.push(state.userId);
+    return out;
+  }
+
   join(userId: string, channelId: string, streaming = false, sessionId?: string): VoiceState {
     if (sessionId) this.sessions.set(userId, sessionId);
     const prev = this.states.get(userId);

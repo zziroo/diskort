@@ -1,5 +1,5 @@
 import { Play } from 'lucide-react';
-import { CALL_SOUND_LABELS, CALL_SOUND_NAMES, PREVIEW_SOUND_NAMES, SOUND_LABELS } from '@diskort/client-core';
+import { CALL_SOUND_LABELS, CALL_SOUND_NAMES, PREVIEW_SOUND_NAMES, SOUND_LABELS, useSession } from '@diskort/client-core';
 import { useEffect, useRef, useState } from 'react';
 import { voice } from '../../features/voice/voiceClient';
 import { MIC_TEST_RECORD_MS, type MicTest, type MicTestPhase } from '../../features/voice/micTest';
@@ -8,9 +8,11 @@ import { bridge } from '../../lib/bridge';
 import { playSound, previewCallSound } from '../../lib/sfx';
 import { cn, clamp } from '../../lib/utils';
 import { MAX_VOLUME, useSettings, type NoiseMode, type NoiseStrengthDb } from '../../stores/settings';
+import { useUi } from '../../stores/ui';
 import { useVoice } from '../../stores/voice';
 import { Button, Divider, RadioCards, SectionTitle, Segmented, Select, Toggle } from '../ui/controls';
 import { Slider } from '../ui/Slider';
+import { IntroSoundPicker } from './IntroSoundPicker';
 import { KeybindInput } from './KeybindInput';
 import { LineTestSection } from './LineTest';
 
@@ -391,6 +393,35 @@ export function VoiceSettings() {
       />
 
       <LineTestSection />
+
+      <SoundboardSettings />
+    </div>
+  );
+}
+
+/** Ses paneli seviyesi (bağlantı kartındaki paneldeki kaydırıcıyla aynı ayar) ve giriş sesi */
+function SoundboardSettings() {
+  const user = useSession((s) => s.user);
+  const volume = useSettings((s) => s.soundboardVolume);
+  const set = useSettings((s) => s.set);
+  // Paneldeki "Giriş sesini değiştir" sayfanın sonuna getirir
+  const anchored = useUi((s) => s.modal?.type === 'settings' && s.modal.anchor === 'soundboard');
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (anchored) ref.current?.scrollIntoView({ block: 'start' });
+  }, [anchored]);
+
+  return (
+    <div ref={ref}>
+      <SectionTitle>Ses Paneli</SectionTitle>
+      <VolumeSlider
+        label="Ses paneli ses seviyesi"
+        max={1}
+        value={volume}
+        onChange={(soundboardVolume) => set({ soundboardVolume })}
+      />
+      <p className="mt-1.5 text-xs text-text-muted">Giriş sesleri ve ses paneli sesleri. 0 = kapalı.</p>
+      {user && <IntroSoundPicker user={user} />}
     </div>
   );
 }
@@ -420,16 +451,6 @@ export function SoundSettings() {
           checked={s.pttSounds}
           onChange={(pttSounds) => s.set({ pttSounds })}
         />
-        {/* Ses bağlantısı kartındaki giriş sesleri düğmesi ve sağ tık menüsüyle aynı ayar */}
-        <div>
-          <VolumeSlider
-            label="Giriş sesleri"
-            max={1}
-            value={s.introSoundVolume}
-            onChange={(introSoundVolume) => s.set({ introSoundVolume })}
-          />
-          <p className="mt-1.5 text-xs text-text-muted">Kanala girenlerin kendi yüklediği kısa ses. 0 = kapalı</p>
-        </div>
       </div>
       <SectionTitle>Sesleri Dinle</SectionTitle>
       <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">

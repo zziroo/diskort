@@ -63,10 +63,11 @@ export interface Settings {
   /** Bas-konuş tuşuna basınca ve bırakınca kısa ses */
   pttSounds: boolean;
   /**
-   * Başkalarının (ve kendi) giriş sesinin seviyesi (0–1); 0 = kapalı: giriş sesi yerine genel "biri girdi"
-   * sesi çalar. Seslerin kapalı olması ve sağırlaştırma da giriş seslerini susturur (bkz. lib/sfx.ts).
+   * Giriş sesleri ve ses paneli seslerinin seviyesi (0–1). 0 = kapalı: ses paneli sesleri çalmaz, giriş sesi
+   * yerine genel "biri girdi" sesi çalar. Sağırlaştırma ikisini de susturur, "Arayüz sesleri"nin kapalı olması
+   * yalnız giriş seslerini (bkz. lib/sfx.ts).
    */
-  introSoundVolume: number;
+  soundboardVolume: number;
   /** Arayüz teması (bkz. apps/desktop/src/shared/themes.ts; varsayılan Siyah) */
   theme: ThemeId;
   /** Kanal/konuşma listesinin genişliği (px); sohbetle arasındaki çizgi sürüklenerek değişir */
@@ -114,7 +115,7 @@ const defaults: Settings = {
   sounds: true,
   notificationSound: true,
   pttSounds: false,
-  introSoundVolume: 1,
+  soundboardVolume: 1,
   theme: DEFAULT_THEME,
   sidebarWidth: SIDEBAR_WIDTH.default,
   streamPipCorner: DEFAULT_PIP_CORNER,
@@ -151,7 +152,7 @@ function sanitize(saved: Partial<Settings>): Partial<Settings> {
     const v = s[key];
     if (v !== undefined) s[key] = clampVolume(v);
   }
-  if (s.introSoundVolume !== undefined) s.introSoundVolume = Math.min(1, clampVolume(s.introSoundVolume));
+  if (s.soundboardVolume !== undefined) s.soundboardVolume = Math.min(1, clampVolume(s.soundboardVolume));
   if (s.screenPreset !== undefined && !SCREEN_PRESET_IDS.includes(s.screenPreset)) s.screenPreset = defaults.screenPreset;
   if (s.sidebarWidth !== undefined) s.sidebarWidth = clampSidebarWidth(s.sidebarWidth);
   if (s.theme !== undefined && !isThemeId(s.theme)) s.theme = defaults.theme;
@@ -171,7 +172,7 @@ export const useSettings = create<SettingsStore>()(
     }),
     {
       name: 'diskort-settings',
-      version: 12,
+      version: 13,
       storage: createJSONStorage(() => localStorage),
       partialize: ({ set: _set, ...rest }) => rest,
       // Sürüm 1 → 2: gürültü engelleme RNNoise → DeepFilterNet 3 (sanitize içinde)
@@ -205,6 +206,12 @@ export const useSettings = create<SettingsStore>()(
         if (version < 11 && (s.screenPreset as string | undefined) === '1440p60') s.screenPreset = '1080p60';
         // Bağlantı önizlemeleri artık hep gösterilir (ayar kaldırıldı)
         if (version < 12) delete (s as Record<string, unknown>).linkPreviews;
+        // Giriş sesi seviyesi ses paneliyle tek ayar oldu: eski değer taşınır
+        if (version < 13) {
+          const old = s as Record<string, unknown>;
+          if (old.introSoundVolume !== undefined) s.soundboardVolume = old.introSoundVolume as number;
+          delete old.introSoundVolume;
+        }
         return s as Settings;
       },
       merge: (saved, current) => ({ ...current, ...sanitize((saved ?? {}) as Partial<Settings>) }),

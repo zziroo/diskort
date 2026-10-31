@@ -17,7 +17,7 @@ sunucu her isteği ve her gateway olayını denetler, istemciler yalnızca yapı
 
 | Grup | Yetki | @everyone'da varsayılan |
 |---|---|---|
-| Genel | Yönetici (her şey, kanal izinlerini de aşar), Sunucuyu Yönet, Rolleri Yönet, Kanalları Yönet, Davetleri Yönet, Üyeleri At, Üyeleri Yasakla | yok |
+| Genel | Yönetici (her şey, kanal izinlerini de aşar), Sunucuyu Yönet, Ses Panelini Yönet (ses yükle, adlandır, sil; çalmak için Konuş yeter), Rolleri Yönet, Kanalları Yönet, Davetleri Yönet, Üyeleri At, Üyeleri Yasakla | yok |
 | Genel | Davet Oluştur (kendi davetlerini görür ve siler) | var |
 | Metin | Kanalları Gör, Mesaj Gönder, Dosya Ekle, Tepki Ekle | var |
 | Metin | @everyone ve @here Bahset | var |

@@ -9,6 +9,7 @@ import type { DailyCounters } from './counters.js';
 import type { AttachmentService } from './attachments.js';
 import type { AvatarService } from './avatars.js';
 import type { IntroSoundService } from './introSounds.js';
+import type { SoundboardService } from './soundboard.js';
 import type { AuthService } from './auth.js';
 import type { ClientVersionPolicy } from './clientVersion.js';
 import type { Config } from './config.js';
@@ -50,6 +51,8 @@ export interface AppContext {
   avatars: AvatarService;
   /** Kişisel giriş sesleri (<DATA_DIR>/intro-sounds) */
   introSounds: IntroSoundService;
+  /** Sunucuların ses paneli sesleri (<DATA_DIR>/sounds) */
+  soundboard: SoundboardService;
   /** Etkinlik (oyun) ikonları */
   activityIcons: ActivityIconStore;
   /** GIF araması (GIPHY) ve mesajlara GIF gömme */

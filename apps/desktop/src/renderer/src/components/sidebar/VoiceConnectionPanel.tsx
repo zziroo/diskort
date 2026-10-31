@@ -17,13 +17,14 @@ import { voice } from '../../features/voice/voiceClient';
 import { cn } from '../../lib/utils';
 import { Permission } from '@diskort/shared';
 import { channelById, dmTitle, useCan, useGuild, useSession } from '@diskort/client-core';
-import { getSettings, useSettings } from '../../stores/settings';
+import { useSettings } from '../../stores/settings';
 import { useUi } from '../../stores/ui';
-import { useVoice } from '../../stores/voice';
+import { useVoice, type LastSoundboard } from '../../stores/voice';
 import { useConnectionStats } from '../../stores/connectionStats';
 import { ConnectionInfoPopover } from './ConnectionInfoPopover';
 import { SwapIcon } from '../ui/SwapIcon';
 import { NoiseMenu, noiseSummary } from './AudioMenus';
+import { SoundboardPopover } from './SoundboardPopover';
 
 const STATUS_TEXT = {
   connecting: 'Bağlanıyor…',
@@ -48,6 +49,9 @@ const QUALITY_TILE: Record<LinkQuality, string> = {
   unknown: 'bg-ok/15',
 };
 
+/** Çalınan ses paneli sesinin durum satırında kalma süresi */
+const SOUNDBOARD_LINE_MS = 3000;
+
 const QUALITY_TEXT: Record<LinkQuality, string> = {
   good: 'Bağlantı iyi',
   fair: 'Bağlantı dalgalı',
@@ -55,24 +59,10 @@ const QUALITY_TEXT: Record<LinkQuality, string> = {
   unknown: 'Bağlantı bilgisi',
 };
 
-/** Giriş sesleri düğmeyle kapatılınca seviyesi; yeniden açınca bu seviyeye döner (uygulama ömrü boyunca) */
-let introVolumeBeforeOff = 1;
-
-/** Giriş seslerini kapatır (seviye 0) ya da önceki seviyesine geri açar */
-function toggleIntroSounds(): void {
-  const { introSoundVolume, set } = getSettings();
-  if (introSoundVolume > 0) {
-    introVolumeBeforeOff = introSoundVolume;
-    set({ introSoundVolume: 0 });
-  } else {
-    set({ introSoundVolume: introVolumeBeforeOff > 0 ? introVolumeBeforeOff : 1 });
-  }
-}
-
 /**
  * Discord'daki gibi ses bağlantısı kartı (yalnızca ses kanalındayken): bağlantı kalitesi, kanal / sunucu,
- * gürültü engelleme ve bağlantıyı kesme; altında kamera, ekran paylaşımı, sahne, giriş sesleri ve yayın ayarları.
- * Sağ tık (üst kısımda ya da giriş sesleri düğmesinde): giriş sesleri seviyesi.
+ * gürültü engelleme ve bağlantıyı kesme; altında kamera, ekran paylaşımı, ses paneli (DM aramasında aramaya
+ * dönüş) ve yayın ayarları. Ses seviyesi ses panelinin içindedir.
  * Alttaki kullanıcı paneliyle birlikte tek yuvarlak kart gibi görünür (üst yarısı).
  */
 export function VoiceConnectionPanel() {
@@ -102,20 +92,26 @@ export function VoiceConnectionPanel() {
   const noiseFallback = useVoice((s) => s.noiseFallback);
   const openModal = useUi((s) => s.openModal);
   const setView = useUi((s) => s.setView);
-  const openContextMenu = useUi((s) => s.openContextMenu);
-  const introOff = useSettings((s) => s.introSoundVolume <= 0);
+  const soundsOff = useSettings((s) => s.soundboardVolume <= 0);
   const [infoOpen, setInfoOpen] = useState(false);
   const [noiseOpen, setNoiseOpen] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLButtonElement>(null);
   const noiseRef = useRef<HTMLButtonElement>(null);
+  const boardRef = useRef<HTMLButtonElement>(null);
   const closeInfo = useCallback(() => setInfoOpen(false), []);
   const closeNoise = useCallback(() => setNoiseOpen(false), []);
+  const closeBoard = useCallback(() => setBoardOpen(false), []);
+  const inDm = dmName !== null;
   useEffect(() => {
     if (status === 'idle') {
       setInfoOpen(false);
       setNoiseOpen(false);
     }
-  }, [status]);
+    // DM aramasında ses paneli yok
+    if (status === 'idle' || inDm) setBoardOpen(false);
+  }, [status, inDm]);
 
   if (status === 'idle') return null;
   const connected = status === 'connected';
@@ -124,20 +120,11 @@ export function VoiceConnectionPanel() {
   const tile = connected ? QUALITY_TILE[quality] : 'bg-warn/15';
   const noiseLabel = `Gürültü engelleme: ${noiseSummary(noise, noiseStrength, noiseFallback)}`;
   const shareBlocked = !sharing && !canStream;
-  const openIntroMenu = (e: MouseEvent): void => {
-    e.preventDefault();
-    openContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      introVolume: true,
-      items: [{ label: 'Ses Ayarları', onClick: () => openModal({ type: 'settings', section: 'notifications' }) }],
-    });
-  };
 
   return (
-    <div className="anim-rise-in px-2 pt-2 pb-1.5">
+    <div ref={cardRef} className="anim-rise-in px-2 pt-2 pb-1.5">
       {sharing && selfId && <OwnStreamRow userId={selfId} />}
-      <div className="flex items-center gap-2" onContextMenu={openIntroMenu}>
+      <div className="flex items-center gap-2">
         <span
           className={cn(
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors duration-300',
@@ -166,7 +153,7 @@ export function VoiceConnectionPanel() {
           <button
             type="button"
             className="block max-w-full truncate text-left text-xs text-text-muted hover:text-text-normal hover:underline"
-            data-tooltip={dmName !== null ? 'Aramaya git' : 'Ses kanalına git'}
+            data-tooltip={inDm ? 'Aramaya git' : 'Ses kanalına git'}
             onClick={() => setView({ kind: 'voice' })}
           >
             {placeLabel}
@@ -193,7 +180,8 @@ export function VoiceConnectionPanel() {
           <span className="truncate">Mikrofon testi: odada susturuldun</span>
         </div>
       )}
-      <div className="mt-2 grid grid-cols-5 gap-1.5">
+      <SoundboardLine />
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
         <ActionButton label="Kamera · Yakında" disabled>
           <Video size={20} />
         </ActionButton>
@@ -207,24 +195,69 @@ export function VoiceConnectionPanel() {
             {sharing ? <ScreenShareOff size={20} /> : <ScreenShare size={20} />}
           </SwapIcon>
         </ActionButton>
-        <ActionButton label={dmName !== null ? 'Aramayı Aç' : 'Ses Sahnesini Aç'} onClick={() => setView({ kind: 'voice' })}>
-          <LayoutGrid size={20} className="ico-grow" />
-        </ActionButton>
-        <ActionButton
-          label={introOff ? 'Giriş sesleri kapalı' : 'Giriş sesleri'}
-          onClick={toggleIntroSounds}
-          onContextMenu={openIntroMenu}
-        >
-          <SwapIcon swapKey={introOff ? 'off' : 'on'} motion="ico-lift">
-            <IntroSoundIcon off={introOff} />
-          </SwapIcon>
-        </ActionButton>
+        {inDm ? (
+          <ActionButton label="Aramayı Aç" onClick={() => setView({ kind: 'voice' })}>
+            <LayoutGrid size={20} className="ico-grow" />
+          </ActionButton>
+        ) : (
+          <ActionButton
+            ref={boardRef}
+            label={soundsOff ? 'Ses paneli (sesler kapalı)' : 'Ses paneli'}
+            open={boardOpen}
+            aria-haspopup="menu"
+            aria-expanded={boardOpen}
+            onClick={() => setBoardOpen((v) => !v)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setBoardOpen((v) => !v);
+            }}
+          >
+            <SwapIcon swapKey={soundsOff ? 'off' : 'on'} motion="ico-lift">
+              <SoundboardIcon off={soundsOff} />
+            </SwapIcon>
+          </ActionButton>
+        )}
         <ActionButton label="Yayın Ayarları" onClick={() => openModal({ type: 'settings', section: 'stream' })}>
           <MonitorCog size={20} className="ico-tilt" />
         </ActionButton>
       </div>
       <ConnectionInfoPopover open={infoOpen} anchorRef={labelRef} onClose={closeInfo} />
       <NoiseMenu open={noiseOpen} anchorRef={noiseRef} onClose={closeNoise} />
+      <SoundboardPopover
+        open={boardOpen}
+        anchorRef={boardRef}
+        placeAboveRef={cardRef}
+        onClose={closeBoard}
+        guildId={channel?.guildId ?? null}
+        canPlay={connected}
+      />
+    </div>
+  );
+}
+
+/** Kanalda çalınan ses paneli sesi: 3 saniye "Ad · 🎺 ses adı" (bkz. useVoice lastSoundboard) */
+function SoundboardLine() {
+  const last = useVoice((s) => s.lastSoundboard);
+  const [shown, setShown] = useState<LastSoundboard | null>(null);
+  useEffect(() => {
+    const left = last ? last.at + SOUNDBOARD_LINE_MS - Date.now() : 0;
+    if (left <= 0) {
+      setShown(null);
+      return;
+    }
+    setShown(last);
+    const timer = window.setTimeout(() => setShown(null), left);
+    return () => window.clearTimeout(timer);
+  }, [last]);
+  const name = useGuild((s) => (shown ? s.users[shown.userId]?.displayName : undefined));
+  if (!shown) return null;
+
+  return (
+    <div role="status" className="anim-rise-in mt-1.5 truncate px-1 text-xs text-text-muted">
+      <span className="font-semibold text-text-normal">{name ?? 'Üye'}</span>
+      {' · '}
+      {shown.sound.emoji ? `${shown.sound.emoji} ` : ''}
+      {shown.sound.name}
     </div>
   );
 }
@@ -338,24 +371,33 @@ function IconButton({
  * `aria-disabled` kullanılır (devre dışı öğeler fare olayı almaz).
  */
 function ActionButton({
+  ref,
   label,
   disabled,
   active,
+  open,
   onClick,
   onContextMenu,
   children,
+  ...aria
 }: {
+  ref?: Ref<HTMLButtonElement>;
   label: string;
   disabled?: boolean;
   active?: boolean;
+  /** Açtığı panel açık (ipucu paneli örtmesin diye gizlenir) */
+  open?: boolean;
   onClick?: () => void;
   onContextMenu?: (e: MouseEvent) => void;
   children: ReactNode;
+  'aria-haspopup'?: 'menu';
+  'aria-expanded'?: boolean;
 }) {
   return (
     <button
+      ref={ref}
       type="button"
-      data-tooltip={label}
+      data-tooltip={open ? undefined : label}
       aria-label={label}
       aria-disabled={disabled || undefined}
       className={cn(
@@ -364,10 +406,13 @@ function ActionButton({
           ? 'cursor-not-allowed bg-bg-active text-text-muted opacity-50'
           : active
             ? 'press bg-ok/20 text-ok hover:bg-ok/30'
-            : 'press bg-bg-active text-text-normal hover:bg-control hover:text-text-head',
+            : open
+              ? 'press bg-control text-text-head'
+              : 'press bg-bg-active text-text-normal hover:bg-control hover:text-text-head',
       )}
       onClick={disabled ? undefined : onClick}
       onContextMenu={onContextMenu}
+      {...aria}
     >
       {children}
     </button>
@@ -375,10 +420,10 @@ function ActionButton({
 }
 
 /**
- * Giriş sesleri simgesi; kapalıyken üstü çizili (lucide'de Music2'nin kapalı hâli yok, çizgi lucide'in "Off"
+ * Ses paneli simgesi; sesler kapalıyken üstü çizili (lucide'de Music2'nin kapalı hâli yok, çizgi lucide'in "Off"
  * simgeleriyle aynı yoldan çizilir).
  */
-function IntroSoundIcon({ off }: { off: boolean }) {
+function SoundboardIcon({ off }: { off: boolean }) {
   return (
     <span className="relative flex h-5 w-5">
       <Music2 size={20} className={cn(off && 'opacity-60')} />

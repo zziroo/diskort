@@ -47,11 +47,17 @@ export const Permission = {
    * Direkt mesajlarda her katılımcı sabitleyebilir.
    */
   PIN_MESSAGES: 1 << 20,
+  /**
+   * Sunucunun ses paneline ses yüklemek, sesleri yeniden adlandırmak ve silmek. Sunucu düzeyinde yetkidir
+   * (kanal izinleriyle değişmez); @everyone'da kapalı başlar, göç 29 MANAGE_GUILD yetkili rollere verir.
+   * Çalmak için ayrı yetki yoktur: ses kanalında SPEAK yeter (bkz. docs/ses-paneli.md).
+   */
+  MANAGE_SOUNDBOARD: 1 << 21,
 } as const;
 
 export type PermissionName = keyof typeof Permission;
 
-export const ALL_PERMISSIONS = (1 << 21) - 1;
+export const ALL_PERMISSIONS = (1 << 22) - 1;
 
 /** Kanal izinleriyle değiştirilebilen metin kanalı yetkileri */
 export const TEXT_CHANNEL_PERMISSIONS =

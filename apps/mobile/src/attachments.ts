@@ -1,6 +1,6 @@
 // Dosya ekleri (Android ve iOS): dosya/resim seçme, yükleme (yerel dosyayı ham gövde olarak) ve gelen dosyayı
 // indirip telefondaki uygun uygulamayla açma.
-import { INTRO_SOUND_MAX_BYTES, type Attachment } from '@diskort/shared';
+import { INTRO_SOUND_MAX_BYTES, SOUNDBOARD_SOUND_MAX_BYTES, type Attachment } from '@diskort/shared';
 import { attachmentUrl, formatBytes, safeDecodeURIComponent, type LocalFile, type UploadRequest, type UploadResponse } from '@diskort/client-core';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -112,6 +112,23 @@ export async function pickIntroSound(): Promise<LocalFile | null> {
   return file;
 }
 
+/** Ses panelinin 8 MB sınırı aşıldığında gösterilen metin (SOUNDBOARD_SOUND_MAX_BYTES) */
+export const SOUND_TOO_LARGE = "Dosya 8 MB'tan büyük olamaz.";
+
+/**
+ * Ses paneli için tek ses dosyası seçtirir (sistemin dosya seçicisi). Telefonda kesit seçilmez: sunucu ilk
+ * SOUNDBOARD_SOUND_MAX_SECONDS saniyeyi alır, ses yüksekliğini eşitler ve MP3'e çevirir. Çok büyük dosyada hata
+ * fırlatır.
+ */
+export async function pickGuildSound(): Promise<LocalFile | null> {
+  const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*'], copyToCacheDirectory: true });
+  if (result.canceled || !result.assets[0]) return null;
+  const a = result.assets[0];
+  const file = await withSize({ name: a.name, size: a.size, type: a.mimeType ?? 'application/octet-stream', uri: a.uri });
+  if (file.size > SOUNDBOARD_SOUND_MAX_BYTES) throw new Error(SOUND_TOO_LARGE);
+  return file;
+}
+
 /** Herhangi bir dosya seçer (sistemin dosya seçicisi). */
 export async function pickDocuments(): Promise<LocalFile[]> {
   const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
@@ -143,6 +160,38 @@ async function downloadToCache(attachment: Attachment): Promise<string> {
     throw new Error(result.status === 404 ? 'Dosya artık yok (mesaj silinmiş olabilir).' : `İndirme başarısız (${result.status}).`);
   }
   return target;
+}
+
+const soundDownloads = new Map<string, Promise<string>>();
+
+async function downloadSound(url: string): Promise<string> {
+  const dir = `${FileSystem.cacheDirectory}sounds/`;
+  const target = dir + safeName(url.split('/').pop() ?? '');
+  const existing = await FileSystem.getInfoAsync(target);
+  if (existing.exists && existing.size > 0) return target;
+  await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => undefined);
+  // Yarım kalan indirme bozuk ses olarak önbellekte kalmasın: önce geçici ada yazılır
+  const partial = `${target}.part`;
+  const result = await FileSystem.downloadAsync(url, partial);
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(partial, { idempotent: true }).catch(() => undefined);
+    throw new Error(`İndirme başarısız (${result.status}).`);
+  }
+  await FileSystem.deleteAsync(target, { idempotent: true });
+  await FileSystem.moveAsync({ from: partial, to: target });
+  return target;
+}
+
+/**
+ * Ses paneli sesini önbelleğe indirir (cache/sounds/<özet>.mp3), yerel adresini döndürür. Adres içerik özeti
+ * taşıdığından (immutable) dosya varsa yeniden indirilmez; aynı anda gelen istekler tek indirmeyi paylaşır.
+ */
+export function cachedSoundFile(url: string): Promise<string> {
+  const running = soundDownloads.get(url);
+  if (running) return running;
+  const download = downloadSound(url).finally(() => soundDownloads.delete(url));
+  soundDownloads.set(url, download);
+  return download;
 }
 
 /** İndirme hatasını kullanıcıya anlaşılır biçimde söyler */

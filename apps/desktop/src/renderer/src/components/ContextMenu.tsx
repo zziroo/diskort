@@ -69,8 +69,7 @@ export function ContextMenu() {
       onContextMenu={(e) => e.preventDefault()}
     >
       {shown.userId && <UserAudioControls userId={shown.userId} />}
-      {shown.introVolume && <IntroVolumeControls />}
-      {(shown.userId || shown.introVolume) && shown.items?.length && !shown.items[0]?.heading ? (
+      {shown.userId && shown.items?.length && !shown.items[0]?.heading ? (
         <div className="mx-1 my-1 h-px bg-line/70" />
       ) : null}
       {shown.items?.map((item, i) =>
@@ -79,7 +78,7 @@ export function ContextMenu() {
             key={`${i}-${item.label}`}
             className={cn(
               'px-2 pt-1.5 pb-1 text-[11px] font-bold text-text-muted uppercase',
-              (i > 0 || shown.userId || shown.introVolume) && 'mt-1 border-t border-line/60 pt-2',
+              (i > 0 || shown.userId) && 'mt-1 border-t border-line/60 pt-2',
             )}
           >
             {item.label}
@@ -121,29 +120,6 @@ export function ContextMenu() {
           </button>
         ),
       )}
-    </div>
-  );
-}
-
-/** Başkalarının (ve kendi) giriş sesinin seviyesi; 0 = kapalı (yerine genel "biri girdi" sesi çalar) */
-function IntroVolumeControls() {
-  const volume = useSettings((s) => s.introSoundVolume);
-  const set = useSettings((s) => s.set);
-
-  return (
-    <div className="w-[220px] px-2 py-1.5">
-      <div className="mb-1 flex justify-between text-xs font-bold text-text-muted uppercase">
-        <span>Giriş Sesleri Ses Seviyesi</span>
-        <span className="tabular-nums">{Math.round(volume * 100)}%</span>
-      </div>
-      <Slider
-        className="w-full"
-        aria-label="Giriş sesleri ses seviyesi"
-        min={0}
-        max={100}
-        value={Math.round(volume * 100)}
-        onValueChange={(v) => set({ introSoundVolume: v / 100 })}
-      />
     </div>
   );
 }

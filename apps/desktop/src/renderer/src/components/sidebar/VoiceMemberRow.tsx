@@ -24,15 +24,15 @@ import { openProfile, type ProfileAnchor } from '../members/ProfilePopover';
 import { ActivityIcon } from '../status/ActivityCard';
 import { openActivityPopover } from '../status/ActivityPopover';
 import { activityCardHandlers } from './ActivityHoverCard';
-import { streamCardHandlers, useLivePreviewImage } from './StreamPreviewCard';
+import { streamCardHandlers } from './StreamPreviewCard';
 
 /**
- * Üye satırının sağ ucundaki sabit yuva: yayın yapıyorsa yayının küçük resmi, yoksa oyun ikonu (tıklayınca
- * oyun sayfası; satırın profil tıklaması ve sürüklemesi çalışmaz). Her satırda aynı yerde durur; soldaki
- * mikrofon/kulaklık ikonları değişse de dikey hiza bozulmaz.
+ * Üye satırının sağ ucundaki yuva: yayında olmayan üyede oyun ikonu (tıklayınca oyun sayfası; satırın profil
+ * tıklaması ve sürüklemesi çalışmaz). Yayındaki üyede boş: yayının küçük resmi satırda durmaz, yalnız hover
+ * kartında (`StreamPreviewCard`) görünür; "YAYINDA" hapı ve ses simgeleri sağa yaslı kalır.
  */
 function TrailingSlot({ state, activity }: { state: VoiceState; activity: ReturnType<typeof useActivity> }) {
-  if (state.streaming) return <StreamThumb state={state} />;
+  if (state.streaming) return null;
   if (activity) {
     return (
       <button
@@ -57,15 +57,14 @@ function TrailingSlot({ state, activity }: { state: VoiceState; activity: Return
   return null;
 }
 
-/** Yayın yapan üyenin satırındaki küçük önizleme (16:9); resim gelene kadar koyu yer tutucu */
-function StreamThumb({ state }: { state: VoiceState }) {
-  const { src, onError } = useLivePreviewImage(state);
-  return (
-    <span className="flex h-[18px] w-8 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-black ring-1 ring-divider">
-      {src && <img src={src} alt="" draggable={false} onError={onError} className="h-full w-full object-cover" />}
-    </span>
-  );
-}
+/**
+ * Dar satırda "YAYINDA" hapının noktaya inen hâli: 10 px daire (size-2.5), dolgu yok, yazı 0 px (görsel olarak
+ * yok, erişilebilir ad kalır). Eşik 170 px, satırın *içerik* genişliği (kapsayıcı sorgusu içerik kutusunu ölçer;
+ * satır px-2 = 16 px dolgulu): satır ≈ kenar çubuğu − 40 px (ml-6 + dış dolgu) olduğundan en dar kenar çubuğu
+ * (200 px) satırı ≈160 px, içeriği ≈144 px olur → nokta; varsayılan 240 px'te satır ≈200 px, içerik ≈184 px →
+ * hap aynen kalır (ad ≈64 px). Eşik (satır ≈186 px) kenar çubuğunun ≈226 px'ine denk gelir; hapla ad 25 px'e sıkışmadan nokta devreye girer.
+ */
+const ROW_DOT = '@max-[170px]:size-2.5 @max-[170px]:overflow-hidden @max-[170px]:p-0 @max-[170px]:text-[0px] @max-[170px]:leading-[0]';
 
 export function LiveBadge({ className }: { className?: string }) {
   return (
@@ -82,25 +81,35 @@ export function WatchLiveBadge({
   userId,
   channelId,
   tooltip = true,
+  inRow = false,
 }: {
   userId: string;
   channelId: string;
   /** Kanal listesinde ipucu yerine "Şimdi Yayın Yapıyor" kartı açılır */
   tooltip?: boolean;
+  /**
+   * Üye satırında kullanım: satırın kapsayıcı sorgusuna (`@container`) göre dar satırda hap kırmızı noktaya iner
+   * (metin görsel olarak gizlenir, ekran okuyucuya kalır). Sahne ve PiP kullanımları etkilenmez.
+   */
+  inRow?: boolean;
 }) {
   return (
     <button
       type="button"
       data-tooltip={tooltip ? 'Yayını izle' : undefined}
       aria-label="Yayını izle"
-      className="press shrink-0 rounded-full transition-[filter] hover:brightness-110"
+      className={cn(
+        'press shrink-0 rounded-full transition-[filter] hover:brightness-110',
+        // Nokta durumunda tıklama alanı 10 px + 2×4 px dolgu = 18 px
+        inRow && '@max-[170px]:p-1',
+      )}
       onClick={(e) => {
         e.stopPropagation();
         void watchUserStream(userId, channelId);
       }}
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      <LiveBadge className="block" />
+      <LiveBadge className={cn('block', inRow && ROW_DOT)} />
     </button>
   );
 }
@@ -176,7 +185,7 @@ export function VoiceMemberRow({ state, inMyChannel }: { state: VoiceState; inMy
       tabIndex={0}
       aria-label={`${user?.displayName ?? 'Üye'} profili`}
       className={cn(
-        'group flex h-8 cursor-pointer items-center gap-2 rounded px-2 text-text-muted transition-[color,background-color,opacity] duration-150 select-none hover:bg-bg-hover hover:text-text-normal',
+        '@container group flex h-8 cursor-pointer items-center gap-2 rounded px-2 text-text-muted transition-[color,background-color,opacity] duration-150 select-none hover:bg-bg-hover hover:text-text-normal',
         dragging && 'opacity-40',
       )}
       onPointerDown={
@@ -221,7 +230,7 @@ export function VoiceMemberRow({ state, inMyChannel }: { state: VoiceState; inMy
       >
         {user?.displayName ?? '…'}
       </span>
-      {state.streaming && <WatchLiveBadge userId={state.userId} channelId={state.channelId} tooltip={false} />}
+      {state.streaming && <WatchLiveBadge userId={state.userId} channelId={state.channelId} tooltip={false} inRow />}
       <VoiceStateIcons state={state} localMuted={localMuted} />
       <TrailingSlot state={state} activity={activity} />
     </div>

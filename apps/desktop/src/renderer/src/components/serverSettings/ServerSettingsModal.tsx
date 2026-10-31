@@ -11,6 +11,7 @@ import { InvitesSection } from './InvitesSection';
 import { MembersSection } from './MembersSection';
 import { OverviewSection } from './OverviewSection';
 import { RolesSection } from './RolesSection';
+import { SoundsSection } from './SoundsSection';
 
 const P = Permission;
 
@@ -23,6 +24,7 @@ const SECTIONS: { id: ServerSettingsSection; label: string; any: number[] }[] = 
     label: 'Üyeler',
     any: [P.MANAGE_ROLES, P.KICK_MEMBERS, P.BAN_MEMBERS, P.MUTE_MEMBERS, P.DEAFEN_MEMBERS, P.MOVE_MEMBERS],
   },
+  { id: 'sounds', label: 'Sesler', any: [P.MANAGE_SOUNDBOARD] },
   { id: 'invites', label: 'Davetler', any: [P.CREATE_INVITE, P.MANAGE_INVITES] },
   { id: 'bans', label: 'Yasaklar', any: [P.BAN_MEMBERS] },
 ];
@@ -36,7 +38,7 @@ export function useServerSettingsSections(): { id: ServerSettingsSection; label:
   return SECTIONS.filter((s) => (s.id === 'overview' && owner) || s.any.some((flag) => (perms & flag) === flag));
 }
 
-/** Sunucu Ayarları: genel, roller, üyeler, davetler, yasaklar (yetkiye göre). */
+/** Sunucu Ayarları: genel, roller, üyeler, sesler, davetler, yasaklar (yetkiye göre). */
 export function ServerSettingsModal({ initial }: { initial?: ServerSettingsSection }) {
   const close = useUi((s) => s.closeModal);
   const guildName = useGuild((s) => s.guild?.name);
@@ -76,6 +78,7 @@ export function ServerSettingsModal({ initial }: { initial?: ServerSettingsSecti
           {current === 'overview' && <OverviewSection />}
           {current === 'roles' && <RolesSection />}
           {current === 'members' && <MembersSection />}
+          {current === 'sounds' && <SoundsSection />}
           {current === 'invites' && <InvitesSection />}
           {current === 'bans' && <BansSection />}
         </div>

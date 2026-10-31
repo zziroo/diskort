@@ -76,6 +76,7 @@ function setRoles(user: User, roles: string[] = []): void {
         channels: [],
         roles: { g1: everyone, r1: managerRole },
         members: { [user.id]: { userId: user.id, roles, joinedAt: 1, removed: false } },
+        sounds: [],
       },
     },
     guildOrder: ['g1'],

@@ -7,11 +7,12 @@ import { InvitesSection } from '../../components/serverSettings/Invites';
 import { MembersSection } from '../../components/serverSettings/Members';
 import { OverviewSection } from '../../components/serverSettings/Overview';
 import { RolesSection } from '../../components/serverSettings/Roles';
+import { SoundsSection } from '../../components/serverSettings/Sounds';
 
 const isSection = (value: string | undefined): value is GuildSettingsSection =>
   value !== undefined && value in SECTION_INFO;
 
-/** Sunucu ayarlarının bir bölümü (Genel, Kanallar, Roller, Üyeler, Davetler, Yasaklar) */
+/** Sunucu ayarlarının bir bölümü (Genel, Kanallar, Roller, Üyeler, Sesler, Davetler, Yasaklar) */
 export default function ServerSettingsSectionScreen() {
   const guild = useSettingsGuild();
   const { bolum } = useLocalSearchParams<{ bolum: string }>();
@@ -35,6 +36,8 @@ export default function ServerSettingsSectionScreen() {
         <RolesSection guild={guild} />
       ) : bolum === 'members' ? (
         <MembersSection />
+      ) : bolum === 'sounds' ? (
+        <SoundsSection guild={guild} />
       ) : bolum === 'invites' ? (
         <InvitesSection guild={guild} />
       ) : (

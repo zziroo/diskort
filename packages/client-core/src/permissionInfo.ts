@@ -38,6 +38,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       ),
       info('MANAGE_GUILD', 'Sunucuyu Yönet', 'Sunucunun adını ve simgesini değiştirebilir.'),
       info(
+        'MANAGE_SOUNDBOARD',
+        'Ses Panelini Yönet',
+        'Sunucunun ses paneline ses yükleyebilir, sesleri yeniden adlandırabilir ve silebilir.',
+      ),
+      info(
         'MANAGE_ROLES',
         'Rolleri Yönet',
         'Kendi en üst rolünün altındaki rolleri oluşturup düzenleyebilir, üyelere verebilir ve kanal izinlerini ayarlayabilir. Kendinde olmayan bir yetkiyi kimseye veremez.',

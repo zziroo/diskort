@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Dosya eklerinin (mesajlardaki resim/dosyalar), profil fotoğraflarının ve geri bildirim ekran görüntülerinin
-# günlük anlık kopyası: BACKUP_DIR/attachments, BACKUP_DIR/avatars ve BACKUP_DIR/feedback.
+# Dosya eklerinin (mesajlardaki resim/dosyalar), profil fotoğraflarının, geri bildirim ekran görüntülerinin,
+# giriş seslerinin ve ses paneli seslerinin günlük anlık kopyası: BACKUP_DIR/attachments, BACKUP_DIR/avatars,
+# BACKUP_DIR/feedback, BACKUP_DIR/intro-sounds ve BACKUP_DIR/sounds.
 # Bu dosyalar hiç değişmez (adları rastgele kimlik ya da içerik özeti), bu yüzden kopya "sabit bağlantı" (hard link) ile alınır:
 # diskte ek yer kaplamaz. Mesaj silinip dosya uygulamadan kalkınca kopyadaki bağlantı tek başına kalır
 # ve KEEP_DAYS gün sonra silinir; yanlışlıkla silinenler bu süre içinde geri getirilebilir.
-# Bilgisayardaki yedek (scripts/pull-db-backups.ps1) üçünü de aynalar.
+# Bilgisayardaki yedek (scripts/pull-db-backups.sh ve .ps1) bu beş klasörü de aynalar.
 # Günlük olarak systemd zamanlayıcısı çalıştırır (infra/systemd/diskort-backup.service).
 set -euo pipefail
 
@@ -42,3 +43,5 @@ chmod 700 "$BACKUP_DIR"
 backup_dir "${data}/attachments" "${BACKUP_DIR}/attachments" '[0-9a-f]{32}'
 backup_dir "${data}/avatars" "${BACKUP_DIR}/avatars" '[0-9a-f]{32}\.webp'
 backup_dir "${data}/feedback" "${BACKUP_DIR}/feedback" '[0-9a-f]{32}\.webp'
+backup_dir "${data}/intro-sounds" "${BACKUP_DIR}/intro-sounds" '[0-9a-f]{32}\.mp3'
+backup_dir "${data}/sounds" "${BACKUP_DIR}/sounds" '[0-9a-f]{32}\.mp3'

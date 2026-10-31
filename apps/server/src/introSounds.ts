@@ -15,15 +15,18 @@ export const INTRO_SOUND_HASH = AVATAR_HASH;
 export const INTRO_SOUND_MAX_START = 3600;
 /** İstemcinin seçebileceği en kısa klip süresi (saniye); sondaki 0,3 sn'lik kısılma sığsın diye */
 export const INTRO_SOUND_MIN_SECONDS = 0.3;
-/** Dönüştürülmüş sesin en büyük boyutu: 5 sn × 96 kbps ≈ 60 KB; bunun çok üstü bozuk çıktı demektir */
-const MAX_OUTPUT_BYTES = 1024 * 1024;
+/** Dönüştürülmüş sesin en büyük boyutu: 5 sn × 96 kbps ≈ 60 KB; bunun çok üstü bozuk çıktı demektir (ses paneliyle ortak) */
+export const SOUND_OUTPUT_MAX_BYTES = 1024 * 1024;
 const MIN_OUTPUT_BYTES = 1000;
 /** ffmpeg'in en uzun çalışma süresi; aşılırsa süreç öldürülür */
 const TRANSCODE_TIMEOUT_MS = 20_000;
-/** Veritabanında karşılığı olmayan dosyalar için bekleme süresi (yarım kalan işlem, eski yedek) */
-const ORPHAN_GRACE_MS = 60 * 60_000;
+/** Veritabanında karşılığı olmayan dosyalar için bekleme süresi (yarım kalan işlem, eski yedek; ses paneliyle ortak) */
+export const SOUND_ORPHAN_GRACE_MS = 60 * 60_000;
 
-/** Yüklenen sesi `startSec`'ten başlayarak `durationSec` saniyelik (en çok INTRO_SOUND_MAX_SECONDS) MP3'e çevirir. */
+/**
+ * Yüklenen sesi `startSec`'ten başlayarak `durationSec` saniyelik (en çok INTRO_SOUND_MAX_SECONDS) MP3'e çevirir.
+ * Ses paneli (soundboard.ts) aynı dönüştürücüyü kullanır.
+ */
 export type IntroSoundTranscode = (input: Buffer, startSec: number, durationSec: number) => Promise<Buffer>;
 
 /**
@@ -82,7 +85,7 @@ export function ffmpegTranscode(ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg'
       // Sınırın üstündeki çıktı belleğe okunmaz; servis boşu da sınırı aşanı da reddeder
       // Başlangıç noktası girdinin sonunu geçerse yalnızca başlık içeren (sesi olmayan) bir MP3 çıkar
       if (stat.size < MIN_OUTPUT_BYTES) throw unsupported();
-      if (stat.size > MAX_OUTPUT_BYTES) return Buffer.alloc(MAX_OUTPUT_BYTES + 1);
+      if (stat.size > SOUND_OUTPUT_MAX_BYTES) return Buffer.alloc(SOUND_OUTPUT_MAX_BYTES + 1);
       return await fs.promises.readFile(outFile);
     } finally {
       await fs.promises.rm(work, { recursive: true, force: true });
@@ -148,7 +151,7 @@ export class IntroSoundService {
         this.log?.info({ err: String(err) }, 'giriş sesi dönüştürülemedi');
         throw unsupported();
       }
-      if (output.length === 0 || output.length > MAX_OUTPUT_BYTES) throw unsupported();
+      if (output.length === 0 || output.length > SOUND_OUTPUT_MAX_BYTES) throw unsupported();
       const hash = createHash('sha256').update(`intro:${userId}`).update('\0').update(output).digest('hex').slice(0, 32);
       await fs.promises.mkdir(this.dir, { recursive: true });
       const temp = path.join(this.dir, `${randomBytes(8).toString('hex')}.tmp`);
@@ -197,7 +200,7 @@ export class IntroSoundService {
         if (match ? used.has(match[1]!) : !/^[0-9a-f]{16}\.tmp$/.test(file)) continue; // bize ait olmayanlara dokunulmaz
         const full = path.join(this.dir, file);
         const stat = await fs.promises.stat(full).catch(() => null);
-        if (!stat || now - stat.mtimeMs < ORPHAN_GRACE_MS) continue;
+        if (!stat || now - stat.mtimeMs < SOUND_ORPHAN_GRACE_MS) continue;
         await fs.promises.rm(full, { force: true });
         removed++;
       }

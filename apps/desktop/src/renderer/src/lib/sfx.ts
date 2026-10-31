@@ -4,7 +4,7 @@
 // Çıkış aygıtı: sesler seçili çıkış aygıtından (Ayarlar → Ses ve Görüntü → Çıkış Aygıtı) çalınır. Aygıt değişimi
 // (setSinkId) bitmeden çalınan ses eskiden kayboluyordu (ilk ses genelde "katıldın" sesiydi); artık
 // aygıt hazır olana dek beklenir.
-import { INTRO_SOUND_MAX_SECONDS } from '@diskort/shared';
+import { INTRO_SOUND_MAX_SECONDS, SOUNDBOARD_SOUND_MAX_SECONDS } from '@diskort/shared';
 import {
   CALL_SOUND_REPEAT_MS,
   OTHERS_SOUNDS,
@@ -104,9 +104,13 @@ export function prepareSounds(): void {
     .catch(() => undefined);
 }
 
-// Çıkış aygıtı değişince bağlam hemen taşınır (bir sonraki ses beklemesin)
 useSettings.subscribe((next, prev) => {
+  // Çıkış aygıtı değişince bağlam hemen taşınır (bir sonraki ses beklemesin)
   if (ctx && next.outputDeviceId !== prev.outputDeviceId) applySink(ctx);
+  // Kaydırıcı çalmakta olan ses paneli seslerine de hemen uygulanır (spam sırasında kısabilmek için)
+  if (next.soundboardVolume !== prev.soundboardVolume) applyBoardVolume();
+  // Kendini sağırlaştırınca çalan ses paneli sesleri hemen söner (dinleme sesleri hariç)
+  if (next.selfDeaf && !prev.selfDeaf) stopSoundboardForDeaf();
 });
 
 // Aygıt takılıp çıkınca (modül ömrü boyunca tek dinleyici, 300 ms debounce) çıkış yeniden çözülür
@@ -166,10 +170,13 @@ function startSound(name: SoundName, opts: { preview?: boolean } = {}): Promise<
 
 // ---------- Kişisel giriş sesleri ----------
 
-/** Çözülmüş giriş sesleri (adres → ses); adresler değişmez (içerik özeti adreste), en son kullanılan 16 tanesi tutulur */
+/**
+ * Çözülmüş giriş ve ses paneli sesleri (adres → ses); adresler değişmez (içerik özeti adreste), en son
+ * kullanılan 16 tanesi tutulur
+ */
 const introBuffers = createPromiseLru<AudioBuffer>(16, async (url) => {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`giriş sesi alınamadı: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`ses alınamadı: HTTP ${res.status}`);
   return sharedAudioContext().decodeAudioData(await res.arrayBuffer());
 });
 
@@ -182,15 +189,15 @@ const INTRO_FADE_S = 0.3;
 /** Genel katılma sesi bittikten sonra giriş sesine kadar bırakılan boşluk (Discord'daki sıra) */
 const INTRO_AFTER_JOIN_S = 0.05;
 /**
- * Giriş seslerinin sabit kısılması: ayardaki %100, eski seviyenin yarısıdır (giriş sesleri arayüz seslerine
- * göre çok yüksek duyuluyordu; daha önce yüklenmiş seslere de uygulanır). Sunucu da yeni yüklemelerde ses
- * yüksekliği hedefini -20 LUFS'a indirdi (loudnorm).
+ * Giriş ve ses paneli seslerinin sabit kısılması: ayardaki %100, eski seviyenin yarısıdır (giriş sesleri arayüz
+ * seslerine göre çok yüksek duyuluyordu; daha önce yüklenmiş seslere de uygulanır). Sunucu da yeni yüklemelerde
+ * ses yüksekliği hedefini -20 LUFS'a indirdi (loudnorm).
  */
 const INTRO_GAIN = 0.5;
 
-/** Giriş seslerinin seviyesi: dinleme düğmeleri ayar kapalıyken (0) de duyulsun diye tam seviyeye düşer */
+/** Giriş ve ses paneli seslerinin seviyesi: dinleme düğmeleri ayar kapalıyken (0) de duyulsun diye tam seviyeye düşer */
 const introVolume = (preview: boolean): number => {
-  const v = getSettings().introSoundVolume;
+  const v = getSettings().soundboardVolume;
   return (preview && v <= 0 ? 1 : v) * INTRO_GAIN;
 };
 
@@ -200,7 +207,7 @@ const introVolume = (preview: boolean): number => {
  */
 export function introSoundsEnabled(): boolean {
   const s = getSettings();
-  return s.sounds && s.introSoundVolume > 0;
+  return s.sounds && s.soundboardVolume > 0;
 }
 
 interface IntroPlay {
@@ -253,12 +260,16 @@ function stopIntroNodes(): void {
   // Henüz başlamamış ses (katılma sesi bitmeden susturuldu) başladı sayılmaz
   if (current.startTimer !== null) window.clearTimeout(current.startTimer);
   current.startTimer = null;
+  fadeOut(current.src, current.gain);
+}
+
+/** Kısa kısılmayla durdurur: aniden kesilen ses tık yapar */
+function fadeOut(src: AudioBufferSourceNode, gain: GainNode): void {
   try {
-    // Kısa kısılma: aniden kesilen ses tık yapar
-    const t = current.gain.context.currentTime;
-    current.gain.gain.cancelScheduledValues(t);
-    current.gain.gain.setTargetAtTime(0, t, 0.015);
-    current.src.stop(t + 0.08);
+    const t = gain.context.currentTime;
+    gain.gain.cancelScheduledValues(t);
+    gain.gain.setTargetAtTime(0, t, 0.015);
+    src.stop(t + 0.08);
   } catch {
     // zaten bitmiş
   }
@@ -325,6 +336,105 @@ export function stopIntroSound(): void {
 /** Seçilen ses dosyasını çözer (giriş sesi düzenleyicisi: süre ve dinleme için) */
 export function decodeAudioFile(data: ArrayBuffer): Promise<AudioBuffer> {
   return sharedAudioContext().decodeAudioData(data);
+}
+
+// ---------- Ses paneli ----------
+
+/** Çalan bir ses paneli sesi; `preview`: kendine dinleme (kaydırıcı çalarken etkilemez) */
+interface BoardVoice {
+  src: AudioBufferSourceNode;
+  gain: GainNode;
+  preview: boolean;
+}
+
+/** Çalan ses paneli sesleri: giriş sesinden ayrı, üst üste çalabilir */
+const boardVoices = new Set<BoardVoice>();
+/** Her durdurmada artar: indirme ya da çözme sürerken kanaldan çıkıldıysa ses başlamaz */
+let boardGen = 0;
+/** Her dinlemede artar: art arda basılınca yalnız sonuncusu çalar */
+let previewGen = 0;
+/** Ses en çok bu kadar çalar (sunucu 5 saniyeye kırpar) */
+const BOARD_MAX_S = SOUNDBOARD_SOUND_MAX_SECONDS + 0.5;
+
+function startBoardVoice(ac: AudioContext, buf: AudioBuffer, preview: boolean): void {
+  const gain = ac.createGain();
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  gain.gain.value = introVolume(preview);
+  src.connect(gain).connect(ac.destination);
+  const voice: BoardVoice = { src, gain, preview };
+  src.onended = () => {
+    src.disconnect();
+    gain.disconnect();
+    boardVoices.delete(voice);
+  };
+  boardVoices.add(voice);
+  src.start(ac.currentTime + 0.005, 0, BOARD_MAX_S);
+}
+
+function applyBoardVolume(): void {
+  for (const voice of boardVoices) {
+    if (voice.preview) continue;
+    voice.gain.gain.setTargetAtTime(introVolume(false), voice.gain.context.currentTime, 0.015);
+  }
+}
+
+const boardAudible = (): boolean => getSettings().soundboardVolume > 0 && !selfDeafened();
+
+/**
+ * Ses paneli sesini seçili çıkış aygıtından çalar. Giriş sesini ve çalan diğer ses paneli seslerini kesmez.
+ * Seviye 0 iken ve sağırken (kendi çaldığın ses dahil) çalmaz; ses alınamaz ya da çözülemezse sessizce geçer.
+ * Ses çalındıysa true döner.
+ */
+export async function playSoundboardSound(url: string): Promise<boolean> {
+  if (!boardAudible()) return false;
+  const gen = boardGen;
+  try {
+    const [ac, buf] = await Promise.all([ready(), introBuffers.get(url)]);
+    if (gen !== boardGen || !boardAudible()) return false;
+    startBoardVoice(ac, buf, false);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Kendine dinleme: seviye 0 iken (tam seviyede) ve sağırken de duyulur; önceki dinleme susar, çalan diğer seslere
+ * dokunulmaz.
+ */
+export function previewSound(url: string): void {
+  const gen = ++previewGen;
+  stopBoardVoices((voice) => voice.preview);
+  void Promise.all([ready(), introBuffers.get(url)])
+    .then(([ac, buf]) => {
+      if (gen === previewGen) startBoardVoice(ac, buf, true);
+    })
+    .catch(() => undefined);
+}
+
+function stopBoardVoices(which: (voice: BoardVoice) => boolean = () => true): void {
+  for (const voice of boardVoices) {
+    if (!which(voice)) continue;
+    fadeOut(voice.src, voice.gain);
+    boardVoices.delete(voice);
+  }
+}
+
+/**
+ * Sağırlaşınca (kendi ya da sunucuca) çalan ve indirilmekte olan ses paneli seslerini susturur; kendine dinleme
+ * (preview) sesleri sürer.
+ */
+export function stopSoundboardForDeaf(): void {
+  boardGen++;
+  stopBoardVoices((voice) => !voice.preview);
+}
+
+/** Çalan ve indirilmekte olan bütün ses paneli seslerini susturur (kanaldan çıkınca, bağlantı kopunca) */
+export function stopSoundboardSounds(): void {
+  boardGen++;
+  previewGen++;
+  stopBoardVoices();
 }
 
 // ---------- Arama sesleri (döngülü) ----------
