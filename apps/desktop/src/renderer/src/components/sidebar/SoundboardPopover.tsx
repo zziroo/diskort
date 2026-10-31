@@ -8,6 +8,7 @@ import {
   playGuildSound,
   useGuild,
   useSession,
+  useSoundboardCooling,
 } from '@diskort/client-core';
 import { previewSound } from '../../lib/sfx';
 import { cn } from '../../lib/utils';
@@ -36,7 +37,7 @@ function toggleSoundboardVolume(): void {
 }
 
 function play(sound: GuildSound): void {
-  playGuildSound(sound.guildId, sound.id).catch((err: unknown) => {
+  playGuildSound(sound).catch((err: unknown) => {
     const text = soundboardPlayError(err);
     if (text) toast(text, 'error');
   });
@@ -205,23 +206,29 @@ function Group({ group, canPlay, onClose }: { group: SoundboardGroup; canPlay: b
   );
 }
 
-/** Tık: kanaldaki herkese çalar; sağ üstteki kulaklık (fareyle üstüne gelince) yalnız kendine dinletir */
+/**
+ * Tık: kanaldaki herkese çalar (çalınan ses bitene dek kapalı); sağ üstteki kulaklık (fareyle üstüne gelince) yalnız
+ * kendine dinletir, her zaman çalışır.
+ */
 function SoundTile({ sound, canPlay }: { sound: GuildSound; canPlay: boolean }) {
+  const cooling = useSoundboardCooling();
+  const playable = canPlay && !cooling;
+  const tooltip = !canPlay ? 'Önce bir ses kanalına katıl' : cooling ? 'Sesin bitince yeniden çalabilirsin' : sound.name;
   return (
     <div className="group/tile relative">
       <button
         type="button"
         data-menu-item
-        data-tooltip={canPlay ? sound.name : 'Önce bir ses kanalına katıl'}
+        data-tooltip={tooltip}
         aria-label={sound.name}
-        aria-disabled={canPlay ? undefined : true}
+        aria-disabled={playable ? undefined : true}
         className={cn(
           'flex h-16 w-full flex-col items-center justify-center gap-1 rounded-md bg-bg-active px-1 outline-none transition-colors',
-          canPlay
+          playable
             ? 'press text-text-normal hover:bg-control hover:text-text-head focus-visible:bg-control'
             : 'cursor-not-allowed text-text-muted opacity-50',
         )}
-        onClick={canPlay ? () => play(sound) : undefined}
+        onClick={playable ? () => play(sound) : undefined}
       >
         <span className="flex h-6 items-center text-xl leading-none" aria-hidden>
           {sound.emoji ?? <Music2 size={20} />}

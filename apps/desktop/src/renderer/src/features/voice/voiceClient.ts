@@ -123,7 +123,6 @@ const RESET_ROOM_STATE = {
   micAllowed: true,
   speaking: {},
   introPlayingUserId: null,
-  lastSoundboard: null,
   streams: {},
   watching: {},
   focusedStream: null,
@@ -514,7 +513,7 @@ class VoiceClient {
     // Söküm sürerken (oda null) gelen olay çalmaz
     if (!this.room || channelId !== current || status !== 'connected') return;
     void playSoundboardSound(guildSoundUrl(sound));
-    setVoice({ introPlayingUserId: userId, lastSoundboard: { userId, sound, at: Date.now() } });
+    setVoice({ introPlayingUserId: userId });
     this.clearSoundboardRing();
     this.soundboardRingTimer = window.setTimeout(() => {
       this.soundboardRingTimer = null;

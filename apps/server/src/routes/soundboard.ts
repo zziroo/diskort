@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import type { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { Permission, SOUNDBOARD_NAME_MAX, type GuildSound } from '@diskort/shared';
+import { Permission, SOUNDBOARD_NAME_MAX, soundboardCooldownMs, type GuildSound } from '@diskort/shared';
 import { UploadError } from '../attachments.js';
 import { forbidden, parseBody, sendError, type AppContext } from '../context.js';
 import { normalizeEmoji } from '../emoji.js';
@@ -13,11 +13,8 @@ import { createRateLimiter } from './messages.js';
 
 const LIMIT_MESSAGE = 'Ses panelini çok sık değiştiriyorsun, biraz bekle.';
 const NOT_FOUND = 'Ses bulunamadı.';
-/** Çalma: kullanıcı başına iki çalma arasındaki en kısa süre */
-const PLAY_MIN_INTERVAL_MS = 400;
-const PLAY_PER_MINUTE = 30;
-/** Son çalma anları bu sayıyı aşınca eskiler atılır (bellek sınırsız büyümesin) */
-const LAST_PLAY_MAX_KEYS = 10_000;
+/** Bekleme kayıtları bu sayıyı aşınca süresi geçenler atılır (bellek sınırsız büyümesin) */
+const BUSY_MAX_KEYS = 10_000;
 
 type GuildParams = { guildId: string };
 type SoundParams = { guildId: string; soundId: string };
@@ -60,8 +57,9 @@ export function registerSoundboardRoutes(app: FastifyInstance, ctx: AppContext):
   const { store, auth, gateway, permissions, voice, soundboard } = ctx;
   // Yükleme ve silme birlikte sayılır
   const allowChange = createRateLimiter(10, 10 * 60_000);
-  const allowPlay = createRateLimiter(PLAY_PER_MINUTE, 60_000);
-  const lastPlay = new Map<string, number>();
+  // Çalma: kullanıcının yeni ses çalabileceği an (ms). Kullanıcıya bağlıdır, kanal değiştirince sıfırlanmaz;
+  // farklı kişilerin sesleri üst üste binebilir.
+  const busyUntil = new Map<string, number>();
 
   app.get<{ Params: GuildParams }>('/api/guilds/:guildId/sounds', { preHandler: auth.requireMember }, async (req) => ({
     sounds: store.listSounds(req.params.guildId),
@@ -212,14 +210,14 @@ export function registerSoundboardRoutes(app: FastifyInstance, ctx: AppContext):
     const sound: GuildSound | null = permissions.isMember(body.guildId, userId) ? store.getSound(body.soundId, body.guildId) : null;
     if (!sound) return sendError(reply, 404, 'unknown_sound', NOT_FOUND);
     const now = Date.now();
-    const last = lastPlay.get(userId) ?? 0;
-    if (now - last < PLAY_MIN_INTERVAL_MS || !allowPlay(userId)) {
-      return sendError(reply, 429, 'rate_limited', 'Çok hızlı, biraz bekle.');
+    // Reddedilen istek beklemeyi uzatmaz
+    if (now < (busyUntil.get(userId) ?? 0)) {
+      return sendError(reply, 429, 'rate_limited', 'Sesin bitmeden yeni ses çalamazsın.');
     }
-    if (lastPlay.size >= LAST_PLAY_MAX_KEYS) {
-      for (const [id, at] of lastPlay) if (now - at >= PLAY_MIN_INTERVAL_MS) lastPlay.delete(id);
+    if (busyUntil.size >= BUSY_MAX_KEYS) {
+      for (const [id, until] of busyUntil) if (until <= now) busyUntil.delete(id);
     }
-    lastPlay.set(userId, now);
+    busyUntil.set(userId, now + soundboardCooldownMs(sound.durationMs));
     gateway.sendToUsers(voice.membersOf(channelId), {
       t: 'SOUNDBOARD_PLAY',
       d: { channelId, guildId: sound.guildId, userId, sound },

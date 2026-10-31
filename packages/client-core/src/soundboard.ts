@@ -1,7 +1,9 @@
+import { create } from 'zustand';
 import {
   SOUNDBOARD_NAME_MAX,
   SOUNDBOARD_SOUND_MAX_BYTES,
   SOUNDBOARD_SOUND_MAX_SECONDS,
+  soundboardCooldownMs,
   type GuildSound,
 } from '@diskort/shared';
 import { api, ApiError, normalizeServerUrl } from './api';
@@ -99,7 +101,22 @@ export async function removeGuildSound(guildId: string, soundId: string): Promis
   useGuild.getState().apply({ t: 'GUILD_SOUND_DELETE', d: { guildId, soundId } });
 }
 
+/**
+ * Kullanıcının çaldığı ses bitene dek true. Yalnızca görünüm içindir, kural sunucudadır. Bekleme yanıttan sonra
+ * başladığı için sunucununkinden biraz geç biter: düğme açıldığında sunucu reddetmez.
+ */
+export const useSoundboardCooldown = create<{ cooling: boolean }>()(() => ({ cooling: false }));
+let cooldownTimer: ReturnType<typeof setTimeout> | null = null;
+
+export const useSoundboardCooling = (): boolean => useSoundboardCooldown((s) => s.cooling);
+
 /** Sesi bulunulan ses kanalındaki herkese çalar; SOUNDBOARD_PLAY olayı gönderene de gelir (hatalar: bkz. api.playGuildSound) */
-export function playGuildSound(guildId: string, soundId: string): Promise<void> {
-  return api.playGuildSound(guildId, soundId);
+export async function playGuildSound(sound: Pick<GuildSound, 'guildId' | 'id' | 'durationMs'>): Promise<void> {
+  await api.playGuildSound(sound.guildId, sound.id);
+  if (cooldownTimer) clearTimeout(cooldownTimer);
+  useSoundboardCooldown.setState({ cooling: true });
+  cooldownTimer = setTimeout(() => {
+    cooldownTimer = null;
+    useSoundboardCooldown.setState({ cooling: false });
+  }, soundboardCooldownMs(sound.durationMs));
 }

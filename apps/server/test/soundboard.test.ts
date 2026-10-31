@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   Permission as P,
   SOUNDBOARD_MAX_SOUNDS,
+  SOUNDBOARD_MIN_GAP_MS,
   SOUNDBOARD_SOUND_MAX_BYTES,
+  type Channel,
   type GuildData,
   type GuildSound,
 } from '@diskort/shared';
@@ -36,6 +38,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const c of clients.splice(0)) c.ws.close();
   await s.close();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -70,6 +73,19 @@ const connect = async (token: string): Promise<GatewayClient> => {
 
 const play = (token: string, guildId: string, soundId: string) =>
   s.req(token, 'POST', '/api/voice/soundboard/play', { guildId, soundId });
+
+/**
+ * Saati dondurur, yalnız dönen işlevle ilerler (gerçek uyku yok): sınır testleri (süre-1 ms / süre) gerçek saatle
+ * yarışmaz. Zamanlayıcılar gerçek kalır, yalnız Date.now taklit edilir; bekleme süreleri saniyelerle ölçüldüğü için
+ * oturum belirteçleri etkilenmez.
+ */
+function advanceClock(): (ms: number) => void {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  return (ms) => {
+    now += ms;
+  };
+}
 
 describe('ses paneli: ad temizliği ve süre', () => {
   it('görünmez karakterler silinir, uzunluk temizlikten sonra ölçülür', async () => {
@@ -330,7 +346,9 @@ describe('ses paneli: çalma', () => {
     const sound = (await upload(mgr.token, s.guildId, 'ses')).json().sound as GuildSound;
     const voice = s.channel('voice');
     s.ctx.voice.join(member.user.id, voice.id);
+    const advance = advanceClock();
     expect((await play(member.token, s.guildId, sound.id)).statusCode).toBe(204);
+    advance(sound.durationMs);
 
     await s.ctx.moderation.setServerFlags(s.guildId, member.user.id, { serverMute: true, serverDeaf: false });
     const muted = await play(member.token, s.guildId, sound.id);
@@ -342,7 +360,6 @@ describe('ses paneli: çalma', () => {
     s.ctx.voice.setSelf(member.user.id, { selfMute: false, selfDeaf: true });
     expect((await play(member.token, s.guildId, sound.id)).statusCode).toBe(403);
     s.ctx.voice.setSelf(member.user.id, { selfMute: true, selfDeaf: false });
-    await new Promise((r) => setTimeout(r, 450));
     expect((await play(member.token, s.guildId, sound.id)).statusCode).toBe(204);
 
     // Kanalda Konuş yetkisi kaldırılınca
@@ -350,11 +367,11 @@ describe('ses paneli: çalma', () => {
       overwrites: [{ roleId: s.guildId, allow: 0, deny: P.SPEAK }],
     });
     expect(res.statusCode).toBe(200);
-    await new Promise((r) => setTimeout(r, 450));
+    advance(sound.durationMs);
     expect((await play(member.token, s.guildId, sound.id)).statusCode).toBe(403);
   });
 
-  it('başka sunucunun sesi üyeyse çalınır, değilse 404; hız sınırı 400 ms', async () => {
+  it('başka sunucunun sesi üyeyse çalınır, değilse 404', async () => {
     const mgr = await manager('yonetici');
     const listener = await s.member('dinleyen');
     const other = (await s.req(mgr.token, 'POST', '/api/guilds', { name: 'İkinci' })).json() as GuildData;
@@ -370,12 +387,72 @@ describe('ses paneli: çalma', () => {
     expect((await play(mgr.token, other.guild.id, sound.id)).statusCode).toBe(204);
     await l.settle();
     expect(l.of('SOUNDBOARD_PLAY')).toEqual([{ channelId: voice.id, guildId: other.guild.id, userId: mgr.user.id, sound }]);
+  });
+});
 
-    // Art arda çalma 400 ms'den önce reddedilir
-    const fast = await play(mgr.token, other.guild.id, sound.id);
-    expect([fast.statusCode, fast.json().error]).toEqual([429, 'rate_limited']);
-    await new Promise((r) => setTimeout(r, 450));
-    expect((await play(mgr.token, other.guild.id, sound.id)).statusCode).toBe(204);
+describe('ses paneli: çalma beklemesi', () => {
+  /** Yönetici ve dinleyen aynı ses kanalında, iki ses yüklü (5 sn ve çok kısa) */
+  async function setup() {
+    const mgr = await manager('yonetici');
+    const listener = await s.member('dinleyen');
+    const long = (await upload(mgr.token, s.guildId, 'uzun', '?name=Uzun')).json().sound as GuildSound;
+    const short = (await upload(mgr.token, s.guildId, 'kisa', '?name=Kisa')).json().sound as GuildSound;
+    expect([long.durationMs, short.durationMs]).toEqual([5000, 100]);
+    const voice = s.channel('voice');
+    s.ctx.voice.join(mgr.user.id, voice.id);
+    s.ctx.voice.join(listener.user.id, voice.id);
+    return { mgr, listener, long, short, advance: advanceClock() };
+  }
+
+  it('ses bitmeden ikinci çalma 429, farklı ses de bekler; süre dolunca 204', async () => {
+    const { mgr, long, short, advance } = await setup();
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(204);
+
+    const again = await play(mgr.token, s.guildId, long.id);
+    expect([again.statusCode, again.json().error]).toEqual([429, 'rate_limited']);
+    expect(again.json().message).toBe('Sesin bitmeden yeni ses çalamazsın.');
+    expect((await play(mgr.token, s.guildId, short.id)).statusCode).toBe(429);
+
+    advance(long.durationMs - 1000);
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(429);
+    advance(1000);
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(204);
+  });
+
+  it(`kısa ses de en az ${SOUNDBOARD_MIN_GAP_MS} ms bekletir`, async () => {
+    const { mgr, short, advance } = await setup();
+    expect((await play(mgr.token, s.guildId, short.id)).statusCode).toBe(204);
+    advance(short.durationMs);
+    expect((await play(mgr.token, s.guildId, short.id)).statusCode).toBe(429);
+    advance(SOUNDBOARD_MIN_GAP_MS - short.durationMs);
+    expect((await play(mgr.token, s.guildId, short.id)).statusCode).toBe(204);
+  });
+
+  it('başka kullanıcı aynı anda çalabilir', async () => {
+    const { mgr, listener, long, short } = await setup();
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(204);
+    expect((await play(listener.token, s.guildId, short.id)).statusCode).toBe(204);
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(429);
+  });
+
+  it('reddedilen çalma beklemeyi uzatmaz ve başlatmaz', async () => {
+    const { mgr, long, advance } = await setup();
+    // Bilinmeyen sesle reddedilen istek beklemeyi başlatmaz
+    expect((await play(mgr.token, s.guildId, 'yok')).statusCode).toBe(404);
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(204);
+    // Bekleme sırasındaki 429'lar bitiş anını ileri almaz
+    advance(long.durationMs - 1);
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(429);
+    advance(1);
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(204);
+  });
+
+  it('kanal değiştirmek beklemeyi sıfırlamaz', async () => {
+    const { mgr, long } = await setup();
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(204);
+    const other = (await s.req(s.owner.token, 'POST', `/api/guilds/${s.guildId}/channels`, { name: 'ikinci', type: 'voice' })).json() as Channel;
+    s.ctx.voice.join(mgr.user.id, other.id);
+    expect((await play(mgr.token, s.guildId, long.id)).statusCode).toBe(429);
   });
 });
 

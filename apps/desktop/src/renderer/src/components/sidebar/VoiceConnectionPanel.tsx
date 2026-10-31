@@ -19,7 +19,7 @@ import { Permission } from '@diskort/shared';
 import { channelById, dmTitle, useCan, useGuild, useSession } from '@diskort/client-core';
 import { useSettings } from '../../stores/settings';
 import { useUi } from '../../stores/ui';
-import { useVoice, type LastSoundboard } from '../../stores/voice';
+import { useVoice } from '../../stores/voice';
 import { useConnectionStats } from '../../stores/connectionStats';
 import { ConnectionInfoPopover } from './ConnectionInfoPopover';
 import { SwapIcon } from '../ui/SwapIcon';
@@ -48,9 +48,6 @@ const QUALITY_TILE: Record<LinkQuality, string> = {
   poor: 'bg-danger/15',
   unknown: 'bg-ok/15',
 };
-
-/** Çalınan ses paneli sesinin durum satırında kalma süresi */
-const SOUNDBOARD_LINE_MS = 3000;
 
 const QUALITY_TEXT: Record<LinkQuality, string> = {
   good: 'Bağlantı iyi',
@@ -180,7 +177,6 @@ export function VoiceConnectionPanel() {
           <span className="truncate">Mikrofon testi: odada susturuldun</span>
         </div>
       )}
-      <SoundboardLine />
       <div className="mt-2 grid grid-cols-4 gap-1.5">
         <ActionButton label="Kamera · Yakında" disabled>
           <Video size={20} />
@@ -231,33 +227,6 @@ export function VoiceConnectionPanel() {
         guildId={channel?.guildId ?? null}
         canPlay={connected}
       />
-    </div>
-  );
-}
-
-/** Kanalda çalınan ses paneli sesi: 3 saniye "Ad · 🎺 ses adı" (bkz. useVoice lastSoundboard) */
-function SoundboardLine() {
-  const last = useVoice((s) => s.lastSoundboard);
-  const [shown, setShown] = useState<LastSoundboard | null>(null);
-  useEffect(() => {
-    const left = last ? last.at + SOUNDBOARD_LINE_MS - Date.now() : 0;
-    if (left <= 0) {
-      setShown(null);
-      return;
-    }
-    setShown(last);
-    const timer = window.setTimeout(() => setShown(null), left);
-    return () => window.clearTimeout(timer);
-  }, [last]);
-  const name = useGuild((s) => (shown ? s.users[shown.userId]?.displayName : undefined));
-  if (!shown) return null;
-
-  return (
-    <div role="status" className="anim-rise-in mt-1.5 truncate px-1 text-xs text-text-muted">
-      <span className="font-semibold text-text-normal">{name ?? 'Üye'}</span>
-      {' · '}
-      {shown.sound.emoji ? `${shown.sound.emoji} ` : ''}
-      {shown.sound.name}
     </div>
   );
 }

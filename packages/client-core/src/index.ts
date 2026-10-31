@@ -166,6 +166,7 @@ export {
   removeGuildSound,
   updateGuildSound,
   uploadGuildSound,
+  useSoundboardCooling,
   type UploadGuildSoundOptions,
 } from './soundboard';
 export {

@@ -285,7 +285,7 @@ export const api = {
   /**
    * Bulunulan ses kanalındaki herkese çalar (SOUNDBOARD_PLAY). Seste değilken 409 'not_in_voice', DM
    * aramasında 400 'not_guild_voice', susturulmuşken 403 'muted', ses yoksa/üye değilse 404 'unknown_sound',
-   * sık basınca 429 'rate_limited'.
+   * çaldığı ses bitmeden yeniden basınca 429 'rate_limited' (bkz. soundboardCooldownMs).
    */
   playGuildSound: (guildId: string, soundId: string) =>
     request<void>('POST', '/api/voice/soundboard/play', { guildId, soundId }),

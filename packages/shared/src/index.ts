@@ -1140,6 +1140,10 @@ export const SOUNDBOARD_NAME_MAX = 32;
 export const SOUNDBOARD_SOUND_MAX_SECONDS = INTRO_SOUND_MAX_SECONDS;
 /** Ses paneline yüklenen dosyanın en büyük boyutu (girdi; sunucu kırpar ve MP3'e çevirir) */
 export const SOUNDBOARD_SOUND_MAX_BYTES = INTRO_SOUND_MAX_BYTES;
+/** Ses paneli: aynı kişinin iki çalması arasındaki en kısa süre; kısa seslerle spamı keser (dakikada en çok 30 çalma) */
+export const SOUNDBOARD_MIN_GAP_MS = 2000;
+/** Ses paneli: çalan kişinin yeni ses çalabilmek için beklediği süre (ses bitene dek, en az SOUNDBOARD_MIN_GAP_MS) */
+export const soundboardCooldownMs = (durationMs: number): number => Math.max(durationMs, SOUNDBOARD_MIN_GAP_MS);
 /** "Yazıyor…" göstergesinin geçerlilik süresi; istemci bu aralıkta en fazla bir kez bildirir */
 export const TYPING_TIMEOUT_MS = 8000;
 

@@ -11,6 +11,7 @@ import {
   playGuildSound,
   useGuild,
   useSession,
+  useSoundboardCooling,
   type LocalFile,
 } from '@diskort/client-core';
 import { pickGuildSound } from '../attachments';
@@ -89,6 +90,7 @@ function Board({
   const selfId = useSession((s) => s.user?.id);
   const channelId = useVoice((s) => s.channelId);
   const connected = useVoice((s) => s.status === 'connected');
+  const cooling = useSoundboardCooling();
   const currentGuildId = useGuild((s) => (channelId ? s.channelGuild[channelId] : undefined));
   const window = useWindowDimensions();
   const tileWidth = Math.floor((window.width - GRID_PADDING * 2 - GRID_GAP * (COLUMNS - 1)) / COLUMNS);
@@ -105,9 +107,9 @@ function Board({
     return [...shown.filter((g) => g.guild.id === currentGuildId), ...shown.filter((g) => g.guild.id !== currentGuildId)];
   }, [guilds, selfId, currentGuildId]);
 
-  const play = (guildId: string, sound: GuildSound): void => {
+  const play = (sound: GuildSound): void => {
     haptic('tick');
-    playGuildSound(guildId, sound.id).catch((err: unknown) => {
+    playGuildSound(sound).catch((err: unknown) => {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'rate_limited') return;
       feedback('error');
@@ -186,8 +188,8 @@ function Board({
                     key={sound.id}
                     sound={sound}
                     width={tileWidth}
-                    disabled={!connected}
-                    onPlay={() => play(guild.id, sound)}
+                    disabled={!connected || cooling}
+                    onPlay={() => play(sound)}
                     onPreview={() => preview(sound)}
                   />
                 ))}
@@ -200,7 +202,7 @@ function Board({
   );
 }
 
-/** Kutucuk: emoji (yoksa nota) ve ad. Bağlantı kurulana dek çalınamaz ama uzun basınca dinlenir. */
+/** Kutucuk: emoji (yoksa nota) ve ad. Bağlantı kurulana ve çalınan ses bitene dek çalınamaz ama uzun basınca dinlenir. */
 function SoundTile({
   sound,
   width,
