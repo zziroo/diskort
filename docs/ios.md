@@ -16,6 +16,7 @@ Ad Hoc'un sınırı: uygulama yalnızca **UDID'si önceden kaydedilmiş cihazlar
 | Kablosuz (OTA) güncelleme | Hazır: `/updates/expo/ios`. Sürüm iş akışı IPA ile birlikte iOS paketini de yükler. |
 | Uygulama güncellemesi (yeni IPA) | Uygulama, sunucu yeni IPA bildirince "Yükle" penceresini açar (`itms-services`). |
 | Bildirimler | Sunucu doğrudan Apple'a (APNs) gönderir; Firebase gerekmez. APNs anahtarı sunucuya konunca çalışır. |
+| Ekran yayını | Broadcast Upload Extension (`DiskortBroadcast`). Apple'daki kurulum ve gerçek cihaz denemesi: aşağıda **Ekran yayını**. |
 | İndirme sayfası | Sürümde IPA varsa iPhone kartı kendiliğinden görünür. |
 
 ## Kullanıcının yapması gerekenler
@@ -31,7 +32,7 @@ Ad Hoc'un sınırı: uygulama yalnızca **UDID'si önceden kaydedilmiş cihazlar
 
 1. **Certificates, Identifiers & Profiles** → **Identifiers** → **+** → **App IDs** → **App**.
 2. Description: `Diskort`, Bundle ID: **Explicit** → `com.diskort.app` (Android paket adıyla aynı).
-3. **Capabilities** listesinde **Push Notifications**'ı işaretle. Başka bir şey gerekmez.
+3. **Capabilities** listesinde **Push Notifications**'ı işaretle. (App Groups: aşağıda **Ekran yayını**.)
 4. Continue → Register.
 
 ### 3. APNs anahtarı (bildirimler için)
@@ -104,7 +105,7 @@ Depo → **Settings** → **Secrets and variables** → **Actions** → **New re
 | `APPLE_TEAM_ID` | Team ID (1. adım) |
 | `IOS_CERT_P12_BASE64` | `base64 -w0 diskort-ios.p12` çıktısı |
 | `IOS_CERT_PASSWORD` | `.p12` parolası |
-| `IOS_PROVISIONING_PROFILE_BASE64` | `base64 -w0 Diskort_Ad_Hoc.mobileprovision` çıktısı (ASC anahtarı varsa gerekmez) |
+| `IOS_PROVISIONING_PROFILE_BASE64` | `base64 -w0 Diskort_Ad_Hoc.mobileprovision` çıktısı (ASC anahtarı varsa gerekmez; ekran yayını eklentisi olan kod ASC anahtarı olmadan derlenmez) |
 | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | İsteğe bağlı: otomatik cihaz ekleme (aşağıda) |
 | `IOS_DEVICES_KEY` | İsteğe bağlı: şifreli cihaz listesinin anahtarı (aşağıda; sunucuda da aynısı) |
 
@@ -267,12 +268,73 @@ UDID'lerini** içerir (Ad Hoc'un doğası; IPA'yı indiren biri profili açıp o
 Risk düşük (UDID tek başına cihaza erişim sağlamaz). İleride IPA yalnızca kendi sunucumuzdan, kurulum
 bağlantısıyla sunulursa bu da kapanır.
 
+## Ekran yayını
+
+iPhone ekranı ana uygulamadan yakalanamaz: ReplayKit görüntüyü yalnızca ayrı bir işlem olan **Broadcast Upload
+Extension**'a verir. Eklenti `com.diskort.app.broadcast` App ID'siyle ayrı imzalanır, ana uygulamayla **App Group**
+(`group.com.diskort.app`) paylaşır.
+
+### Apple Developer'da bir kerelik kurulum
+
+Apple'ın API'si App Group atayamadığı için elle yapılır; sürüm etiketinden **önce** bitmeli (yoksa IPA derlemesi
+"App ID bulunamadı" ya da "profilinde group.com.diskort.app yok" diye durur, cihaz ekleme de durur).
+<https://developer.apple.com/account/resources/identifiers/list> adresinde:
+
+1. **App Group oluştur**: **+** → **App Groups** → Continue → Description: `Diskort`, Identifier:
+   `group.com.diskort.app` → Continue → Register.
+2. **Uygulamaya ata**: üstteki süzgeçten **App IDs**'e dön → `com.diskort.app` → **App Groups** kutusunu işaretle →
+   yanındaki **Configure** → `group.com.diskort.app`'i seç → Continue → **Save** → çıkan uyarıda **Confirm**.
+   Var olan profiller geçersiz olur, sorun değil: CI yenisini üretir. Kurulu uygulamalar çalışmaya devam eder.
+3. **Eklenti App ID'si**: **+** → **App IDs** → **App** → Continue → Description: `Diskort Yayin`, Bundle ID:
+   **Explicit** → `com.diskort.app.broadcast` → **App Groups**'u işaretle → Continue → Register. Sonra listeden
+   `com.diskort.app.broadcast`'i aç → App Groups → **Configure** → `group.com.diskort.app` → Continue → **Save**.
+
+Profiller elle oluşturulmaz: `scripts/ios-provisioning.mjs` iki Ad Hoc profil üretir (`Diskort Ad Hoc otomatik …`
+ve `Diskort Yayin Ad Hoc otomatik …`), ikisine de tüm açık cihazları koyar.
+
+### Akış
+
+1. **Ekran** düğmesi sistem seçicisini açar (`modules/screen-broadcast`, `showPicker`). Vazgeçilirse iOS haber
+   vermez; bu yüzden düğme durumu değiştirmez, iz de yayımlanmaz, izleyiciler siyah ekran görmez.
+2. Kullanıcı yayını başlatınca eklenti çalışır ve Darwin bildirimiyle haber verir (`onStarted`). Yayın Kontrol
+   Merkezi'nden başlatılsa da aynı yol izlenir. Uygulama ses kanalındaysa ve izni varsa
+   `setScreenShareEnabled(true)` çağrılır: `@livekit/react-native-webrtc` App Group kapsayıcısında `rtc_SSFD`
+   Unix soketini açar, eklenti 100 ms'de bir dener ve bağlanır.
+3. Eklenti kareyi küçültür (kısa kenar en çok 720), JPEG yapar, sokete yazar (en çok 24 kare/sn; soket meşgulse kare
+   atlanır). Ekran değişmezken ReplayKit kare vermez; yeni izleyici boş kalmasın diye son kare saniyede bir yinelenir.
+4. Kodlama ve gönderme ana uygulamada olur (VP8, 2,5 Mbps): LiveKit bağlantısı ve ses aynı işlemde kalır.
+   Uygulama yayın sırasında arka plandadır; `audio` arka plan kipi onu canlı tutar. Donanım H.264 kodlayıcısı arka
+   planda çalışmadığı için VP8 şart. `scaleScreenShare` yalnızca Android içindir; iOS'ta kare zaten küçük gelir.
+5. Durdurma: uygulamadan basılırsa eklentiye `com.diskort.broadcast.stop` gider ve soket kapanır; eklenti iOS'un
+   uyarısını göstermeden biter (`finishBroadcastWithError:` nil ile, belgelenmemiş; LiveKit'in Swift SDK'sı da böyle
+   yapar). Kırmızı durum çubuğundan ya da Kontrol Merkezi'nden durdurulursa soket kapanır, iz biter, `sharing`
+   kapanır. Kanaldan çıkınca da soket kapanır ve eklenti biter.
+6. Uygulama 8 saniyede soketi açmazsa (kapalı ya da ses kanalında değil) eklenti, iOS uyarısında görünen "Önce
+   Diskort'ta bir ses kanalına katıl" nedeniyle biter.
+
+Eklentinin 50 MB bellek sınırı var: kaynakları `modules/screen-broadcast/ios/extension/` altında, hiçbir Pod'a bağlı
+değil; prebuild `plugins/withBroadcastExtension.js` ile hedefi oluşturur, `ios/` klasörü depoda değil.
+
+`patches/@livekit__react-native-webrtc@144.2.0.patch` iki şey yapar: eklenti hiç bağlanmadan soket kapatılınca WebRTC
+kuyruğunun kilitlenmesini önler (`SocketConnection.m`) ve izin boyutunu bildirir (yoksa livekit-client bir saniye
+bekleyip "could not determine track dimensions" yazar, yatay 1280x720 duyurur).
+
+### Gerçek cihazda denenecekler
+
+Simülatör ReplayKit yayınını yapamaz (`getDisplayMedia` orada reddedilir). Kayıtlı bir iPhone'da:
+
+- Yayın aç, masaüstünde görüntü gelsin; dikey ve yatay çevir; ekran bir süre hareketsizken yeni biri izlemeye başlasın.
+- Yayın boyunca ses iki yönlü sürsün, uygulama arka planda ve başka uygulama açıkken de.
+- Seçicide vazgeç: **Ekran** düğmesi değişmesin. Uygulamadan, kırmızı durum çubuğundan ve Kontrol Merkezi'nden durdur:
+  düğme geri dönsün, iOS uyarısı çıkmasın (yalnızca ilki için beklenir).
+- 10 dakika yayında telefonun ısınması, kilit ekranı, gelen arama.
+
 ## Nasıl çalışıyor (teknik)
 
 - **Yapılandırma**: `apps/mobile/app.config.ts` → `ios` bölümü (paket kimliği, Türkçe izin metinleri,
   `UIBackgroundModes: audio, voip`, `ITSAppUsesNonExemptEncryption: false`). `plugins/withIos.js`
-  iOS'un OTA adresini (`/updates/expo/ios`) ve arka plan kiplerini yazar; CI
-  (`scripts/check-ios-project.sh`) prebuild sonrası bunları denetler.
+  iOS'un OTA adresini (`/updates/expo/ios`) ve arka plan kiplerini, `plugins/withBroadcastExtension.js` ekran
+  yayını hedefini yazar; CI (`scripts/check-ios-project.sh`) prebuild sonrası bunları denetler.
 - **Android'e özgü yerel modüller** iOS'ta yok sayılır: sesli sohbet ön plan servisi
   (`modules/voice-service`, iOS'ta boş işlevler), yerel çökme bildirici (`modules/crash-reporter`, iOS'ta
   yalnızca JavaScript hataları bildirilir), APK güncelleyici (iOS'ta `itms-services` bağlantısı),
@@ -290,9 +352,8 @@ bağlantısıyla sunulursa bu da kapanır.
 
 ## Bilinen eksikler
 
-- **Ekran paylaşımı (iPhone'dan)**: iOS'ta sistem geneli ekran yayını bir **Broadcast Upload Extension**
-  (ayrı hedef, App Group, ayrı profil) gerektirir; eklenmedi. Başkalarının yayınını izlemek çalışır.
-  Paylaşım düğmesine basılırsa hata mesajı çıkar.
+- **Yayında sistem sesi (iPhone'dan)**: yayın yalnızca görüntü gönderir (`audio: false`); ReplayKit uygulama sesini
+  verir ama eklenti bunu şimdilik kullanmıyor.
 - **Kilit ekranı / Dinamik Ada kontrolleri, CallKit**: yok. Görüşme arka planda sürer ama kilit ekranında
   "sustur / ayrıl" düğmesi yoktur (Android'deki bildirim düğmelerinin karşılığı). CallKit ile gelen arama
   ekranı veya Now Playing kartı ileride eklenebilir.

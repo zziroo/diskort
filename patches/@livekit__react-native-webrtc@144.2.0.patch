@@ -1,0 +1,63 @@
+diff --git a/ios/RCTWebRTC/ScreenCaptureController.m b/ios/RCTWebRTC/ScreenCaptureController.m
+index 31c136ff1794dd8bfc03d2418abc43b66bcffa16..7920599a096be84a2c0d43145afd2f9e4ac9d575 100644
+--- a/ios/RCTWebRTC/ScreenCaptureController.m
++++ b/ios/RCTWebRTC/ScreenCaptureController.m
+@@ -1,5 +1,7 @@
+ #if TARGET_OS_IOS
+ 
++#import <UIKit/UIKit.h>
++
+ #import "ScreenCaptureController.h"
+ #import "ScreenCapturer.h"
+ #import "SocketConnection.h"
+@@ -55,7 +57,18 @@ - (void)stopCapture {
+ }
+ 
+ - (NSDictionary *)getSettings {
+-    return @{@"deviceId" : self.deviceId, @"groupId" : @"", @"frameRate" : @(30)};
++    // Diskort: boyut bildirilmezse livekit-client bir saniye bekleyip "could not determine track dimensions"
++    // hatası yazar ve yatay 1280x720 duyurur. Kısa kenar sınırı: modules/screen-broadcast/ios/extension/SampleHandler.swift
++    CGSize native = [UIScreen mainScreen].nativeBounds.size;
++    CGFloat shortSide = MIN(native.width, native.height);
++    CGFloat scale = shortSide > 720 ? 720 / shortSide : 1;
++    return @{
++        @"deviceId" : self.deviceId,
++        @"groupId" : @"",
++        @"frameRate" : @(30),
++        @"width" : @((NSInteger)round(native.width * scale)),
++        @"height" : @((NSInteger)round(native.height * scale))
++    };
+ }
+ // MARK: CapturerEventsDelegate Methods
+ 
+diff --git a/ios/RCTWebRTC/SocketConnection.m b/ios/RCTWebRTC/SocketConnection.m
+index 805986d1a04cb0b14154be1322a20965828ea321..387082940768bec6afed57cc2751b25f33794c8a 100644
+--- a/ios/RCTWebRTC/SocketConnection.m
++++ b/ios/RCTWebRTC/SocketConnection.m
+@@ -75,7 +75,11 @@ - (void)openWithStreamDelegate:(id<NSStreamDelegate>)streamDelegate {
+ }
+ 
+ - (void)close {
+-    [self performSelector:@selector(unscheduleStreams) onThread:self.networkThread withObject:nil waitUntilDone:true];
++    // Diskort: yayın eklentisi hiç bağlanmadıysa ağ iş parçacığı başlamamıştır; ona gönderilip tamamlanması
++    // beklenen performSelector sonsuza dek bekler ve WebRTC modülünün kuyruğunu kilitlerdi.
++    if (self.networkThread.isExecuting) {
++        [self performSelector:@selector(unscheduleStreams) onThread:self.networkThread withObject:nil waitUntilDone:true];
++    }
+ 
+     self.inputStream.delegate = nil;
+     self.outputStream.delegate = nil;
+diff --git a/ios/RCTWebRTC/WebRTCModule+RTCMediaStream.m b/ios/RCTWebRTC/WebRTCModule+RTCMediaStream.m
+index 330c6b186be0ff7e3ad3ba8beb27a6ac757c9ad5..33557718ae4704906e636d5bc3a678d52a299c13 100644
+--- a/ios/RCTWebRTC/WebRTCModule+RTCMediaStream.m
++++ b/ios/RCTWebRTC/WebRTCModule+RTCMediaStream.m
+@@ -209,7 +209,8 @@ - (LKRTCVideoTrack *)createScreenCaptureVideoTrack {
+         @"id" : videoTrack.trackId,
+         @"kind" : videoTrack.kind,
+         @"readyState" : @"live",
+-        @"remote" : @(NO)
++        @"remote" : @(NO),
++        @"settings" : [videoTrack.captureController getSettings]
+     };
+ 
+     self.localStreams[mediaStreamId] = mediaStream;

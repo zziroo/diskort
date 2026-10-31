@@ -16,5 +16,7 @@ allowBuilds:
 # Yamalı paketler (patches/). Paket sürümü değişince yama yeniden yapılmalı (pnpm patch <paket>@<sürüm>).
 # - @livekit/react-native: Android'de telefonun donanım gürültü engelleyicisi kapalı (kütüphane bunu
 #   ayar olarak sunmuyor, ses modülü uygulama açılırken yerel tarafta kuruluyor)
+# - @livekit/react-native-webrtc: iOS ekran yayını soketi kapanırken kilitlenme ve iz boyutu (docs/ios.md)
 patchedDependencies:
+  '@livekit/react-native-webrtc@144.2.0': patches/@livekit__react-native-webrtc@144.2.0.patch
   '@livekit/react-native@3.0.0': patches/@livekit__react-native@3.0.0.patch

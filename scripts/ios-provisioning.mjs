@@ -3,8 +3,10 @@
 //   node scripts/ios-provisioning.mjs list
 //       Apple'daki iOS cihazlarını, sertifikaları ve Ad Hoc profilleri listeler (hiçbir şey değiştirmez).
 //   node scripts/ios-provisioning.mjs sync --cert dagitim.pem [--devices '<JSON ya da UDID=Ad,…>' | --devices-file cihazlar.json]
-//        [--out profil.mobileprovision] [--base64-out profil.b64] [--bundle-id com.diskort.app] [--dry-run]
+//        [--out profil.mobileprovision] [--base64-out profil.b64] [--bundle-id com.diskort.app]
+//        [--app-group group.com.diskort.app] [--dry-run]
 //       Verilen cihazları kaydeder, tüm açık iOS cihazlarını içeren Ad Hoc profilini hazırlar ve dosyaya yazar.
+//       --app-group: bu App Group'u içermeyen eski profil yeniden kullanılmaz.
 //       --dry-run: yalnızca okur ve ne yapılacağını yazar (kayıt, profil oluşturma, silme yok).
 //
 // Anahtar ortam değişkenlerinden: ASC_KEY_ID, ASC_ISSUER_ID ve ASC_KEY_P8 (.p8 içeriği) ya da ASC_KEY_FILE
@@ -23,6 +25,7 @@ const { positionals, values } = parseArgs({
     out: { type: 'string' },
     'base64-out': { type: 'string' },
     'bundle-id': { type: 'string', default: DEFAULT_BUNDLE_ID },
+    'app-group': { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -86,6 +89,7 @@ try {
     const result = await syncProfile({
       client,
       bundleIdentifier: values['bundle-id'],
+      requiredAppGroup: values['app-group'],
       certPem,
       devices,
       dryRun,

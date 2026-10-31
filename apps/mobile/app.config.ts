@@ -108,8 +108,8 @@ const config: ExpoConfig = {
         },
       },
     ],
-    // iOS'ta ekran paylaşımı yok (Broadcast Upload Extension gerekir; bkz. docs/ios.md)
-    // enableScreenShareService: telefondan ekran paylaşımı için MediaProjection ön plan servisi
+    // enableScreenShareService: telefondan ekran paylaşımı için MediaProjection ön plan servisi (Android).
+    // iOS'ta ekran yayını ayrı hedef: plugins/withBroadcastExtension
     ['@livekit/react-native-expo-plugin', { android: { audioType: 'communication', enableScreenShareService: true } }],
     ['@config-plugins/react-native-webrtc', { cameraPermission: IOS_CAMERA, microphonePermission: IOS_MICROPHONE }],
     // Galeriden seçim (fotoğraf seçicisi). microphonePermission false VERİLMEMELİ: RECORD_AUDIO'yu
@@ -142,6 +142,7 @@ const config: ExpoConfig = {
     './plugins/withReleaseSigning',
     './plugins/withAbiSplits',
     './plugins/withScreenShareNotification',
+    './plugins/withBroadcastExtension',
   ],
   experiments: {
     typedRoutes: true,

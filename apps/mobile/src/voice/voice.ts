@@ -36,6 +36,7 @@ import {
 } from 'livekit-client';
 import { Dimensions, PermissionsAndroid, PixelRatio, Platform } from 'react-native';
 import { create } from 'zustand';
+import { ScreenBroadcast } from '../../modules/screen-broadcast';
 import { VoiceService } from '../../modules/voice-service';
 import { soundCue, type SoundEvent } from '../haptics';
 import {
@@ -283,6 +284,8 @@ class MobileVoiceClient {
         if (off !== wasOff) soundCue(off ? 'mute' : 'unmute');
       } else void this.leave().then(() => soundCue('leave'));
     });
+    ScreenBroadcast?.addListener('onStarted', () => this.onBroadcastStarted());
+    ScreenBroadcast?.addListener('onStopped', () => this.onBroadcastStopped());
     // İzlenen yayın sunucuya bildirilir (yayıncı izleyenlerini görür); yeniden bağlanınca gateway tekrarlar
     useVoice.subscribe((next, prev) => {
       if (next.watching !== prev.watching) gateway.setWatching(next.watching ? [next.watching] : []);
@@ -570,11 +573,46 @@ class MobileVoiceClient {
   /**
    * Telefonun ekranını paylaşır / durdurur. Android her seferinde "ekranın kaydedilecek" onayı ister;
    * paylaşım bildirimden ya da sistemden durdurulursa durum kendiliğinden güncellenir.
+   *
+   * iOS'ta başlatma yalnızca sistemin yayın seçicisini açar. Seçicide vazgeçildiğini iOS bildirmez; bu yüzden
+   * iz yayın eklentisi gerçekten başlayınca yayımlanır (onBroadcastStarted): vazgeçilirse izleyiciler siyah
+   * ekran görmez, yayın Kontrol Merkezi'nden başlatılırsa da aynı yoldan gelir.
    */
   async toggleScreenShare(): Promise<void> {
     const room = this.room;
     if (!room || useVoice.getState().status !== 'connected') return;
     const next = !useVoice.getState().sharing;
+    if (ScreenBroadcast && next) {
+      const shown = await ScreenBroadcast.showPicker().catch(() => false);
+      if (!shown) toast("Yayın seçicisi açılamadı. Kontrol Merkezi'nde ekran kaydı düğmesine basılı tutup Diskort'u seç.", 'error');
+      return;
+    }
+    await this.setScreenShare(room, next);
+  }
+
+  /** iOS: yayın eklentisi başladı. Paylaşım ancak ses kanalındaysak ve izin varsa açılır; yoksa eklenti durdurulur */
+  private onBroadcastStarted(): void {
+    const room = this.room;
+    const { status, sharing } = useVoice.getState();
+    if (sharing || this.broadcastStarting) return;
+    if (!room || status !== 'connected' || !canPublish(room, PROTO_SOURCE.screenShare)) {
+      ScreenBroadcast?.stop();
+      toast('Ekran paylaşılamadı: ses kanalına bağlı değilsin ya da iznin yok.', 'error');
+      return;
+    }
+    this.broadcastStarting = true;
+    void this.setScreenShare(room, true).finally(() => {
+      this.broadcastStarting = false;
+    });
+  }
+
+  /** iOS: yayın eklentisi durdu (kırmızı durum çubuğu, Kontrol Merkezi ya da uyarı). Soket kapanınca iz de biter */
+  private onBroadcastStopped(): void {
+    const room = this.room;
+    if (room && useVoice.getState().sharing) void this.setScreenShare(room, false);
+  }
+
+  private async setScreenShare(room: Room, next: boolean): Promise<void> {
     this.lastShareSample = null;
     try {
       await room.localParticipant.setScreenShareEnabled(
@@ -583,6 +621,7 @@ class MobileVoiceClient {
         {
           // VP8: yazılım kodlayıcısı her telefonda var. H.264 telefonun donanım kodlayıcısına kalıyor; bazı
           // telefonlarda (ör. 0.2.2'de denenen) bu boyuttaki dikey görüntüde hiç kare üretmiyor ve yayın ölü kalıyor.
+          // iOS'ta da şart: yayın sürerken uygulama arka plandadır, donanım kodlayıcısı orada çalışmaz.
           videoCodec: 'vp8',
           simulcast: false,
           screenShareEncoding: { maxBitrate: 2_500_000, maxFramerate: 24 },
@@ -590,13 +629,22 @@ class MobileVoiceClient {
           degradationPreference: 'maintain-framerate',
         },
       );
-      if (next) await this.scaleScreenShare(room);
+      // iOS'ta görüntüyü yayın eklentisi küçültür (SampleHandler.swift); burada yeniden küçültülmez
+      if (next && !ScreenBroadcast) await this.scaleScreenShare(room);
+      // Yayın, iz yayımlanırken durduysa soket boş kalır: görüntüsüz yayın açık kalmasın
+      if (next && ScreenBroadcast && !(await ScreenBroadcast.isActive())) {
+        await room.localParticipant.setScreenShareEnabled(false);
+        return;
+      }
+      // Önce iz: eklenti kendi kapatırsa soketi iki taraf aynı anda kapatmaya çalışırdı
+      if (!next) ScreenBroadcast?.stop();
       const sharing = next && Boolean(room.localParticipant.getTrackPublication(Track.Source.ScreenShare));
       useVoice.setState({ sharing });
       if (sharing) soundCue('shareStart');
       else if (!next) soundCue('shareStop');
     } catch (err) {
       useVoice.setState({ sharing: false });
+      ScreenBroadcast?.stop();
       const message = errorMessage(err);
       // Kullanıcı Android'in onay penceresinde vazgeçtiyse hata gösterme
       if (!/permission|denied|cancel|NotAllowed/i.test(message)) toast(`Ekran paylaşılamadı: ${message}`, 'error');
@@ -624,6 +672,7 @@ class MobileVoiceClient {
   }
 
   private lastShareSample: { bytes: number; at: number } | null = null;
+  private broadcastStarting = false;
 
   /** Paylaşılan ekranın gönderim bilgileri: donma gibi sorunların nedenini görmek için ses ekranında gösterilir. */
   /** Sunucuya gidiş-dönüş süresi (ms): mikrofon izinin bağlantı istatistiğinden; bilinmiyorsa null */
@@ -854,6 +903,11 @@ class MobileVoiceClient {
       .on(RoomEvent.Reconnected, () => {
         this.duplicates.noteReconnect();
         useVoice.setState({ status: 'connected' });
+        // Tam yeniden bağlanmada LiveKit izi kaldırıp yeniden yayımlar (LocalTrackUnpublished gelir). iOS'ta
+        // "sharing" yanlış kalırsa düğme yayını durdurmak yerine seçiciyi açardı.
+        if (ScreenBroadcast && this.room === room) {
+          useVoice.setState({ sharing: Boolean(room.localParticipant.getTrackPublication(Track.Source.ScreenShare)) });
+        }
         if (this.room === room) {
           voiceTrace.mark(Date.now(), 'reconnected');
           // Yeniden bağlanınca LiveKit katılımcıları yeniden bildirebilir: ses seli olmasın

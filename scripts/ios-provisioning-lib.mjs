@@ -5,8 +5,11 @@ import { createHash, createPrivateKey, sign, X509Certificate } from 'node:crypto
 
 export const ASC_BASE = 'https://api.appstoreconnect.apple.com';
 export const DEFAULT_BUNDLE_ID = 'com.diskort.app';
+/** Ekran yayını eklentisinin App ID'si; uygulamayla aynı imzayı, ayrı profili kullanır */
+export const BROADCAST_BUNDLE_ID = 'com.diskort.app.broadcast';
 /** Betiğin oluşturduğu profillerin adı bununla başlar; yalnızca bunlar yeniden kullanılır ya da silinir */
 export const AUTO_PROFILE_PREFIX = 'Diskort Ad Hoc otomatik';
+const BROADCAST_PROFILE_PREFIX = 'Diskort Yayin Ad Hoc otomatik';
 /** Ad Hoc profile girebilecek cihaz sınıfları (saat, TV, Mac dışarıda) */
 const PROFILE_DEVICE_CLASSES = new Set(['IPHONE', 'IPAD', 'IPOD']);
 /** Bundan kısa süre sonra bitecek profil yeniden kullanılmaz */
@@ -138,10 +141,14 @@ export function matchCertificate(certificates, certPem) {
   return null;
 }
 
+/** Her App ID'nin otomatik profilleri ayrı adla tutulur: biri yenilenirken ötekinin profili silinmesin */
+export const autoProfilePrefix = (bundleIdentifier = DEFAULT_BUNDLE_ID) =>
+  bundleIdentifier === BROADCAST_BUNDLE_ID ? BROADCAST_PROFILE_PREFIX : AUTO_PROFILE_PREFIX;
+
 /** Yeni profilin adı: dakikasına kadar tarih (Apple aynı adı iki profile vermiyor) */
-export function autoProfileName(now = new Date()) {
+export function autoProfileName(now = new Date(), bundleIdentifier = DEFAULT_BUNDLE_ID) {
   const p = (n) => String(n).padStart(2, '0');
-  return `${AUTO_PROFILE_PREFIX} ${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}-${p(now.getUTCHours())}${p(now.getUTCMinutes())}`;
+  return `${autoProfilePrefix(bundleIdentifier)} ${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}-${p(now.getUTCHours())}${p(now.getUTCMinutes())}`;
 }
 
 // ---------- İstek gövdeleri ----------
@@ -227,7 +234,8 @@ export class AscClient {
 /**
  * Cihazları kaydeder ve tüm açık iOS cihazlarını içeren bir Ad Hoc profili hazırlar.
  * Önceki otomatik profil hâlâ geçerliyse ve cihaz listesi aynıysa o kullanılır; yoksa yenisi oluşturulur,
- * eski otomatik profiller silinir (elle oluşturulanlara dokunulmaz).
+ * eski otomatik profiller silinir (elle oluşturulanlara dokunulmaz). `requiredAppGroup` verilirse o App Group'u
+ * içermeyen profil yeniden kullanılmaz (App ID'ye sonradan eklendiyse eski profilde yoktur).
  *
  * @returns {Promise<{ profileContent: string | null, profileName: string | null, reused: boolean,
  *   registered: string[], enabled: string[], deviceCount: number, deleted: string[], plan: string[] }>}
@@ -235,6 +243,7 @@ export class AscClient {
 export async function syncProfile({
   client,
   bundleIdentifier = DEFAULT_BUNDLE_ID,
+  requiredAppGroup,
   certPem,
   devices = [],
   dryRun = false,
@@ -251,7 +260,7 @@ export async function syncProfile({
   // Paket kimliği
   const bundles = await client.all(`/v1/bundleIds?filter[identifier]=${encodeURIComponent(bundleIdentifier)}&limit=200`);
   const bundle = bundles.find((b) => b.attributes.identifier === bundleIdentifier && b.attributes.platform !== 'MAC_OS');
-  if (!bundle) throw new Error(`App ID bulunamadı: ${bundleIdentifier}`);
+  if (!bundle) throw new Error(`App ID bulunamadı: ${bundleIdentifier} (Apple Developer'da oluşturulmalı; bkz. docs/ios.md, "Ekran yayını")`);
 
   // Sertifika
   const certificates = await client.all('/v1/certificates?limit=200');
@@ -326,14 +335,17 @@ export async function syncProfile({
   note(`Profile girecek cihaz sayısı: ${wantedIds.length}${dryRun && diff.toRegister.length ? ` (+${diff.toRegister.length} kaydedilince)` : ''}`);
 
   // Önceki otomatik profiller
+  const prefix = autoProfilePrefix(bundleIdentifier);
   const profiles = (await client.all('/v1/profiles?filter[profileType]=IOS_APP_ADHOC&limit=200')).filter((p) =>
-    String(p.attributes.name ?? '').startsWith(AUTO_PROFILE_PREFIX),
+    String(p.attributes.name ?? '').startsWith(`${prefix} `),
   );
+  const hasAppGroup = (p) =>
+    !requiredAppGroup || Buffer.from(p.attributes.profileContent ?? '', 'base64').includes(requiredAppGroup);
   let reuse = null;
   for (const p of profiles.sort((a, b) => String(b.attributes.name).localeCompare(String(a.attributes.name)))) {
     const valid =
       p.attributes.profileState === 'ACTIVE' && Date.parse(p.attributes.expirationDate ?? '') - now.getTime() > MIN_VALID_MS;
-    if (!valid) continue;
+    if (!valid || !hasAppGroup(p)) continue;
     const [pBundle, pCerts, pDevices] = await Promise.all([
       client.request('GET', `/v1/profiles/${p.id}/bundleId`),
       client.all(`/v1/profiles/${p.id}/certificates?limit=200`),
@@ -355,7 +367,7 @@ export async function syncProfile({
     return { ...base, profileContent: reuse.attributes.profileContent ?? null, profileName: reuse.attributes.name, reused: true, deleted: [] };
   }
 
-  const name = autoProfileName(now);
+  const name = autoProfileName(now, bundleIdentifier);
   note(`Yeni profil oluşturulacak: ${name}`);
   const stale = profiles.map((p) => p.attributes.name);
   if (stale.length) note(`Silinecek eski otomatik profiller: ${stale.join(', ')}`);
