@@ -226,4 +226,12 @@ jobs:
 
       - name: Taslak sürüme yükle
         if: env.RELEASE_TAG != ''
-        run: gh release upload "$RELEASE_TAG" dist/*.apk dist-ota/* --clobber -R "$GITHUB_REPOSITORY"
+        run: |
+          # Android ve iOS ortak OTA dosyalarını aynı anda yükleyebilir; aynı ada yazma çakışırsa GitHub 422 döner.
+          # Dosya adları içeriğin özetidir, --clobber ile yeniden yüklemek güvenlidir.
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$RELEASE_TAG" dist/*.apk dist-ota/* --clobber -R "$GITHUB_REPOSITORY"; then exit 0; fi
+            echo "Yükleme başarısız (deneme $attempt/5), bekleniyor"
+            sleep $((attempt * 15))
+          done
+          exit 1
