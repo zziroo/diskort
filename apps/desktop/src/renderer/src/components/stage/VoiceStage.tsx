@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, 
 import {
   ChevronDown,
   Eye,
-  EyeOff,
   HeadphoneOff,
   Headphones,
   LayoutGrid,
@@ -194,7 +193,7 @@ export function VoiceStage({
       </div>
 
       <div data-stage-chrome className={CHROME}>
-        <CallControls focused={focusedVisible} dm={isCall} />
+        <CallControls dm={isCall} />
       </div>
     </div>
   );
@@ -657,31 +656,7 @@ function StreamTile({ userId, compact }: { userId: string; compact?: boolean }) 
   const isSelf = userId === selfId;
 
   if (isSelf || isWatching) {
-    return (
-      <div className="group/tile relative h-full w-full">
-        <StreamView userId={userId} onClick={() => voice.focusStream(userId)} />
-        {!isSelf && (
-          // Üstüne gelince: izlemeyi bırak (tıklama kutucuğu büyütmez)
-          <button
-            type="button"
-            data-stage-chrome
-            data-tooltip="İzlemeyi bırak"
-            aria-label="İzlemeyi bırak"
-            onClick={(e) => {
-              e.stopPropagation();
-              voice.stopWatching(userId);
-            }}
-            onDoubleClick={(e) => e.stopPropagation()}
-            className={cn(
-              'press-icon absolute right-2 bottom-2 flex items-center justify-center rounded bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/80 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100 group-data-[idle]/stage:pointer-events-none group-data-[idle]/stage:opacity-0! motion-reduce:transition-none',
-              compact ? 'h-7 w-7' : 'h-8 w-8',
-            )}
-          >
-            <EyeOff size={compact ? 16 : 18} className="ico-blink" />
-          </button>
-        )}
-      </div>
-    );
+    return <StreamView userId={userId} onClick={() => voice.focusStream(userId)} />;
   }
 
   return (
@@ -702,8 +677,7 @@ function StreamTile({ userId, compact }: { userId: string; compact?: boolean }) 
   );
 }
 
-/** `focused`: büyütülmüş yayının sahibi (uzak yayınsa "İzlemeyi bırak" düğmesi çıkar) */
-function CallControls({ focused, dm }: { focused: string | null; dm?: boolean }) {
+function CallControls({ dm }: { dm?: boolean }) {
   const selfMute = useSettings((s) => s.selfMute);
   const selfDeaf = useSettings((s) => s.selfDeaf);
   const sharing = useVoice((s) => s.sharing);
@@ -712,9 +686,7 @@ function CallControls({ focused, dm }: { focused: string | null; dm?: boolean })
   const channelId = useVoice((s) => s.channelId);
   const canStream = useCan(Permission.STREAM, channelId ?? undefined);
   const openModal = useUi((s) => s.openModal);
-  const selfId = useSession((s) => s.user?.id);
   const muted = selfMute || selfDeaf || !micAllowed;
-  const watchedFocus = focused && focused !== selfId ? focused : null;
 
   return (
     <div className="flex h-20 shrink-0 items-center justify-center gap-3">
@@ -743,11 +715,6 @@ function CallControls({ focused, dm }: { focused: string | null; dm?: boolean })
       >
         {sharing ? <MonitorOff size={22} /> : <Monitor size={22} />}
       </RoundButton>
-      {watchedFocus && (
-        <RoundButton title="İzlemeyi bırak" motion="ico-blink" onClick={() => voice.stopWatching(watchedFocus)}>
-          <EyeOff size={22} />
-        </RoundButton>
-      )}
       <RoundButton title={dm ? 'Aramadan ayrıl' : 'Bağlantıyı Kes'} hangup motion="ico-hangup" onClick={() => void voice.leave()}>
         <PhoneOff size={22} />
       </RoundButton>

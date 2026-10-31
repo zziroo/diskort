@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { EyeOff, Maximize, Minimize, MonitorPause, Volume2, VolumeX } from 'lucide-react';
+import { EyeOff, Maximize, Minimize, MonitorPause, Volume2, VolumeX, X } from 'lucide-react';
 import { voice } from '../../features/voice/voiceClient';
 import { cn } from '../../lib/utils';
 import { useGuild, useSession } from '@diskort/client-core';
@@ -24,8 +24,8 @@ interface Props {
   /** Tek tık (çift tıkla çakışmasın diye kısa gecikmeyle çağrılır; yakınlaşmışken çağrılmaz) */
   onClick?: () => void;
   /**
-   * false: ad şeridi ve izleyenler çizilmez (yüzen pencere StreamPip kendi başlık ve alt şeridini çizer).
-   * Varsayılan true.
+   * false: ad şeridi, izleyenler ve kontrol barı çizilmez (yüzen pencere StreamPip kendi başlık ve alt
+   * şeridini çizer; tam ekranda kontrol barı yine çıkar). Varsayılan true.
    */
   overlay?: boolean;
 }
@@ -173,7 +173,7 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
     <div
       ref={containerRef}
       className={cn(
-        'group relative flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-black',
+        'group @container relative flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-black',
         zoomed ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : onClick && 'cursor-pointer',
       )}
       onClick={handleClick}
@@ -235,9 +235,10 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
         data-stage-chrome
         className={cn(
           'absolute right-0 bottom-0 left-0 flex items-center justify-end gap-1 bg-gradient-to-t from-black/70 to-transparent p-2 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 group-data-[idle]/stage:opacity-0!',
-          !large && 'hidden',
+          !overlay && !fullscreen && 'hidden',
         )}
         onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
       >
         <div className="mr-auto flex items-center gap-2">
           {zoomed && (
@@ -252,8 +253,8 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
             </button>
           )}
           {!isSelf && hasAudio && (
-            // Görüntünün üstünde okunaklı küçük hap: simge (sessize alır), kaydırıcı, yüzde
-            <div className="flex h-8 items-center gap-2 rounded-full bg-black/60 pr-3 pl-1 text-white backdrop-blur-sm">
+            // Görüntünün üstünde okunaklı küçük hap: simge (sessize alır), kaydırıcı, yüzde; dar kutucukta yalnız simge
+            <div className="flex h-8 items-center gap-2 rounded-full bg-black/60 pr-1 pl-1 text-white backdrop-blur-sm @xs:pr-3">
               <button
                 className="press-icon flex h-6 w-6 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
                 onClick={() => setVolume(volume > 0 ? 0 : 1)}
@@ -265,7 +266,7 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
                 </SwapIcon>
               </button>
               <Slider
-                className="w-24"
+                className="hidden w-24 @xs:block"
                 aria-label="Yayın ses seviyesi"
                 aria-valuetext={`%${Math.round(volume * 100)}`}
                 min={0}
@@ -273,7 +274,7 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
                 value={Math.round(volume * 100)}
                 onValueChange={(v) => setVolume(v / 100)}
               />
-              <span className="w-9 text-right text-xs font-medium text-white/80 tabular-nums">
+              <span className="hidden w-9 text-right text-xs font-medium text-white/80 tabular-nums @xs:inline">
                 %{Math.round(volume * 100)}
               </span>
             </div>
@@ -289,6 +290,11 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
             {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
           </SwapIcon>
         </IconButton>
+        {!isSelf && (
+          <IconButton title="İzlemeyi bırak" onClick={() => voice.stopWatching(userId)}>
+            <X size={18} />
+          </IconButton>
+        )}
       </div>
     </div>
   );
