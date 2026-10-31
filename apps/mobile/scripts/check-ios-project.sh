@@ -29,4 +29,13 @@ check "OTA runtimeVersion" "$($pb -c 'Print :EXUpdatesRuntimeVersion' "$expo")" 
 check "Paket kimliği" "$(grep -m1 'PRODUCT_BUNDLE_IDENTIFIER' Diskort.xcodeproj/project.pbxproj)" 'com\.diskort\.app'
 check "Bildirim yetkisi" "$($pb -c 'Print :aps-environment' Diskort/Diskort.entitlements)" '^production$'
 
+# Ekran yayını (plugins/withBroadcastExtension.js)
+group='^group\.com\.diskort\.app$'
+check "Yayın App Group'u" "$($pb -c 'Print :RTCAppGroupIdentifier' "$info")" "$group"
+check "Yayın eklentisi" "$($pb -c 'Print :RTCScreenSharingExtension' "$info")" '^com\.diskort\.app\.broadcast$'
+check "Uygulama App Group yetkisi" "$($pb -c 'Print :com.apple.security.application-groups:0' Diskort/Diskort.entitlements)" "$group"
+check "Eklenti hedefi" "$(xcodebuild -list -project Diskort.xcodeproj | sed -n '/Targets:/,/^$/p' | grep -c '^ *DiskortBroadcast$')" '^1$'
+check "Eklenti kaynağı" "$(ls DiskortBroadcast/SampleHandler.swift)" 'SampleHandler'
+check "Eklenti paket kimliği" "$(grep -m1 'com.diskort.app.broadcast' Diskort.xcodeproj/project.pbxproj)" 'com\.diskort\.app\.broadcast'
+
 exit $fail

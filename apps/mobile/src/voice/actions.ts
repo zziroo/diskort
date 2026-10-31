@@ -32,7 +32,7 @@ export function toggleSpeaker(): void {
   void voice.setSpeaker(on);
 }
 
-/** Ekran paylaşımı: izin yoksa hata; varsa başlat/durdur (başlatırken Android izin penceresi açılır) */
+/** Ekran paylaşımı: izin yoksa hata; varsa başlat/durdur (başlatırken Android izin penceresi ya da iOS yayın seçicisi açılır) */
 export function toggleScreenShare(canStream: boolean): void {
   const sharing = useVoice.getState().sharing;
   if (!sharing && !canStream) {
@@ -40,7 +40,7 @@ export function toggleScreenShare(canStream: boolean): void {
     toast('Bu kanalda ekran paylaşma iznin yok.', 'error');
     return;
   }
-  // Ses paylaşım gerçekten başlayınca / bitince çalınır (Android onayında vazgeçilirse ses yok)
+  // Ses paylaşım gerçekten başlayınca / bitince çalınır (onay penceresinde vazgeçilirse ses yok)
   haptic(sharing ? 'shareStop' : 'shareStart');
   void voice.toggleScreenShare();
 }

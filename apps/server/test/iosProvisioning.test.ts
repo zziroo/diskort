@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AscClient,
   autoProfileName,
+  BROADCAST_BUNDLE_ID,
   createProfileBody,
   diffDevices,
   makeJwt,
@@ -120,6 +121,8 @@ function fakeAsc(opts: {
   devices: AscResource[];
   profiles?: AscResource[];
   profileDevices?: Record<string, string[]>;
+  /** Profilin App ID'si (verilmezse B1, com.diskort.app) */
+  profileBundles?: Record<string, string>;
   conflictOn?: string;
   /** Yeni kaydedilen cihaz bu kadar liste okumasından sonra açık görünür (Apple'daki gecikme) */
   newDeviceSettlesAfter?: { reads: number; status?: string; deviceClass?: string };
@@ -139,7 +142,7 @@ function fakeAsc(opts: {
     calls.push({ method, path: `${path}${url.search}`, body });
     expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer jwt');
     if (method === 'GET' && path === '/v1/bundleIds')
-      return json(200, { data: [{ id: 'B0', attributes: { identifier: 'com.diskort.app.widget', platform: 'IOS' } }, { id: 'B1', attributes: { identifier: 'com.diskort.app', platform: 'IOS' } }] });
+      return json(200, { data: [{ id: 'B0', attributes: { identifier: 'com.diskort.app.widget', platform: 'IOS' } }, { id: 'B1', attributes: { identifier: 'com.diskort.app', platform: 'IOS' } }, { id: 'B2', attributes: { identifier: 'com.diskort.app.broadcast', platform: 'IOS' } }] });
     if (method === 'GET' && path === '/v1/certificates')
       return json(200, { data: [{ id: 'C1', attributes: { certificateContent: CERT_DER_B64, serialNumber: '0A1B2C3D', certificateType: 'DISTRIBUTION' } }] });
     if (method === 'GET' && path === '/v1/devices') {
@@ -171,7 +174,7 @@ function fakeAsc(opts: {
     if (method === 'GET' && path === '/v1/profiles') return json(200, { data: profiles });
     const m = /^\/v1\/profiles\/([^/]+)\/(bundleId|certificates|devices)$/.exec(path);
     if (method === 'GET' && m) {
-      if (m[2] === 'bundleId') return json(200, { data: { id: 'B1' } });
+      if (m[2] === 'bundleId') return json(200, { data: { id: opts.profileBundles?.[m[1]!] ?? 'B1' } });
       if (m[2] === 'certificates') return json(200, { data: [{ id: 'C1', attributes: {} }] });
       return json(200, { data: (opts.profileDevices?.[m[1]!] ?? []).map((id) => ({ id, attributes: {} })) });
     }
@@ -190,6 +193,44 @@ const autoProfile = (id: string, name: string, expires = '2027-06-01T00:00:00.00
 const now = new Date(Date.UTC(2026, 8, 28, 12, 0));
 
 describe('App Store Connect betiği: akış (sahte API)', () => {
+  it('yayın eklentisinin profili ayrı adla oluşur, uygulamanın profili silinmez', async () => {
+    const api = fakeAsc({
+      devices: [device('d1', U1)],
+      profiles: [autoProfile('P-app', 'Diskort Ad Hoc otomatik 20260901-0000'), autoProfile('P-eski', 'Diskort Yayin Ad Hoc otomatik 20260101-0000', '2026-10-01T00:00:00.000+0000')],
+      profileDevices: { 'P-app': ['d1'], 'P-eski': ['d1'] },
+    });
+    const client = new AscClient({ token: () => 'jwt', fetch: api.fetchImpl });
+    const r = await syncProfile({ client, bundleIdentifier: BROADCAST_BUNDLE_ID, certPem: CERT_PEM, now });
+    expect(r.profileName).toBe('Diskort Yayin Ad Hoc otomatik 20260928-1200');
+    expect(r.deleted).toEqual(['Diskort Yayin Ad Hoc otomatik 20260101-0000']);
+    const created = api.calls.find((c) => c.method === 'POST' && c.path === '/v1/profiles')!.body as any;
+    expect(created.data.relationships.bundleId.data.id).toBe('B2');
+    expect(api.calls.some((c) => c.method === 'DELETE' && c.path.endsWith('/P-app'))).toBe(false);
+  });
+
+  it('yayın eklentisinin geçerli profili yeniden kullanılır', async () => {
+    const api = fakeAsc({
+      devices: [device('d1', U1)],
+      profiles: [autoProfile('P1', 'Diskort Yayin Ad Hoc otomatik 20260901-0000')],
+      profileDevices: { P1: ['d1'] },
+      profileBundles: { P1: 'B2' },
+    });
+    const r = await syncProfile({ client: new AscClient({ token: () => 'jwt', fetch: api.fetchImpl }), bundleIdentifier: BROADCAST_BUNDLE_ID, certPem: CERT_PEM, now });
+    expect(r.reused).toBe(true);
+  });
+
+  it('istenen App Group profilde yoksa profil yenilenir', async () => {
+    const profiles = [autoProfile('P1', 'Diskort Ad Hoc otomatik 20260901-0000')];
+    const stale = fakeAsc({ devices: [device('d1', U1)], profiles, profileDevices: { P1: ['d1'] } });
+    const r = await syncProfile({ client: new AscClient({ token: () => 'jwt', fetch: stale.fetchImpl }), requiredAppGroup: 'group.com.diskort.app', certPem: CERT_PEM, now });
+    expect(r.reused).toBe(false);
+
+    profiles[0]!.attributes.profileContent = Buffer.from('<string>group.com.diskort.app</string>').toString('base64');
+    const fresh = fakeAsc({ devices: [device('d1', U1)], profiles, profileDevices: { P1: ['d1'] } });
+    const r2 = await syncProfile({ client: new AscClient({ token: () => 'jwt', fetch: fresh.fetchImpl }), requiredAppGroup: 'group.com.diskort.app', certPem: CERT_PEM, now });
+    expect(r2.reused).toBe(true);
+  });
+
   it('yeni cihazı kaydeder, kapalıyı açar, yeni profil oluşturur, eski otomatik profilleri siler', async () => {
     const api = fakeAsc({
       devices: [device('d1', U1), device('d2', U2, 'DISABLED')],

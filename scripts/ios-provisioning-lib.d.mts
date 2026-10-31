@@ -13,7 +13,9 @@ export interface RequestedDevice {
 
 export declare const ASC_BASE: string;
 export declare const DEFAULT_BUNDLE_ID: string;
+export declare const BROADCAST_BUNDLE_ID: string;
 export declare const AUTO_PROFILE_PREFIX: string;
+export declare function autoProfilePrefix(bundleIdentifier?: string): string;
 export declare function base64url(input: string | Buffer): string;
 export declare function jwtHeader(keyId: string): { alg: 'ES256'; kid: string; typ: 'JWT' };
 export declare function jwtClaims(issuerId: string, nowSec: number): { iss: string; iat: number; exp: number; aud: string };
@@ -30,7 +32,7 @@ export declare function diffDevices(
 export declare function profileDevices(devices: AscResource[]): AscResource[];
 export declare function sameIds(a: string[], b: string[]): boolean;
 export declare function matchCertificate(certificates: AscResource[], certPem: string): AscResource | null;
-export declare function autoProfileName(now?: Date): string;
+export declare function autoProfileName(now?: Date, bundleIdentifier?: string): string;
 export declare function registerDeviceBody(d: { udid: string; name: string | null }): unknown;
 export declare function enableDeviceBody(id: string): unknown;
 export declare function createProfileBody(opts: { name: string; bundleIdId: string; certificateId: string; deviceIds: string[] }): unknown;
@@ -61,6 +63,8 @@ export interface SyncResult {
 export declare function syncProfile(opts: {
   client: AscClient;
   bundleIdentifier?: string;
+  /** Bu App Group'u içermeyen eski profil yeniden kullanılmaz */
+  requiredAppGroup?: string;
   certPem: string;
   devices?: RequestedDevice[];
   dryRun?: boolean;

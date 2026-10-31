@@ -13,6 +13,8 @@
 # - Dağıtım profili: App Store Connect API anahtarı varsa (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8) her
 #   derlemede scripts/ios-provisioning.mjs ile hazırlanır (verilen cihazlar Apple'a kaydedilir, profil tüm
 #   açık iOS cihazlarını içerir). Yoksa eskisi gibi IOS_PROVISIONING_PROFILE_BASE64 kullanılır.
+# - Ekran yayını eklentisi (DiskortBroadcast): ayrı App ID ve kendi profiliyle imzalanır, App Group ister. Bu
+#   yüzden ASC anahtarı şart. Eklentisi olmayan eski sürüm etiketleri (attach-latest) eskisi gibi derlenir.
 # - Yeni cihaz (attach-latest): IPA en son yayınlanmış sürümün etiketinden yeniden derlenir ve o sürümdeki
 #   IPA'nın yerine yüklenir; yeni sürüm gerekmez. Yönetim panelinde "Onayla" deyince sunucu bunu kendisi
 #   başlatır (GITHUB_DISPATCH_TOKEN; bkz. apps/server/src/iosDevices.ts). Elle:
@@ -133,6 +135,9 @@ jobs:
           # JavaScript paketi uygulamaya gömülmüş olmalı (Release)
           test -f build/Build/Products/Release-iphonesimulator/Diskort.app/main.jsbundle || {
             echo "::error::main.jsbundle yok"; exit 1; }
+          # Ekran yayını eklentisi uygulamanın içine gömülmüş olmalı
+          test -d build/Build/Products/Release-iphonesimulator/Diskort.app/PlugIns/DiskortBroadcast.appex || {
+            echo "::error::DiskortBroadcast.appex yok"; exit 1; }
           du -sh build/Build/Products/Release-iphonesimulator/Diskort.app
 
       - name: Derleme kaydı
@@ -326,7 +331,13 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           IOS_DEVICES_PAYLOAD: ${{ inputs.devices }}
           IOS_DEVICES_KEY: ${{ secrets.IOS_DEVICES_KEY }}
+          BROADCAST_BUNDLE_ID: com.diskort.app.broadcast
+          APP_GROUP: group.com.diskort.app
         run: |
+          # Bu kodda ekran yayını eklentisi var mı? (eski sürüm etiketlerinde yok)
+          broadcast=""
+          if [ -d apps/mobile/ios/DiskortBroadcast ]; then broadcast=1; fi
+
           # Şifreli cihaz listesini çöz: betik her UDID'yi ve adı önce ::add-mask:: ile gizler, açık metni yazmaz
           devices_file=""
           if [ -n "$IOS_DEVICES_PAYLOAD" ]; then
@@ -350,9 +361,20 @@ jobs:
             # p12'deki sertifika (Apple'daki kaydını bulmak için) → cihazları kaydet → güncel Ad Hoc profil
             security find-certificate -a -c "Apple Distribution" -p "$keychain" > "$RUNNER_TEMP/dist-cert.pem"
             node .ios-ci/scripts/ios-provisioning.mjs sync --cert "$RUNNER_TEMP/dist-cert.pem" \
-              ${devices_file:+--devices-file "$devices_file"} --out "$RUNNER_TEMP/profile.mobileprovision"
+              ${devices_file:+--devices-file "$devices_file"} ${broadcast:+--app-group "$APP_GROUP"} \
+              --out "$RUNNER_TEMP/profile.mobileprovision"
+            if [ -n "$broadcast" ]; then
+              # Aynı cihaz listesi: yeni cihaz Apple'da henüz açık görünmese de iki profile birden girsin
+              node .ios-ci/scripts/ios-provisioning.mjs sync --cert "$RUNNER_TEMP/dist-cert.pem" \
+                ${devices_file:+--devices-file "$devices_file"} --bundle-id "$BROADCAST_BUNDLE_ID" --app-group "$APP_GROUP" \
+                --out "$RUNNER_TEMP/broadcast.mobileprovision"
+            fi
             rm "$RUNNER_TEMP/dist-cert.pem"
           else
+            if [ -n "$broadcast" ]; then
+              echo "::error::Ekran yayını eklentisinin profili App Store Connect anahtarıyla hazırlanır (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8)"
+              exit 1
+            fi
             echo "$PROFILE" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
           fi
 
@@ -371,18 +393,42 @@ jobs:
             echo "::error::Profilde bildirim yetkisi (aps-environment) yok: App ID'de Push Notifications açılıp profil yeniden oluşturulmalı"
             exit 1
           fi
+          if [ -n "$broadcast" ]; then
+            security cms -D -i "$RUNNER_TEMP/broadcast.mobileprovision" > "$RUNNER_TEMP/broadcast.plist"
+            broadcast_uuid=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/broadcast.plist")
+            broadcast_app_id=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/broadcast.plist")
+            echo "Eklenti profili: $broadcast_uuid · $broadcast_app_id"
+            case "$broadcast_app_id" in
+              *.$BROADCAST_BUNDLE_ID) ;;
+              *) echo "::error::Eklenti profili $BROADCAST_BUNDLE_ID için değil ($broadcast_app_id)"; exit 1 ;;
+            esac
+            # Bağlantı noktası: App Group iki App ID'ye de atanmış olmalı (Apple API'si bunu yapamıyor, elle yapılır)
+            for plist in profile broadcast; do
+              if ! /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$RUNNER_TEMP/$plist.plist" 2>/dev/null | grep -q "$APP_GROUP"; then
+                echo "::error::$plist profilinde $APP_GROUP yok: Apple Developer'da App ID'ye App Group atanmalı (docs/ios.md, Ekran yayını)"
+                exit 1
+              fi
+            done
+            for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+              mkdir -p "$dir"
+              cp "$RUNNER_TEMP/broadcast.mobileprovision" "$dir/$broadcast_uuid.mobileprovision"
+            done
+            echo "broadcast-profile=$broadcast_uuid" >> "$GITHUB_OUTPUT"
+          fi
           # İstenen cihazların hepsi profilde olmalı (yoksa IPA onlara kurulamaz; derleme boşa gitmesin)
           # (UDID'ler günlüğe yazılmaz; yalnızca sıra numarası)
           if [ -n "$devices_file" ]; then
-            /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$RUNNER_TEMP/profile.plist" | tr '[:lower:]' '[:upper:]' > "$RUNNER_TEMP/provisioned.txt"
             missing=0
-            n=0
-            for udid in $(node -e 'for (const d of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))) console.log(String(d.udid).toUpperCase())' "$devices_file"); do
-              n=$((n + 1))
-              if ! grep -q "$udid" "$RUNNER_TEMP/provisioned.txt"; then
-                echo "::error::İstenen $n. cihaz profilde yok"
-                missing=1
-              fi
+            for plist in profile ${broadcast:+broadcast}; do
+              /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$RUNNER_TEMP/$plist.plist" | tr '[:lower:]' '[:upper:]' > "$RUNNER_TEMP/provisioned.txt"
+              n=0
+              for udid in $(node -e 'for (const d of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))) console.log(String(d.udid).toUpperCase())' "$devices_file"); do
+                n=$((n + 1))
+                if ! grep -q "$udid" "$RUNNER_TEMP/provisioned.txt"; then
+                  echo "::error::İstenen $n. cihaz $plist profilinde yok"
+                  missing=1
+                fi
+              done
             done
             rm -f "$devices_file" "$RUNNER_TEMP/provisioned.txt"
             [ "$missing" = 0 ] || exit 1
@@ -395,25 +441,33 @@ jobs:
           echo "profile=$uuid" >> "$GITHUB_OUTPUT"
           echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
 
-      # Yalnızca uygulama hedefi elle imzalanır (Pod hedeflerine dokunulmaz)
+      # Yalnızca uygulama ve yayın eklentisi hedefleri elle imzalanır (Pod hedeflerine dokunulmaz)
       - name: Xcode imza ayarları
         if: steps.reuse.outputs.from == ''
         working-directory: apps/mobile/ios
         env:
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
           PROFILE_UUID: ${{ steps.signing.outputs.profile }}
+          BROADCAST_PROFILE_UUID: ${{ steps.signing.outputs.broadcast-profile }}
         run: |
           ruby -e '
             require "xcodeproj"
             project = Xcodeproj::Project.open("Diskort.xcodeproj")
+            sign = lambda do |target, profile|
+              target.build_configurations.each do |c|
+                s = c.build_settings
+                s["CODE_SIGN_STYLE"] = "Manual"
+                s["DEVELOPMENT_TEAM"] = ENV["TEAM"]
+                s["CODE_SIGN_IDENTITY"] = "Apple Distribution"
+                s["CODE_SIGN_IDENTITY[sdk=iphoneos*]"] = "Apple Distribution"
+                s["PROVISIONING_PROFILE_SPECIFIER"] = profile
+              end
+            end
             target = project.targets.find { |t| t.name == "Diskort" } or abort "Diskort hedefi yok"
-            target.build_configurations.each do |c|
-              s = c.build_settings
-              s["CODE_SIGN_STYLE"] = "Manual"
-              s["DEVELOPMENT_TEAM"] = ENV["TEAM"]
-              s["CODE_SIGN_IDENTITY"] = "Apple Distribution"
-              s["CODE_SIGN_IDENTITY[sdk=iphoneos*]"] = "Apple Distribution"
-              s["PROVISIONING_PROFILE_SPECIFIER"] = ENV["PROFILE_UUID"]
+            sign.call(target, ENV["PROFILE_UUID"])
+            unless ENV["BROADCAST_PROFILE_UUID"].to_s.empty?
+              extension = project.targets.find { |t| t.name == "DiskortBroadcast" } or abort "DiskortBroadcast hedefi yok"
+              sign.call(extension, ENV["BROADCAST_PROFILE_UUID"])
             end
             project.save
           '
@@ -438,6 +492,7 @@ jobs:
         env:
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
           PROFILE_UUID: ${{ steps.signing.outputs.profile }}
+          BROADCAST_PROFILE_UUID: ${{ steps.signing.outputs.broadcast-profile }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -o pipefail
@@ -446,6 +501,10 @@ jobs:
             -derivedDataPath build COMPILER_INDEX_STORE_ENABLE=NO \
             archive | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E '^(\*\*|error:|.*: error:)' || true
           test -d "$RUNNER_TEMP/Diskort.xcarchive" || { echo "::error::Arşiv oluşmadı"; exit 1; }
+          broadcast_entry=""
+          if [ -n "$BROADCAST_PROFILE_UUID" ]; then
+            broadcast_entry="<key>com.diskort.app.broadcast</key><string>$BROADCAST_PROFILE_UUID</string>"
+          fi
           # "release-testing" = Ad Hoc (Xcode 15.3'ten önceki adı "ad-hoc")
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -457,13 +516,22 @@ jobs:
             <key>signingStyle</key><string>manual</string>
             <key>signingCertificate</key><string>Apple Distribution</string>
             <key>provisioningProfiles</key>
-            <dict><key>com.diskort.app</key><string>$PROFILE_UUID</string></dict>
+            <dict><key>com.diskort.app</key><string>$PROFILE_UUID</string>$broadcast_entry</dict>
             <key>thinning</key><string>&lt;none&gt;</string>
           </dict>
           </plist>
           EOF
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Diskort.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export"
+          if [ -n "$BROADCAST_PROFILE_UUID" ]; then
+            # Eklenti IPA'nın içinde ve App Group'la imzalanmış olmalı (yoksa yayın sessizce siyah kalır)
+            unzip -q "$RUNNER_TEMP/export/Diskort.ipa" -d "$RUNNER_TEMP/ipa"
+            for bundle in Diskort.app Diskort.app/PlugIns/DiskortBroadcast.appex; do
+              codesign -d --entitlements - --xml "$RUNNER_TEMP/ipa/Payload/$bundle" 2>/dev/null | grep -q 'group.com.diskort.app' || {
+                echo "::error::$bundle App Group yetkisiyle imzalanmamış"; exit 1; }
+            done
+            echo "Yayın eklentisi IPA'da, App Group yetkisi tamam."
+          fi
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp "$RUNNER_TEMP/export/Diskort.ipa" "$GITHUB_WORKSPACE/dist/Diskort-$VERSION-ios.ipa"
           ls -la "$GITHUB_WORKSPACE/dist"
