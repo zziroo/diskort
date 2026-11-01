@@ -86,6 +86,7 @@ describe('iPhone cihazları (yönetim)', () => {
     expect(body.devices.every((d: { status: string }) => d.status === 'bekliyor')).toBe(true);
     expect(body.automation).toEqual({ enabled: false, keyMissing: false, pendingDispatchAt: null });
     expect(body.manualCommand).toBeNull();
+    expect(body.recordLimit).toBe(500);
   });
 
   it('onay/ret geçişleri dosyaya yazılır; belirteç yokken derleme başlatılmaz, elle komut verilir', async () => {

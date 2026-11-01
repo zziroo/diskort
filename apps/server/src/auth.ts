@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
 import { SignJWT, decodeJwt, jwtVerify } from 'jose';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -15,6 +16,8 @@ export const SESSION_RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export class AuthService {
   private readonly key: Uint8Array;
+  /** Bilinmeyen kullanıcı adına karşı doğrulanan, süreç başına rastgele üretilen hash (bkz. verifyDecoy) */
+  private readonly decoyHash: Promise<string>;
 
   constructor(
     secret: string,
@@ -22,6 +25,7 @@ export class AuthService {
     private readonly permissions: PermissionService,
   ) {
     this.key = new TextEncoder().encode(secret);
+    this.decoyHash = this.hashPassword(randomBytes(32).toString('base64url'));
   }
 
   hashPassword(password: string): Promise<string> {
@@ -34,6 +38,12 @@ export class AuthService {
     } catch {
       return false;
     }
+  }
+
+  /** Hesap yokken de aynı argon2 çalışır: yanıt süresinden hesabın varlığı anlaşılmaz. Sonuç hep false. */
+  async verifyDecoy(password: string): Promise<false> {
+    await this.verifyPassword(await this.decoyHash, password);
+    return false;
   }
 
   /** Oturum jetonu. `issuedAt` yalnızca testler için (eski tarihli jeton). */

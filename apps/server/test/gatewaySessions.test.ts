@@ -163,6 +163,62 @@ describe('gateway oturumları', () => {
     expect(s.ctx.voice.list().find((v) => v.userId === ali.user.id)).toMatchObject({ selfMute: true, selfDeaf: true });
   });
 
+  describe('IP başına kimliksiz bağlantı sınırı', () => {
+    const socket = () => {
+      const { port } = s.app.server.address() as { port: number };
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/gateway`);
+      ws.on('error', () => {});
+      return ws;
+    };
+    /** Kimliksiz bağlantı açar: HELLO gelince kabul edilmiştir */
+    const anonymous = (): Promise<WebSocket> =>
+      new Promise((resolve) => {
+        const ws = socket();
+        ws.once('message', () => resolve(ws));
+      });
+    const counts = () => (s.ctx.gateway as unknown as { anonymousByIp: Map<string, number> }).anonymousByIp;
+
+    it('21. bağlantı 1008 alır; identify ve kapanış yer açar, sayaç tam bir kez düşer', async () => {
+      const ali = await s.member('ali');
+      const open = await Promise.all(Array.from({ length: 20 }, anonymous));
+      expect([...counts().values()]).toEqual([20]);
+      expect(await closed(socket())).toBe(1008);
+      expect(s.ctx.gateway.openSockets()).toBe(20);
+
+      // Biri kimlik doğrular: yer açılır, kimlikli bağlantı sınıra sayılmaz
+      const identified = open.pop()!;
+      const ready = new Promise<void>((resolve) =>
+        identified.on('message', (raw) => {
+          if ((JSON.parse(raw.toString()) as GatewayServerMessage).t === 'READY') resolve();
+        }),
+      );
+      identified.send(JSON.stringify({ t: 'IDENTIFY', d: { token: ali.token } }));
+      await ready;
+      expect([...counts().values()]).toEqual([19]);
+      open.push(await anonymous());
+      expect(await closed(socket())).toBe(1008);
+
+      // Kimliksiz biri kapanır: yer açılır
+      const leaving = open.pop()!;
+      leaving.close();
+      await closed(leaving);
+      await wait(50);
+      expect([...counts().values()]).toEqual([19]);
+      open.push(await anonymous());
+
+      // Kimlikli bağlantının kapanışı ikinci kez düşürmez
+      identified.close();
+      await closed(identified);
+      await wait(50);
+      expect([...counts().values()]).toEqual([20]);
+
+      for (const ws of open) ws.close();
+      await Promise.all(open.map(closed));
+      await wait(50);
+      expect(counts().size).toBe(0);
+    });
+  });
+
   describe('oturum jetonu yenileme', () => {
     const DAY_MS = 24 * 60 * 60 * 1000;
     const me = (token: string) => s.app.inject({ method: 'GET', url: '/api/me', headers: { authorization: `Bearer ${token}` } });
@@ -259,6 +315,8 @@ describe('gateway oturumları', () => {
       // sessions_valid_after saniye çözünürlüklü: yenilenen jetonla aynı saniyede yapılan değişiklik onu geçersiz kılmaz
       await wait(1100);
       const other = await s.ctx.auth.issueToken(ali.user.id);
+      // İstek biterken soket çoktan kapanmış olabilir: kapanış kodu istekten önce dinlenir
+      const closing = closed(client.ws);
       const res = await s.app.inject({
         method: 'POST',
         url: '/api/me/password',
@@ -266,7 +324,7 @@ describe('gateway oturumları', () => {
         payload: { currentPassword: 'eski-sifre-123', newPassword: 'yeni-sifre-123' },
       });
       expect(res.statusCode).toBe(200);
-      expect(await closed(client.ws)).toBe(4004);
+      expect(await closing).toBe(4004);
       expect((await me(renewed!.token)).statusCode).toBe(401);
     });
 

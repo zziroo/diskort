@@ -19,7 +19,7 @@ import { createRateLimiter } from './messages.js';
  */
 
 /** Dosyaya en çok bu kadar kayıt yazılır (herkese açık uç; kötüye kullanım sınırı) */
-const MAX_RECORDS = 500;
+export const MAX_RECORDS = 500;
 const MAX_BODY_BYTES = 64 * 1024;
 
 const xmlEscape = (s: string): string =>
@@ -131,7 +131,12 @@ export function registerUdidRoutes(app: FastifyInstance, ctx: AppContext): void 
       const existing = await readFile(file, 'utf8').catch(() => '');
       const lines = existing.split('\n').filter(Boolean);
       const known = lines.some((line) => line.includes(`"udid":"${device.udid}"`));
-      if (!known && lines.length < MAX_RECORDS) {
+      // Liste dolu: kayıt yapılmadan "Kaydedildi" denmesin
+      if (!known && lines.length >= MAX_RECORDS) {
+        req.log.warn({ udid: device.udid }, 'iPhone UDID listesi dolu, kayıt yapılmadı');
+        return reply.redirect('/udid?hata=dolu', 301);
+      }
+      if (!known) {
         const record: UdidRecord = { ...device, at: new Date().toISOString() };
         await mkdir(path.dirname(file), { recursive: true });
         await appendFile(file, `${JSON.stringify(record)}\n`);

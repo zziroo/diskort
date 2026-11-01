@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildUsers,
   diagnose,
@@ -479,8 +479,12 @@ describe('FreezeCorrelator', () => {
   let dir: string;
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diskort-freeze-'));
+    // Fikstürler sabit tarihli; olay dosyası yüklenirken 30 günlük pencere gerçek saate bakar. Saat olay gününde
+    // durur (yalnız Date), dosya işlemleri gerçek zamanlayıcılarla sürer.
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 + 3_600_000 });
   });
   afterEach(() => {
+    vi.useRealTimers();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

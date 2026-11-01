@@ -42,8 +42,8 @@ Ad Hoc'un sınırı: uygulama yalnızca **UDID'si önceden kaydedilmiş cihazlar
    10 karakter **Key ID**'dir.
 3. Sunucuda:
    ```sh
-   scp AuthKey_XXXXXXXXXX.p8 diskort-vps:/opt/diskort/infra/secrets/apns.p8
-   ssh diskort-vps 'chmod 600 /opt/diskort/infra/secrets/apns.p8'
+   scp AuthKey_XXXXXXXXXX.p8 vps:/opt/diskort/infra/secrets/apns.p8
+   ssh vps 'cd /opt/diskort/infra/secrets && chmod 600 apns.p8 && chown --reference=. apns.p8'
    ```
    `/opt/diskort/infra/.env` dosyasına ekle:
    ```
@@ -232,7 +232,7 @@ yazar (kayıt, profil oluşturma, silme yok).
    terminalde (macOS/Linux; değer ekrana yazılmaz, `.env`'deki eski satır varsa yenisiyle değişir):
 
 ```sh
-tr -d '\r\n ' < ~/Downloads/gh-dispatch-token.txt | ssh -i ~/.ssh/diskort_vps root@38.60.208.88 'set -e; umask 077; E=/opt/diskort/infra/.env; T=$(cat); { grep -v "^GITHUB_DISPATCH_TOKEN=" $E; printf "GITHUB_DISPATCH_TOKEN=%s\n" "$T"; } > /tmp/newenv; cat /tmp/newenv > $E; rm /tmp/newenv; chmod 600 $E; cd /opt/diskort/infra && docker compose up -d api'
+tr -d '\r\n ' < ~/Downloads/gh-dispatch-token.txt | ssh vps 'set -e; umask 077; E=/opt/diskort/infra/.env; T=$(cat); { grep -v "^GITHUB_DISPATCH_TOKEN=" $E; printf "GITHUB_DISPATCH_TOKEN=%s\n" "$T"; } > /tmp/newenv; cat /tmp/newenv > $E; rm /tmp/newenv; chmod 600 $E; cd /opt/diskort/infra && docker compose up -d --no-deps api'
 rm -P ~/Downloads/gh-dispatch-token.txt
 ```
 

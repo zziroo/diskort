@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import { STREAM_SOURCE_NAME_MAX_LENGTH } from '@diskort/shared';
 import { UploadError } from './attachments.js';
+import { inspectImage } from './fileInfo.js';
 import type { VoiceStateStore } from './voiceState.js';
 
 /** Saklanan önizlemenin en büyük genişliği/yüksekliği (piksel) */
@@ -10,6 +11,8 @@ const PREVIEW_MAX_HEIGHT = 480;
 const MAX_INPUT_PIXELS = 4096 * 4096;
 
 sharp.cache(false);
+// Süreç geneli: hiçbir yükleme yolu SVG beklemez; içerikten tür tanıyan sharp'ın librsvg'ye inmesi kapalı
+sharp.block({ operation: ['VipsForeignLoadSvg'] });
 
 interface Preview {
   channelId: string;
@@ -53,6 +56,9 @@ export class StreamPreviewStore {
   async put(userId: string, input: Buffer, now = Date.now()): Promise<number | null> {
     const before = this.voice.get(userId);
     if (!before?.streaming) return null;
+    // İstemcinin başlığına değil içeriğe bakılır: yalnızca rotanın kabul ettiği türler çözücüye gider
+    const image = inspectImage(input);
+    if (!image || image.type === 'image/gif') throw new UploadError(400, 'invalid_image', 'Önizleme resmi okunamadı.');
     let data: Buffer;
     try {
       data = await sharp(input, { failOn: 'error', limitInputPixels: MAX_INPUT_PIXELS, pages: 1 })

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody, sendError, type AppContext } from '../context.js';
 import { IOS_DEVICE_STATUSES, isUdid, type IosDeviceService } from '../iosDevices.js';
+import { MAX_RECORDS } from './udid.js';
 
 // Yönetim paneli → "iPhone cihazları": /udid sayfasından kaydolan cihazların onayı ve otomatik Ad Hoc
 // derlemesi (bkz. iosDevices.ts, docs/ios.md). Yalnızca hesap yöneticilerine; yanıtlar saklanmaz.
@@ -17,6 +18,8 @@ export function registerIosDeviceRoutes(app: FastifyInstance, ctx: AppContext, s
     const devices = await service.list();
     return {
       devices,
+      /** Kayıt listesinin üst sınırı: dolunca yeni cihaz kaydedilmez */
+      recordLimit: MAX_RECORDS,
       automation: {
         enabled: service.automationEnabled,
         /** GITHUB_DISPATCH_TOKEN var ama IOS_DEVICES_KEY yok: derleme başlatılmaz */

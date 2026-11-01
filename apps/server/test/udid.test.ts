@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { parseDeviceAttributes } from '../src/routes/udid.js';
+import { MAX_RECORDS, parseDeviceAttributes } from '../src/routes/udid.js';
 
 let app: FastifyInstance | undefined;
 let dir: string | undefined;
@@ -71,5 +71,27 @@ describe('iPhone UDID toplama', () => {
     });
     expect(bad.statusCode).toBe(301);
     expect(bad.headers.location).toBe('/udid?hata=1');
+  });
+
+  it('liste doluyken bilinmeyen cihaz kaydedilmez ve hata sayfasına gider, bilinen cihaz yine başarı alır', async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), 'udid-'));
+    const file = path.join(dir, 'udids.jsonl');
+    const line = (udid: string) => JSON.stringify({ udid, product: null, version: null, deviceName: null, name: null, at: '2026-09-20T10:00:00.000Z' });
+    const filled = `${Array.from({ length: MAX_RECORDS - 1 }, (_, i) => line(`00008110-${String(i).padStart(16, '0')}`)).join('\n')}\n${line(UDID)}\n`;
+    await writeFile(file, filled);
+    ({ app } = await buildApp(loadConfig({ NODE_ENV: 'test', DATA_DIR: dir }), { dbFile: ':memory:', logger: false }));
+
+    const post = (udid: string) =>
+      app!.inject({
+        method: 'POST',
+        url: '/api/udid/receive',
+        headers: { 'content-type': 'application/pkcs7-signature' },
+        payload: signedBody({ UDID: udid }),
+      });
+    const unknown = await post('00008120-000A1B2C3D4E5F60');
+    expect(unknown.statusCode).toBe(301);
+    expect(unknown.headers.location).toBe('/udid?hata=dolu');
+    expect((await post(UDID)).headers.location).toBe(`/udid?udid=${UDID}`);
+    expect(await readFile(file, 'utf8')).toBe(filled);
   });
 });

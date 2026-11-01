@@ -55,6 +55,9 @@ yalnızca arayüz değişen bir sürüm birkaç dakikada çıkar.
 - **OTA paketi** ayrı bir anahtarla imzalanır (`OTA_SIGNING_KEY`). Telefon imzayı uygulamanın içindeki sertifikayla
   ([`certs/certificate.pem`](../apps/mobile/certs/certificate.pem)) doğrular; sunucu ele geçirilse bile telefonlara
   kod gönderilemez.
+- **Masaüstü** için bu güvence yok. macOS'ta Squirrel Developer ID imzasını denetler, ama Windows ve Linux paketleri
+  imzasızdır ve güncelleyici yalnızca `latest.yml`'deki sha512'ye bakar. `latest.yml`'ye giden yönlendirmeyi sunucu
+  verdiği için sunucu ele geçirilirse kurulu Windows ve Linux uygulamalarına kod gönderilebilir.
 - `google-services.json`, derleme sırasında `GOOGLE_SERVICES_JSON` gizli değişkeninden yazılır.
 
 ### Test APK'sı

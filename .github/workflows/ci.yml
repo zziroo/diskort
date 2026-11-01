@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Sürüm derlemesi aynı denetimden geçmeden başlamaz (release.yml)
+  workflow_call:
 
 jobs:
   check:

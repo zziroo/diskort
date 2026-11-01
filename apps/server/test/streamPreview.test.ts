@@ -63,6 +63,22 @@ describe('yayın önizlemesi', () => {
     expect(meta.height).toBe(270);
   });
 
+  it('SVG ve GIF, başlık ne derse desin çözücüye ulaşmaz; PNG ve WebP geçer', async () => {
+    startStreaming();
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>');
+    const base = sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 200, g: 40, b: 40 } } });
+    for (const type of ['image/png', 'image/jpeg', 'image/webp']) {
+      const res = await upload(s.owner.token, svg, type);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('invalid_image');
+    }
+    expect((await upload(s.owner.token, await base.clone().gif().toBuffer(), 'image/png')).statusCode).toBe(400);
+    expect((await upload(s.owner.token, await base.clone().png().toBuffer(), 'image/png')).statusCode).toBe(200);
+    expect((await upload(s.owner.token, await base.clone().webp().toBuffer(), 'image/webp')).statusCode).toBe(200);
+    // Süreç geneli engel: kapıdan kaçan bir yol olsa da sharp SVG açmaz
+    await expect(sharp(svg).png().toBuffer()).rejects.toThrow();
+  });
+
   it('başka sunucunun üyesi, kanalı göremeyen ve yayında olmayan için 404', async () => {
     const member = await s.member('uye');
     const voice = s.channel('voice');

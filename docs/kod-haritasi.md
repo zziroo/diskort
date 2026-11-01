@@ -270,7 +270,7 @@ _Güncelleme: 2026-11-01 (iOS ekran yayını). Bakım: yapıyı değiştiren com
 ### Sunucu ve ortak
 - `tools/udp-probe/probe.mjs` değişirse `tools/udp-probe/hat-testi.cmd` içindeki `PROBE_SHA256` güncellenmeli (`apps/server/test/lineTest.test.ts` bunu denetler); protokol `apps/server/src/lineTest/protocol.ts` ile birebir aynı tutulmalı.
 - Şifreleme biçimi iki yerde: `apps/server/src/iosDevicesCrypto.ts` `encryptDevices` ve `scripts/ios-devices-crypto.mjs` `decryptDevices` (iş akışı çözer); testle bağlı.
-- Yerel modül sürümleri `apps/server/Dockerfile` içinde sabit (`sharp@0.35.4`, argon2) — `apps/server/package.json` ile aynı tutulmalı; tsup bunları gömmez (`apps/server/tsup.config.ts` `external`).
+- Yerel modül sürümleri `apps/server/Dockerfile` içinde sabit (`sharp`, argon2) — `apps/server/package.json` ile aynı tutulmalı; tsup bunları gömmez (`apps/server/tsup.config.ts` `external`).
 - Yeni ortam değişkeni infra/.env'e yazılınca kendiliğinden geçmez: compose api'ye yalnız `infra/docker-compose.yml` `environment` listesindekileri verir.
 - `/api/health` kalmalı: `infra/restore-db.sh` hâlâ ona bakar (yeni ad `/healthz`, Uptime Kuma).
 - Göçleri asla yeniden sıralama/düzenleme; `apps/server/src/db.ts` `migrate` foreign_keys kapalı çalıştığından tablo yeniden kuran göç bağlı satırları korumalı (göç 9 örneği).

@@ -95,9 +95,42 @@ function createLimiter(maxAttempts: number, windowMs: number) {
   };
 }
 
+/**
+ * Anahtar başına başarısız deneme sınırı (pencere ilk denemeyle başlar). Deneme, argon2'den önce sayılır:
+ * eşzamanlı istekler sınırı aşamaz; başarılı giriş `clear` ile sayacı sıfırlar, yani yalnız başarısızlar kalır.
+ * Anahtarlar ekleme (dolayısıyla bitiş) sırasındadır: var olmayan adlarla selde süresi dolanlar, sonra en
+ * eskiler atılır, bellek `maxKeys`'i geçmez.
+ */
+export function createFailureLimiter(maxFailures: number, windowMs: number, maxKeys = 10_000) {
+  const attempts = new Map<string, { count: number; resetAt: number }>();
+  return {
+    take(key: string): boolean {
+      const now = Date.now();
+      const entry = attempts.get(key);
+      if (entry && entry.resetAt > now) {
+        if (entry.count >= maxFailures) return false;
+        entry.count++;
+        return true;
+      }
+      attempts.delete(key);
+      for (const [k, v] of attempts) {
+        if (v.resetAt > now && attempts.size < maxKeys) break;
+        attempts.delete(k);
+      }
+      attempts.set(key, { count: 1, resetAt: now + windowMs });
+      return true;
+    },
+    clear(key: string): void {
+      attempts.delete(key);
+    },
+  };
+}
+
 export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void {
   const { store, auth, gateway, push, authLog, counters } = ctx;
   const limit = createLimiter(20, 60_000);
+  // Bilinçli sonuç: biri başkasının adını 15 dk kilitleyebilir; açık oturumlar bundan etkilenmez.
+  const loginAttempts = createFailureLimiter(10, 15 * 60_000);
 
   /** Yönetim panelinin giriş kayıtları (şifre ya da hesabı olmayan kullanıcı adı yazılmaz) */
   const audit = (
@@ -128,10 +161,15 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
     // Hesabı olan biri sunucu davetiyle "Kayıt ol" ekranından kendi kullanıcı adı ve şifresiyle gelirse
     // (ör. eskiden atılıp geri dönen) giriş yapılır ve davetin sunucusuna katılır.
+    // Geçersiz davetle argon2 hiç çalışmaz; geçerli davetle var olan ada şifre denemesi giriş sınırına tabidir,
+    // bu uç şifre sınama yolu olmaz. Geçerli davet sahibi adın alınmış olduğunu görür (409), bu bilinçli.
+    const invite = store.checkInvite(body.inviteCode);
+    if (!invite.ok) return sendError(reply, 400, 'invite', invite.reason);
     const existing = store.getUserAuthByUsername(body.username);
+    const attemptKey = body.username.slice(0, 64);
+    if (existing && !loginAttempts.take(attemptKey)) return limited(req, reply);
     if (existing && (await auth.verifyPassword(existing.passwordHash, body.password))) {
-      const invite = store.checkInvite(body.inviteCode);
-      if (!invite.ok) return sendError(reply, 400, 'invite', invite.reason);
+      loginAttempts.clear(attemptKey);
       if (!invite.invite.guild_id) return sendError(reply, 409, 'username', 'Bu kullanıcı adı alınmış.');
       const joined = store.joinWithInvite(body.inviteCode, existing.id);
       if (!joined.ok) {
@@ -168,12 +206,20 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const body = parseBody(loginSchema, req.body, reply);
     if (!body) return reply;
 
+    // Hesabı olmayan adlar da sayılır (429 hesabın varlığını ele vermesin); gerçek ad 32 karakteri geçmez,
+    // kesilen anahtar sınırı gevşetmez, belleği korur
+    const attemptKey = body.username.slice(0, 64);
+    if (!loginAttempts.take(attemptKey)) return limited(req, reply);
+
     const record = store.getUserAuthByUsername(body.username);
-    const valid = record ? await auth.verifyPassword(record.passwordHash, body.password) : false;
+    const valid = record
+      ? await auth.verifyPassword(record.passwordHash, body.password)
+      : await auth.verifyDecoy(body.password);
     if (!record || !valid) {
       audit(req, 'login_failed', record, record ? 'şifre hatalı' : 'böyle bir hesap yok');
       return sendError(reply, 401, 'invalid_credentials', 'Kullanıcı adı veya şifre hatalı.');
     }
+    loginAttempts.clear(attemptKey);
     audit(req, 'login', record);
     const { passwordHash: _omit, ...user } = record;
     const response: AuthResponse = { token: await auth.issueToken(user.id), user };
@@ -191,6 +237,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       return sendError(reply, 400, 'invalid_code', 'Kullanıcı adı veya sıfırlama kodu hatalı ya da kodun süresi dolmuş.');
     }
     store.setPassword(userId, await auth.hashPassword(body.newPassword));
+    loginAttempts.clear(body.username.slice(0, 64));
     // Hesap başkasının elinde olabilir: açık bağlantıların hepsi kapanır, hiçbir cihaza bildirim gitmez
     // (kişinin kendi telefonu giriş yapınca ya da uygulama açılınca jetonunu yeniden kaydeder)
     gateway.disconnectUser(userId, 'Şifren sıfırlandı. Yeniden giriş yap.');

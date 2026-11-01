@@ -36,6 +36,8 @@ import { StatusStore, combineActivities, mergeActivities, parseActivityReports }
 import type { VoiceStateStore } from './voiceState.js';
 
 const IDENTIFY_TIMEOUT_MS = 10_000;
+/** Bir IP'den aynı anda açık olabilecek kimliksiz bağlantı sayısı (kimlikli bağlantılar sayılmaz) */
+const MAX_ANONYMOUS_PER_IP = 20;
 const PING_INTERVAL_MS = 20_000;
 /** Aynı kanal için "yazıyor" bildirimleri arasındaki en kısa süre (sel koruması) */
 const TYPING_MIN_INTERVAL_MS = 1_000;
@@ -153,6 +155,8 @@ interface Session {
   version: string | null;
   /** Bağlantının açıldığı an */
   connectedAt: number;
+  /** Kimliksiz sayacında yer tutuyorsa bağlantının IP'si; identify ya da kapanışta null olur */
+  anonymousIp: string | null;
   /** İstemci boşta olduğunu bildirebiliyor (CLIENT_FEATURE_PRESENCE) */
   reportsIdle: boolean;
   /** Oturum boşta (masaüstünde girdi yok / ekran kilitli, telefonda uygulama arka planda) */
@@ -180,6 +184,8 @@ export type Visibility = Map<string, Set<string>>;
 export class Gateway {
   private readonly sessions = new Set<Session>();
   private readonly byUser = new Map<string, Set<Session>>();
+  /** IP → kimliksiz bağlantı sayısı; sıfıra inen anahtar silinir */
+  private readonly anonymousByIp = new Map<string, number>();
   private pingTimer: NodeJS.Timeout | null = null;
   /** Sunucu kapanıyor: kapanan bağlantılar için artık veritabanına bakılmaz */
   private closing = false;
@@ -224,7 +230,7 @@ export class Gateway {
   }
 
   register(app: FastifyInstance): void {
-    app.get('/gateway', { websocket: true }, (socket) => this.accept(socket));
+    app.get('/gateway', { websocket: true }, (socket, req) => this.accept(socket, req.ip));
     this.pingTimer = setInterval(() => this.pingAll(), PING_INTERVAL_MS);
     app.addHook('onClose', async () => {
       this.closing = true;
@@ -601,7 +607,18 @@ export class Gateway {
     return this.sessions.size;
   }
 
-  private accept(socket: WebSocket): void {
+  private accept(socket: WebSocket, ip: string): void {
+    const anonymous = this.anonymousByIp.get(ip) ?? 0;
+    if (anonymous >= MAX_ANONYMOUS_PER_IP) {
+      this.traffic.closes['1008'] = (this.traffic.closes['1008'] ?? 0) + 1;
+      socket.on('error', () => {}); // dinleyicisiz 'error' süreci düşürür
+      socket.close(1008, 'too many connections');
+      setTimeout(() => {
+        if (socket.readyState !== socket.CLOSED) socket.terminate();
+      }, CLOSE_GRACE_MS).unref?.();
+      return;
+    }
+    this.anonymousByIp.set(ip, anonymous + 1);
     const session: Session = {
       socket,
       userId: null,
@@ -647,6 +664,7 @@ export class Gateway {
       platform: 'desktop',
       version: null,
       connectedAt: Date.now(),
+      anonymousIp: ip,
       reportsIdle: false,
       idle: false,
       activities: [],
@@ -686,6 +704,16 @@ export class Gateway {
     socket.on('error', () => this.drop(session));
   }
 
+  /** Oturumun kimliksiz sayacındaki yerini bırakır (tekrar çağrılması zararsızdır) */
+  private releaseAnonymous(session: Session): void {
+    const ip = session.anonymousIp;
+    if (ip === null) return;
+    session.anonymousIp = null;
+    const left = (this.anonymousByIp.get(ip) ?? 1) - 1;
+    if (left > 0) this.anonymousByIp.set(ip, left);
+    else this.anonymousByIp.delete(ip);
+  }
+
   /**
    * Oturumu tüm listelerden çıkarır (tekrar çağrılması zararsızdır). Kullanıcının son oturumuysa çevrimdışı,
    * kalan oturumların hepsi boştaysa "Boşta" duyurulur; bu oturumun bildirdiği etkinlikler de kalkar.
@@ -693,6 +721,7 @@ export class Gateway {
   private drop(session: Session): void {
     if (session.closed) return;
     session.closed = true;
+    this.releaseAnonymous(session);
     session.idleUpdates.cancel();
     session.voiceUpdates.cancel();
     session.watchUpdates.cancel();
@@ -878,6 +907,7 @@ export class Gateway {
 
   private identify(s: Session, user: User): void {
     s.userId = user.id;
+    this.releaseAnonymous(s);
     this.traffic.identified++;
     const closedAt = this.lastClosed.get(user.id);
     if (closedAt !== undefined && Date.now() - closedAt <= RECONNECT_WINDOW_MS) this.traffic.reconnects++;

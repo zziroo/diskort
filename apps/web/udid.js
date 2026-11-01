@@ -28,6 +28,12 @@
     });
     return;
   }
+  // Liste doluyken adımları yinelemek işe yaramaz
+  if (params.get('hata') === 'dolu') {
+    $('udid-start').hidden = true;
+    $('udid-full').hidden = false;
+    return;
+  }
   if (params.has('hata')) $('udid-error').hidden = false;
 
   // iPadOS kendini Mac olarak tanıtır; dokunmatik Mac yok

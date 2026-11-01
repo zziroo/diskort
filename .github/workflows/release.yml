@@ -26,8 +26,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Kontrol
+    uses: ./.github/workflows/ci.yml
+
   draft:
     name: Taslak sürüm
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

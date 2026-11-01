@@ -3999,6 +3999,22 @@ function iosDevices(x) {
   count.textContent = num(waiting);
   const out = [];
 
+  // Kayıt listesi doluluğu: dolunca /udid yeni cihazı reddeder (%90'da önceden uyarır)
+  if (x.recordLimit && x.devices.length >= x.recordLimit * 0.9) {
+    const full = x.devices.length >= x.recordLimit;
+    out.push(
+      card({
+        label: full ? 'Cihaz listesi dolu' : 'Cihaz listesi dolmak üzere',
+        value: `${num(x.devices.length)} / ${num(x.recordLimit)}`,
+        wide: true,
+        tone: full ? 'bad' : 'warn',
+        sub: full
+          ? "Yeni iPhone'lar kaydedilemiyor. Sunucudaki udids.jsonl dosyasından gereksiz satırları sil."
+          : "Liste dolunca yeni iPhone'lar kaydedilemez.",
+      }),
+    );
+  }
+
   // Otomatik derleme durumu
   const auto = x.automation;
   const ci = x.ci;

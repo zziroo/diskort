@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { AccessToken } from 'livekit-server-sdk';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
+import { createFailureLimiter } from '../src/routes/auth.js';
 import { joinGuild } from './helpers.js';
 import type { AppContext } from '../src/context.js';
 
@@ -103,6 +104,95 @@ describe('kimlik doğrulama ve davetler', () => {
     const ok = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'ADMIN', password: 'sifre12345' } });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().user.username).toBe('admin');
+  });
+
+  describe('kullanıcı adı başına giriş sınırı', () => {
+    let nextIp = 0;
+    /** Her deneme ayrı IP'den: IP sınırına takılmadan yalnız kullanıcı adı sınırı görülür */
+    const login = (username: string, password: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        remoteAddress: `10.0.${Math.floor(++nextIp / 250)}.${(nextIp % 250) + 1}`,
+        payload: { username, password },
+      });
+    const failTimes = async (username: string, times: number) => {
+      for (let i = 0; i < times; i++) expect((await login(username, 'yanlis-sifre')).statusCode).toBe(401);
+    };
+
+    it('bilinmeyen adda da argon2 doğrulaması çalışır', async () => {
+      await adminToken();
+      const spy = vi.spyOn(ctx.auth, 'verifyPassword');
+      expect((await login('olmayan', 'bir-sifre')).statusCode).toBe(401);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]![1]).toBe('bir-sifre');
+    });
+
+    it('10 başarısızdan sonra doğru şifre de 429 alır, argon2 çalışmaz; başka kullanıcı etkilenmez', async () => {
+      const token = await adminToken();
+      const code = (await app.inject({ method: 'POST', url: '/api/invites', headers: { authorization: `Bearer ${token}` }, payload: {} })).json()
+        .code as string;
+      expect((await register(code, 'veli')).statusCode).toBe(201);
+
+      await failTimes('  ADMIN ', 10);
+      const spy = vi.spyOn(ctx.auth, 'verifyPassword');
+      expect((await login('admin', 'yanlis-sifre')).statusCode).toBe(429);
+      const blocked = await login('admin', 'sifre12345');
+      expect(blocked.statusCode).toBe(429);
+      expect(blocked.json().error).toBe('rate_limited');
+      expect(spy).not.toHaveBeenCalled();
+
+      expect((await login('veli', 'sifre12345')).statusCode).toBe(200);
+      // Açık oturum etkilenmez
+      expect((await app.inject({ method: 'GET', url: '/api/me', headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(200);
+    });
+
+    it('kayıt ucu şifre sınama yolu değil: geçersiz davette argon2 çalışmaz, geçerli davette giriş sınırı işler', async () => {
+      const token = await adminToken();
+      const code = (await app.inject({ method: 'POST', url: '/api/invites', headers: { authorization: `Bearer ${token}` }, payload: {} })).json()
+        .code as string;
+      const spy = vi.spyOn(ctx.auth, 'verifyPassword');
+      expect((await register('GECERSIZ', 'admin', 'yanlis-sifre')).statusCode).toBe(400);
+      expect((await register('GECERSIZ', 'admin')).statusCode).toBe(400);
+      expect(spy).not.toHaveBeenCalled();
+
+      for (let i = 0; i < 10; i++) expect((await register(code, 'admin', 'yanlis-sifre')).statusCode).toBe(409);
+      spy.mockClear();
+      expect((await register(code, 'admin')).statusCode).toBe(429);
+      expect(spy).not.toHaveBeenCalled();
+      expect((await login('admin', 'sifre12345')).statusCode).toBe(429);
+    });
+
+    it('bilinmeyen ad da aynı sınıra takılır (429 hesabın varlığını ele vermez)', async () => {
+      await failTimes('olmayan', 10);
+      expect((await login('olmayan', 'yanlis-sifre')).statusCode).toBe(429);
+    });
+
+    it('başarılı giriş sayacı sıfırlar', async () => {
+      await adminToken();
+      await failTimes('admin', 9);
+      expect((await login('admin', 'sifre12345')).statusCode).toBe(200);
+      await failTimes('admin', 10);
+      expect((await login('admin', 'yanlis-sifre')).statusCode).toBe(429);
+    });
+
+    it('sayaç pencere dolunca açılır, bellekte üst sınırı geçmez', () => {
+      vi.useFakeTimers();
+      try {
+        const limiter = createFailureLimiter(1, 1_000, 2);
+        expect(limiter.take('a')).toBe(true);
+        expect(limiter.take('a')).toBe(false);
+        vi.advanceTimersByTime(1_001);
+        expect(limiter.take('a')).toBe(true);
+        // Üçüncü anahtar en eskiyi atar: üst sınır aşılmaz
+        expect(limiter.take('b')).toBe(true);
+        expect(limiter.take('c')).toBe(true);
+        expect(limiter.take('b')).toBe(false);
+        expect(limiter.take('a')).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('yönetici olmayan kullanıcı hesap daveti veya kanal oluşturamaz', async () => {
