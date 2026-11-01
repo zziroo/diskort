@@ -45,8 +45,8 @@ win:
   # Kod imzası CI'da SignPath ile yapılır (docs/kod-imzalama.md). Güncelleyicinin indirilen kurulumun
   # yayıncı adını denetlemesi bilerek kapalı: app-update.yml'e publisherName yazılırsa, imzasız bir
   # sürüm (SignPath yokken yedek yol) ya da sertifika adı değişikliği kurulu uygulamaların
-  # güncellenmesini kalıcı olarak kırar. latest.yml'deki sha512 ve HTTPS yalnızca aktarım bütünlüğüdür: latest.yml'ye
-  # giden yönlendirmeyi sunucu verdiği için sunucuya karşı koruma sağlamaz (docs/surumler-ve-guncellemeler.md).
+  # güncellenmesini kalıcı olarak kırar. latest.yml'deki sha512 ve HTTPS yalnızca aktarım bütünlüğüdür; güven GitHub
+  # deposundadır, bu yüzden güncelleme akışı sunucudan geçmez (docs/surumler-ve-guncellemeler.md).
   verifyUpdateCodeSignature: false
 
 # Tek tıkla, yönetici izni istemeden kullanıcıya özel kurulum (Discord gibi). Ayrıntılar: build/installer.nsh
@@ -96,9 +96,9 @@ mac:
     NSAudioCaptureUsageDescription: Diskort ekran paylaşımına sistem sesini ekler.
     NSCameraUsageDescription: Diskort ileride görüntülü sohbet için kamerayı kullanabilir.
 
-# Sürüm dosyaları GitHub Releases'e yüklenir. Uygulamalar güncellemeyi GitHub'dan değil
-# https://diskort.ziroo.net/updates adresinden ister (src/shared/distribution.ts); sunucu dosyalara
-# yönlendirir. Böylece dağıtım yeri değişse bile kurulu uygulamalar etkilenmez.
+# Sürüm dosyaları GitHub Releases'e yüklenir, uygulamalar da doğrudan oradan alır. owner/repo
+# src/shared/distribution.ts UPDATE_REPO ile aynı olmalı. Depo herkese açık kalmalı ve adı değişmemeli:
+# değişirse kurulu uygulamalar güncellenemez, sunucudan düzeltilemez.
 publish:
   provider: github
   owner: zziroo

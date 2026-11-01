@@ -15,7 +15,7 @@ x-logging: &logging
 
 services:
   livekit:
-    image: livekit/livekit-server:v1.13.7
+    image: livekit/livekit-server:v1.13.11
     logging: *logging
     # livekit.yaml içindeki __TURN_DOMAIN__ yer tutucusunu doldurup sunucuyu başlatır
     entrypoint: ["/bin/sh", "-c"]

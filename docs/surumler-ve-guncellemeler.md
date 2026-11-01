@@ -12,9 +12,10 @@ Diskort'ta **herkes her zaman en son sürümü kullanır** (Discord'daki gibi). 
 3. **Çalışırken:** yeni sürüm yayınlanınca güncelleme arka planda iner ve üstte "Şimdi yeniden başlat" şeridi
    çıkar. Kullanıcı seste değilken uygulama 5 dakikadır simge durumundaysa güncelleme sessizce kurulur.
 
-Uygulamalar güncellemeyi `https://diskort.ziroo.net/updates/` adresinden ister; sunucu
-([`routes/updates.ts`](../apps/server/src/routes/updates.ts)) dosyaları GitHub Releases'e yönlendirir. Dağıtım
-yeri değişirse yalnızca sunucu değişir.
+Masaüstü uygulaması güncellemeyi doğrudan GitHub Releases'ten alır, sunucu zincirde değildir. 0.14.0 ve öncesi
+kurulumlar hâlâ `https://diskort.ziroo.net/updates/` adresini kullanır; sunucu
+([`routes/updates.ts`](../apps/server/src/routes/updates.ts)) onları GitHub'a yönlendirir. Telefonların OTA adresi
+sunucudadır, onu imza korur. Yönetim panelindeki masaüstü güncelleme sayaçları yalnız eski kurulumları sayar.
 
 > **macOS:** Apple imzası olmadan kendi kendine güncelleme mümkün olmadığından açılış penceresi indirme sayfasına
 > yönlendirir.
@@ -32,7 +33,8 @@ Kurulum yönetici izni istemez ([`build/installer.nsh`](../apps/desktop/build/in
 
 > ⚠️ `appId`, paket adı (`diskort`), `productName` ve `nsis.guid`
 > ([`electron-builder.yml`](../apps/desktop/electron-builder.yml)) kurulu uygulamaların birbirini tanıması için
-> **değiştirilmemelidir**.
+> **değiştirilmemelidir**. `zziroo/diskort` deposu da herkese açık kalmalı ve adı değişmemeli: 0.14.1 ve sonrası güncellemeyi
+> oradan alır, sunucudan düzeltilemez.
 
 ## Android güncellemeleri
 
@@ -55,9 +57,11 @@ yalnızca arayüz değişen bir sürüm birkaç dakikada çıkar.
 - **OTA paketi** ayrı bir anahtarla imzalanır (`OTA_SIGNING_KEY`). Telefon imzayı uygulamanın içindeki sertifikayla
   ([`certs/certificate.pem`](../apps/mobile/certs/certificate.pem)) doğrular; sunucu ele geçirilse bile telefonlara
   kod gönderilemez.
-- **Masaüstü** için bu güvence yok. macOS'ta Squirrel Developer ID imzasını denetler, ama Windows ve Linux paketleri
-  imzasızdır ve güncelleyici yalnızca `latest.yml`'deki sha512'ye bakar. `latest.yml`'ye giden yönlendirmeyi sunucu
-  verdiği için sunucu ele geçirilirse kurulu Windows ve Linux uygulamalarına kod gönderilebilir.
+- **Masaüstü** paketleri Windows ve Linux'ta imzasızdır, güncelleyici yalnızca `latest.yml`'deki sha512'ye bakar. Bu yüzden
+  0.14.1'den beri dosyalar sunucudan geçmez: güven GitHub deposundadır, sunucu ele geçirilse de 0.14.1 ve sonrasına
+  otomatik yoldan kod gönderilemez. Bu güvence otomatik güncelleme içindir: elle kurulum bağlantısı indirme sayfasına, yani sunucuya gider.
+  Eski kurulumlar yönlendirmeyi sunucudan aldığı için onlar güncellenene dek güvence yoktur. macOS'ta ayrıca Squirrel
+  Developer ID imzasını denetler.
 - `google-services.json`, derleme sırasında `GOOGLE_SERVICES_JSON` gizli değişkeninden yazılır.
 
 ### Test APK'sı

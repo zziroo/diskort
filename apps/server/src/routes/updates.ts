@@ -11,8 +11,8 @@ const VERSIONED_FILE = /(?:^|[-_])v?(\d+\.\d+\.\d+)(?=[-_.])/;
 
 /**
  * Masaüstü uygulamasının güncelleme kaynağı: https://<alan-adı>/updates/
- * Uygulama yalnızca bu adresi bilir; dosyalar şimdilik GitHub Releases'te durur ve buradan oraya
- * yönlendirilir. Dağıtım yeri değişirse yalnızca bu dosya değişir, kurulu uygulamalar etkilenmez.
+ * 0.14.0 ve öncesi masaüstü uygulamaları yalnızca bu adresi bilir; dosyalar GitHub Releases'te durur ve buradan oraya
+ * yönlendirilir. 0.14.1 ve sonrası GitHub'a doğrudan gider; bu yönlendirme eski kurulumlar içindir, yönetim panelindeki masaüstü güncelleme sayaçları da yalnız onları sayar.
  */
 export function registerUpdateRoutes(app: FastifyInstance, ctx: AppContext): void {
   const { config, releases, clientVersions, ota, counters } = ctx;

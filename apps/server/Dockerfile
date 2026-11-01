@@ -1,6 +1,6 @@
 # Diskort API sunucusu. Derleme bağlamı depo köküdür:
 #   docker build -f apps/server/Dockerfile .
-FROM node:24-slim AS build
+FROM node:24-trixie-slim AS build
 WORKDIR /repo
 RUN npm install -g pnpm@12.6.0
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
@@ -15,7 +15,7 @@ COPY packages/shared packages/shared
 COPY apps/server apps/server
 RUN pnpm --filter @diskort/server build
 
-FROM node:24-slim
+FROM node:24-trixie-slim
 WORKDIR /app
 ENV NODE_ENV=production \
     DATA_DIR=/data \

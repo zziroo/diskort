@@ -6,7 +6,7 @@ import { app, autoUpdater as squirrel, net } from 'electron';
 import electronUpdater from 'electron-updater';
 import { compareVersions } from '@diskort/shared';
 import type { UpdateState, UpdateSupport } from '../shared/bridge';
-import { UPDATE_FEED_URL } from '../shared/distribution';
+import { UPDATE_FEED_URL, UPDATE_REPO } from '../shared/distribution';
 import { createLogger } from './log';
 
 const BACKGROUND_CHECK_MS = 30 * 60_000;
@@ -25,7 +25,7 @@ export const updateLog = createLogger('updater');
  * - Çalışırken: 30 dakikada bir ya da sunucu "yeni sürüm var" dediğinde arka planda indirir;
  *   kurulum uygulama kapanınca, boştayken veya kullanıcı "Yeniden başlat" deyince yapılır.
  * - Sunucu, en son sürümden eski istemcilerin bağlanmasına izin vermez (UPDATE_REQUIRED).
- * Güncellemeler https://diskort.ziroo.net/updates adresinden gelir (sunucu dosyaları yönlendirir).
+ * Güncellemeler doğrudan GitHub Releases'ten gelir (bkz. shared/distribution.ts).
  */
 export class UpdateManager {
   readonly support: UpdateSupport;
@@ -50,9 +50,13 @@ export class UpdateManager {
       u.allowDowngrade = false;
       u.disableWebInstaller = true;
       u.forceDevUpdateConfig = testFeed && !app.isPackaged;
-      // Dosyalar GitHub'dan gelir; GitHub tek istekte birden çok bayt aralığını desteklemez
-      // (fark indirmesinde bu açık kalırsa her seferinde tam indirmeye düşer).
-      u.setFeedURL({ provider: 'generic', url: this.feedUrl, useMultipleRangeRequest: false });
+      // GitHub tek istekte birden çok bayt aralığını desteklemez; github sağlayıcısı bunu kendisi kapatır, yerel test
+      // adresinde de kapalı kalır (açık kalırsa fark indirmesi her seferinde tam indirmeye düşer).
+      u.setFeedURL(
+        testFeed
+          ? { provider: 'generic', url: this.feedUrl, useMultipleRangeRequest: false }
+          : { provider: 'github', ...UPDATE_REPO },
+      );
       u.on('download-progress', (p) => {
         const version = 'version' in this.state ? this.state.version : '';
         this.set({ kind: 'downloading', version, percent: p.percent, transferred: p.transferred, total: p.total });
