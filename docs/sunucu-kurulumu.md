@@ -111,8 +111,7 @@ Sunucu, Google'ın FCM HTTP v1 arayüzüne doğrudan gönderir. Firebase → Pro
 |---|---|---|---|
 | Veritabanı | `diskort-backup.timer`, her gece 04:00 → `infra/backup-db.sh` (tutarlı kopya + bütünlük kontrolü) | `/var/backups/diskort/` (`latest.db.gz` en yenisi) | 14 gün |
 | Dosya ekleri, profil fotoğrafları, geri bildirim görüntüleri, giriş sesleri, ses paneli sesleri | Aynı zamanlayıcı → `infra/backup-attachments.sh` (sabit bağlantıyla, ek yer kaplamaz) | `/var/backups/diskort/` (`attachments/`, `avatars/`, `feedback/`, `intro-sounds/`, `sounds/`) | silinen dosya 30 gün daha |
-| Sunucu dışı kopya | Windows Görev Zamanlayıcı → [`scripts/pull-db-backups.ps1`](../scripts/pull-db-backups.ps1), her gün 12:00 | `OneDrive\Yedekler\Diskort` | 60 gün |
-| Sunucu dışı kopya (Mac) | launchd `net.ziroo.diskort-yedek` → [`scripts/pull-db-backups.sh`](../scripts/pull-db-backups.sh), her gün 12:00; aynı sunucudaki Tussle'ın gece yedeğini de çeker | `~/Yedekler/Diskort`, Tussle `~/Yedekler/Tussle` | 60 gün; Tussle 14 gün (gizlilik sayfası) |
+| Sunucu dışı kopya | ziroo-edge `ops/yedek`: makine yedeği (`ziroo-yedek.timer` 04:40) şifreli paketler ve dosya aynası üretir, Mac launchd `net.ziroo.sunucu-yedek` 12:30 çeker ve iCloud'a kopyalar | `~/Yedekler/Sunucu/vps/<tarih>/veri-diskort.tar.gz.enc`, `~/Yedekler/Sunucu/ayna/diskort/` | DB 60 gün; dosyalar kaynakla aynı (`/var/backups/diskort`) |
 
 Notlar:
 
