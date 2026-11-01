@@ -94,7 +94,7 @@ Tümü `infra/.env` içinde. Kurulumun çalışması için yalnızca alan adlar�
 ### Telefon bildirimleri (FCM)
 
 Sunucu, Google'ın FCM HTTP v1 arayüzüne doğrudan gönderir. Firebase → Proje ayarları → Service accounts →
-"Generate new private key" ile alınan dosyayı `infra/secrets/fcm.json` olarak koy (`chmod 600`) ve `.env`'e
+"Generate new private key" ile alınan dosyayı `infra/secrets/fcm.json` olarak koy (`chmod 600`, sahibi `secrets` klasörüyle aynı) ve `.env`'e
 `FCM_SERVICE_ACCOUNT_FILE=/run/secrets/fcm.json` ekle.
 
 ## Bakım ve güvenlik
@@ -104,6 +104,38 @@ Sunucu, Google'ın FCM HTTP v1 arayüzüne doğrudan gönderir. Firebase → Pro
 - **SSH** yalnızca anahtarla açılır. Anahtar kaybolursa sağlayıcı panelindeki konsoldan girip
   `/etc/ssh/sshd_config.d/00-diskort-hardening.conf` dosyasını silmek şifre girişini geri açar.
 - Gizli değerler `infra/.env` (izinler 600) ve `infra/secrets/` altındadır; depoya girmez.
+
+### Root'suz çalıştırma
+
+API görüntüsü `node` (1000) kullanıcısıyla, yetkisiz (`cap_drop: ALL`, `no-new-privileges`) ve 1 GB bellek sınırıyla çalışır.
+Yeni kurulumda `.env`'deki `API_USER=1000:1000` ve `setup-vps.sh` bunu hazır getirir. Eski kurulumda `API_USER` yoktur ve
+kapsayıcı root'ta kalır (veri birimi, `infra/secrets` ve `/var/backups/diskort` root'a aittir); bu yüzden kod güncellemesi
+tek başına güvenlidir. Göç bir kez yapılır, API birkaç saniye kapanır:
+
+```bash
+cd /opt/diskort/infra
+bash backup-db.sh
+docker compose stop api
+chown -R 1000:1000 "$(docker volume inspect infra_diskort-data -f '{{.Mountpoint}}')" secrets
+chown 1000:1000 /var/backups/diskort
+echo 'API_USER=1000:1000' >> .env
+docker compose up -d --no-deps api
+```
+
+Eski bir `.env` yeni makineye taşınırsa önce `API_USER=1000:1000` satırını ekle: boş birim görüntüden `node` sahipliğiyle açılır, satır
+yoksa kapsayıcı root kalır ve veritabanını oluşturamaz.
+
+Sonra denetle: `docker compose exec -T api id` 1000 demeli, `docker compose ps api` `healthy` olmalı, yönetim panelinde
+yedek listesi ve bir dosya yüklemesi çalışmalı. Geri dönüş (yetkisiz root başkasının dosyasına yazamaz, sahiplik de geri alınır):
+
+```bash
+cd /opt/diskort/infra
+docker compose stop api
+chown -R 0:0 "$(docker volume inspect infra_diskort-data -f '{{.Mountpoint}}')" secrets
+chown 0:0 /var/backups/diskort
+sed -i '/^API_USER=/d' .env
+docker compose up -d --no-deps api
+```
 
 ## Yedekleme
 

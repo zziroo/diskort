@@ -24,6 +24,7 @@ docker run --rm -v "${volume}:/data" -v "$work:/restore" node:24-slim sh -c "
   if [ -f /data/diskort.db ]; then cp /data/diskort.db /restore/current.db; fi
   rm -f /data/diskort.db /data/diskort.db-wal /data/diskort.db-shm
   cp /restore/restore.db /data/diskort.db
+  chown --reference=/data /data/diskort.db
 "
 [ -f "$work/current.db" ] && cp "$work/current.db" "$safety" && chmod 600 "$safety" && echo "Önceki veritabanı saklandı: $safety"
 

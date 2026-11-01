@@ -38,6 +38,18 @@ services:
     network_mode: host
     restart: unless-stopped
     depends_on: [livekit]
+    # Görüntü node (1000) olarak çalışır; API_USER boşsa root'ta kalır, çünkü eski kurulumlarda /data, secrets ve
+    # yedek klasörü root'a aittir. Sahiplik göçü: docs/sunucu-kurulumu.md, "Root'suz çalıştırma"
+    user: ${API_USER:-0:0}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       NODE_ENV: production
       HOST: 127.0.0.1

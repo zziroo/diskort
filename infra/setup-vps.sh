@@ -28,6 +28,17 @@ sysctl --system >/dev/null
 
 cd "$(dirname "$0")"
 
+# API kapsayıcısı node (1000) olarak çalışır: gizli dosyaları okur, yedek listesini panelde gösterir. API_USER'sız
+# eski .env'de kapsayıcı yetkisiz root'tur ve başkasının klasörüne giremez, sahiplik göçle değişir.
+if [ ! -f .env ] || grep -q '^API_USER=' .env; then
+  mkdir -p secrets /var/backups/diskort
+  chown -R 1000:1000 secrets
+  chown 1000:1000 /var/backups/diskort
+  chmod 700 secrets /var/backups/diskort
+else
+  echo "UYARI: .env'de API_USER yok, API root'ta kalır. Göç: docs/sunucu-kurulumu.md, Root'suz çalıştırma"
+fi
+
 # Günlük veritabanı yedeği (her gece 04:00, /var/backups/diskort, 14 gün saklanır).
 # Birim dosyaları /opt/diskort yolunu varsayar.
 if [ "$(pwd)" = "/opt/diskort/infra" ]; then

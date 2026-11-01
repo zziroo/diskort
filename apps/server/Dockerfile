@@ -31,5 +31,9 @@ RUN npm install --no-save --no-package-lock @node-rs/argon2@2.2.1 sharp@0.35.5 &
 # dist: sunucu (index.js), geri bildirim aracı (feedback-cli.js) ve hesap yöneticisi aracı (admin-cli.js;
 # ortak parçalar chunk-*.js)
 COPY --from=build /repo/apps/server/dist ./dist
+# Yeni veri birimi bu sahiplikle açılır. Eski kurulumda birim root'tadır: compose'daki API_USER göç yapılana dek
+# root'ta tutar (docs/sunucu-kurulumu.md, "Root'suz çalıştırma")
+RUN mkdir -p /data && chown node:node /data
 VOLUME /data
+USER node
 CMD ["node", "--enable-source-maps", "dist/index.js"]
