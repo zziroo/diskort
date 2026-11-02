@@ -189,6 +189,8 @@ export interface DiskortBridge {
   download(url: string): Promise<void>;
   /** İndirme bitti (kaydetme penceresinde vazgeçilirse çağrılmaz). */
   onDownloadDone(cb: (result: DownloadResult) => void): () => void;
+  /** Bilgisayar uykudan döndü ya da ekran kilidi açıldı. */
+  onSystemResume(cb: () => void): () => void;
   /** Pencere renklerini temaya uydurur (Windows başlık çubuğu, açılış zemini) ve seçimi saklar. */
   setTheme(theme: AppTheme): void;
   /** Odaktaki metin kutusunda düzenleme komutu (yapıştırma sayfadan izinsiz yapılamaz). */

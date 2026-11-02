@@ -12,7 +12,8 @@ const IDLE_POLL_MS = 1_000;
  */
 export class IdleMonitor {
   private idle = false;
-  private locked = false;
+  private screenLocked = false;
+  private suspended = false;
   private timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly onChange: (idle: boolean) => void) {}
@@ -22,40 +23,55 @@ export class IdleMonitor {
   }
 
   start(): void {
-    powerMonitor.on('lock-screen', this.lock);
-    powerMonitor.on('suspend', this.lock);
-    powerMonitor.on('unlock-screen', this.unlock);
-    powerMonitor.on('resume', this.unlock);
+    powerMonitor.on('lock-screen', this.onLock);
+    powerMonitor.on('unlock-screen', this.onUnlock);
+    powerMonitor.on('suspend', this.onSuspend);
+    powerMonitor.on('resume', this.onResume);
     this.check();
   }
 
   stop(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    powerMonitor.off('lock-screen', this.lock);
-    powerMonitor.off('suspend', this.lock);
-    powerMonitor.off('unlock-screen', this.unlock);
-    powerMonitor.off('resume', this.unlock);
+    powerMonitor.off('lock-screen', this.onLock);
+    powerMonitor.off('unlock-screen', this.onUnlock);
+    powerMonitor.off('suspend', this.onSuspend);
+    powerMonitor.off('resume', this.onResume);
   }
 
-  private readonly lock = (): void => {
-    this.locked = true;
+  /** Kilit ve uyku ayrı izlenir: kilitliyken uykudan dönmek kilidi açmış saymaz */
+  private get away(): boolean {
+    return this.screenLocked || this.suspended;
+  }
+
+  private readonly onLock = (): void => {
+    this.screenLocked = true;
     this.check();
   };
 
-  private readonly unlock = (): void => {
-    this.locked = false;
+  private readonly onUnlock = (): void => {
+    this.screenLocked = false;
+    this.check();
+  };
+
+  private readonly onSuspend = (): void => {
+    this.suspended = true;
+    this.check();
+  };
+
+  private readonly onResume = (): void => {
+    this.suspended = false;
     this.check();
   };
 
   private check(): void {
     if (this.timer) clearTimeout(this.timer);
     this.update();
-    this.timer = setTimeout(() => this.check(), this.idle && !this.locked ? IDLE_POLL_MS : POLL_MS);
+    this.timer = setTimeout(() => this.check(), this.idle && !this.away ? IDLE_POLL_MS : POLL_MS);
   }
 
   private update(): void {
-    let idle = this.locked;
+    let idle = this.away;
     if (!idle) {
       try {
         idle = powerMonitor.getSystemIdleTime() >= IDLE_AFTER_SECONDS;

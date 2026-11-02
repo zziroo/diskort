@@ -34,6 +34,7 @@ const bridge: DiskortBridge = {
   setBadgeCount: (count) => ipcRenderer.send('app:badge-count', count),
   download: (url) => ipcRenderer.invoke('app:download', url),
   onDownloadDone: (cb) => listen<DownloadResult>('download:done', cb),
+  onSystemResume: (cb) => listen<void>('system:resume', () => cb()),
   edit: (command) => ipcRenderer.send('app:edit', command),
   setTheme: (theme) => ipcRenderer.send('app:set-theme', theme),
   idle: {

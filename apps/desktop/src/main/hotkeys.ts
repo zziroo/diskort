@@ -64,6 +64,12 @@ export class HotkeyManager {
     this.finishRecording(null);
   }
 
+  /** Basılı bilinen her şeyi bırakır: uyku/kilit sırasında bırakılan tuşun keyup olayı hiç gelmez. */
+  releaseAll(): void {
+    this.pressedKeys.clear();
+    this.releasePtt();
+  }
+
   stop(): void {
     if (this.started) this.hook?.uIOhook.stop();
     this.started = false;

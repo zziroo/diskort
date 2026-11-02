@@ -20,6 +20,19 @@ export function useDesktopIntegration(): void {
     return idle.onChange((value) => gateway.setIdle(value));
   }, []);
 
+  // Uyku/kilit dönüşü, ağın geri gelmesi, pencerenin öne gelmesi: bağlantı sessizce ölmüş olabilir, hemen yokla
+  useEffect(() => {
+    const resume = (): void => gateway.resume();
+    const off = bridge?.onSystemResume(resume);
+    window.addEventListener('online', resume);
+    window.addEventListener('focus', resume);
+    return () => {
+      off?.();
+      window.removeEventListener('online', resume);
+      window.removeEventListener('focus', resume);
+    };
+  }, []);
+
   // Etkinlik: ana süreç açık oyunları algılar (Windows), sunucuya iletilir; ayar kapalıyken liste boş gelir ve
   // etkinlik silinir. Yalnızca giriş yapılmışken taranır; giriş yapılınca yeniden bildirilir.
   const loggedIn = useSession((s) => s.token !== null);

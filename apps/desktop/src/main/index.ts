@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  powerMonitor,
   session,
   shell,
   systemPreferences,
@@ -216,6 +217,11 @@ function setupDisplayMedia(): void {
 
 // ---------- Pencere ----------
 
+/** Çöken arayüz en fazla bu kadar yeniden yüklenir (RENDERER_RELOAD_WINDOW_MS içinde), sonra bırakılır */
+const MAX_RENDERER_RELOADS = 3;
+const RENDERER_RELOAD_WINDOW_MS = 60_000;
+let rendererReloads: number[] = [];
+
 function createWindow(launch: LaunchMode = 'normal'): void {
   const windowColors = WINDOW_COLORS[savedWindowTheme()];
   mainWindow = new BrowserWindow({
@@ -268,6 +274,13 @@ function createWindow(launch: LaunchMode = 'normal'): void {
   mainWindow.on('closed', () => {
     mainWindow = null;
     inviteListenerReady = false;
+    resetRendererState();
+  });
+  // Yalnızca ana çerçevenin süreci (alt çerçeve/YouTube değil). Çökme raporu crashReport'ta ayrıca yazılır.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    if (quitting || details.reason === 'clean-exit') return;
+    resetRendererState();
+    reloadCrashedRenderer();
   });
   // Sayfa (yeniden) yüklenirken arayüz davetleri henüz dinlemiyor; hazır olunca kendisi ister
   mainWindow.webContents.on('did-start-loading', () => {
@@ -299,10 +312,30 @@ function createWindow(launch: LaunchMode = 'normal'): void {
   else void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
 }
 
+/** Arayüz yok: seste değiliz, rozeti tutan da kalmadı. Yeni arayüz açılınca durumu kendisi bildirir. */
+function resetRendererState(): void {
+  trayState = { ...trayState, connected: false };
+  updateTrayMenu();
+  // Windows: pencere kapanmışsa (mainWindow null) rozet görev çubuğu düğmesiyle birlikte gitmiştir
+  setUnreadBadge(0);
+}
+
+/** Çöken arayüzü yeniden yükler; sürekli çöküyorsa döngüye girmesin diye sınırlıdır. */
+function reloadCrashedRenderer(): void {
+  const now = Date.now();
+  rendererReloads = rendererReloads.filter((at) => now - at < RENDERER_RELOAD_WINDOW_MS);
+  if (rendererReloads.length >= MAX_RENDERER_RELOADS) return;
+  rendererReloads.push(now);
+  // Olay süreç temizliğinin ortasında gelir; yükleme sonraki turda başlar
+  setImmediate(() => mainWindow?.webContents.reload());
+}
+
 function showWindow(): void {
   if (!started) return; // açılış güncellemesi sürüyor
   if (!mainWindow) createWindow();
   if (mainWindow?.isMinimized()) mainWindow.restore();
+  // Sınıra takılıp bırakılmış çökük arayüz: kullanıcı pencereyi açmak istedi, boş kalmasın
+  if (mainWindow?.webContents.isCrashed()) mainWindow.webContents.reload();
   mainWindow?.show();
   mainWindow?.focus();
 }
@@ -478,6 +511,20 @@ function startIdleInstaller(): void {
   }, 60_000).unref();
 }
 
+// ---------- Uyku ve ekran kilidi ----------
+
+function registerPowerEvents(): void {
+  // Uyku/kilit sırasında bırakılan tuşun keyup olayı gelmez; bas-konuş mikrofonu açık kalmasın
+  const releaseHotkeys = (): void => hotkeys.releaseAll();
+  powerMonitor.on('suspend', releaseHotkeys);
+  powerMonitor.on('lock-screen', releaseHotkeys);
+  powerMonitor.on('resume', releaseHotkeys);
+  // Uykudan dönünce bağlantı ölmüş olabilir: arayüz gateway'i hemen yoklar
+  const notifyResume = (): void => mainWindow?.webContents.send('system:resume');
+  powerMonitor.on('resume', notifyResume);
+  powerMonitor.on('unlock-screen', notifyResume);
+}
+
 // ---------- Uygulama yaşam döngüsü ----------
 
 // İkinci açılış (ör. tarayıcıda "Uygulamada aç"): Windows/Linux bağlantıyı argüman olarak iletir
@@ -551,5 +598,6 @@ void app.whenReady().then(async () => {
   updates.startBackgroundChecks();
   startIdleInstaller();
   idleMonitor.start();
+  registerPowerEvents();
   activityMonitor.start();
 });
