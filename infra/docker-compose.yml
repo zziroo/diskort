@@ -23,6 +23,13 @@ services:
       - sed "s/__TURN_DOMAIN__/$$TURN_DOMAIN/" /etc/livekit.yaml > /tmp/livekit.yaml && exec /livekit-server --config /tmp/livekit.yaml
     network_mode: host
     restart: unless-stopped
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7880/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       # API anahtarı adı sabit "diskort"; gizli anahtar .env'den gelir
       LIVEKIT_KEYS: "diskort: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET gerekli}"

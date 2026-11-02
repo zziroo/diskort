@@ -1,9 +1,11 @@
 # Diskort'un HTTPS siteleri. Hem bu depodaki tek başına kurulum (infra/Caddyfile, `caddy` profili)
 # hem de üretimdeki ortak giriş kapısı (ziroo-edge) bu dosyayı /etc/caddy/diskort/diskort.caddy olarak içe aktarır.
 # Değişiklik `git pull` + `caddy reload` ile yayına girer (klasör bağlandığı için yeniden başlatma gerekmez).
+# `hsts` snippet'ini içe aktaran yapılandırma bu dosyadan önce tanımlar (infra/Caddyfile, ziroo-edge).
 
 # Otomatik Let's Encrypt sertifikalı HTTPS / WSS
 {$DISKORT_DOMAIN} {
+	import hsts
 	encode zstd gzip
 
 	# API, gerçek zamanlı gateway, sağlık ucu (/healthz, ziroo.net projelerinin ortak adı; Uptime Kuma buraya bakar),
@@ -37,6 +39,8 @@
 }
 
 {$LIVEKIT_DOMAIN} {
+	import hsts
+
 	# Yeniden yüklemede LiveKit sinyal WebSocket'lerini hemen kesme (sesli kanaldakiler kopmasın)
 	reverse_proxy 127.0.0.1:7880 {
 		stream_close_delay 5m
@@ -46,5 +50,6 @@
 # TURN alan adının sertifikasını almak için. Bu alan adına gelen 443 trafiği yukarıdaki
 # katman-4 kuralıyla LiveKit'e gider; bu blok yalnızca sertifika yönetimi içindir.
 {$TURN_DOMAIN} {
+	import hsts
 	respond "Diskort TURN" 404
 }

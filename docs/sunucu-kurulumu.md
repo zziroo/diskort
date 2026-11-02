@@ -48,8 +48,9 @@ yönlendirmesi). Hepsi host ağını kullanır.
 
 > **443'ü başka projelerle paylaşıyorsan:** `caddy` servisi yalnızca `.env`'deki `COMPOSE_PROFILES=caddy` ile
 > başlar. Sunucuda 443'ü başka bir Caddy tutuyorsa bu satırı sil, o Caddy'nin global ayarlarına
-> `infra/Caddyfile`'daki TURN/TLS (katman-4) bloğunu ekle ve `infra/caddy/` klasörünü bağlayıp
-> `diskort.caddy`'yi içe aktar. Diskort'un üretim sunucusu böyle çalışır (ayrı `ziroo-edge` projesi); orada
+> `infra/Caddyfile`'daki TURN/TLS (katman-4) bloğunu ekle, aynı dosyadaki `(hsts)` snippet'ini kopyala ve
+> `infra/caddy/` klasörünü bağlayıp `diskort.caddy`'yi snippet'ten sonra içe aktar. Diskort'un üretim sunucusu
+> böyle çalışır (ayrı `ziroo-edge` projesi); orada
 > `docker compose ... caddy` komutları çalıştırılmaz, Diskort site değişikliği `git pull` +
 > `bash /opt/ziroo-edge/reload.sh` ile yayına girer.
 
@@ -62,7 +63,8 @@ cd /opt/diskort && git pull && cd infra && docker compose up -d --build
 - Yalnızca API'yi güncellemek için `docker compose up -d --no-deps --build api` yeterlidir; süren görüşmeler kopmaz.
 - `infra/caddy/diskort.caddy` değiştiyse `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`
   yeterlidir (kesinti yok). `infra/Caddyfile` değiştiyse Caddy'yi yeniden başlat (`docker compose restart caddy`);
-  dosya tek başına bağlandığı için `git pull` sonrası eski hâlini görmeye devam eder.
+  dosya tek başına bağlandığı için `git pull` sonrası eski hâlini görmeye devam eder. İkisi birlikte değiştiyse (ör. `hsts`
+  snippet'i) reload düşer: kimse seste değilken yeniden başlat.
 - LiveKit ya da Caddy yeniden başlatılınca süren görüşmeler birkaç saniye kopar; kimse seste değilken yap.
 - Şema değiştiren güncellemelerden önce `bash infra/backup-db.sh` ile yedek al.
 

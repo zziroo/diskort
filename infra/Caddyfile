@@ -20,6 +20,12 @@
 	}
 }
 
+# HSTS: tarayıcı bu alan adlarına bir daha düz HTTP ile gelmez. Sitelerin içe aktarımından önce tanımlı olmalı;
+# üretimde aynı snippet ziroo-edge'den gelir. includeSubDomains ve preload bilerek yok.
+(hsts) {
+	header Strict-Transport-Security "max-age=31536000"
+}
+
 # Siteler: infra/caddy/diskort.caddy (üretimde aynı dosyayı ziroo-edge içe aktarır)
 import /etc/caddy/diskort/diskort.caddy
 

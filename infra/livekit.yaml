@@ -1,5 +1,8 @@
 # Üretim LiveKit yapılandırması (VPS). Anahtarlar LIVEKIT_KEYS ortam değişkeninden gelir.
 port: 7880
+# HTTP ve Prometheus portları yalnız yerelde dinler. rtc.tcp_port, TURN UDP ve TURN tls_port bu ayara uymaz.
+bind_addresses:
+  - 127.0.0.1
 
 rtc:
   tcp_port: 7881
@@ -43,9 +46,10 @@ webhook:
 
 # Yönetim paneli ölçümleri (Prometheus): bayt/paket, kayıp, NACK/PLI, oda/katılımcı/iz sayıları, LiveKit
 # sürecinin CPU/belleği. API 127.0.0.1:6789/metrics'ten 10 sn'de bir okur (LIVEKIT_METRICS_URL).
-# LiveKit bu portu (7880 gibi) tüm arayüzlerde açar; dışarıdan erişim güvenlik duvarıyla kapalıdır (ufw
-# yalnızca 22, 80, 443, 7881/tcp, 3478/udp, 50000-60000/udp'ye izin verir). Bu ayar LiveKit yeniden
-# başlatılınca etkinleşir (görüşmeler birkaç saniye kopar); o zamana kadar panel "metrikler kapalı" gösterir.
+# Bu port (7880 gibi) bind_addresses gereği yalnız 127.0.0.1'de açılır. Bütün arayüzlerde açılan 7881, 3478 ve
+# 5349 için dışarıdan erişimi güvenlik duvarı belirler (ufw yalnızca 22, 80, 443, 7881/tcp, 3478/udp,
+# 50000-60000/udp'ye izin verir). Bu ayar LiveKit yeniden başlatılınca etkinleşir (görüşmeler birkaç saniye
+# kopar); o zamana kadar panel "metrikler kapalı" gösterir.
 prometheus:
   port: 6789
 
