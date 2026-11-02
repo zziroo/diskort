@@ -129,6 +129,11 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
   const users = useGuild((s) => s.users);
   const messages = useMessages((s) => (id ? s.channels[id]?.messages : undefined) ?? EMPTY);
   const loaded = useMessages((s) => (id ? s.channels[id]?.loaded : false) ?? false);
+  // Yeniden bağlanınca tazeleme bitene kadar güncel sayılmaz: ekrana gelmemiş mesajlar okundu sayılmasın
+  const upToDate = useMessages((s) => {
+    const c = id ? s.channels[id] : undefined;
+    return Boolean(c?.loaded && !c.stale);
+  });
   const hasMore = useMessages((s) => (id ? s.channels[id]?.hasMore : true) ?? true);
   const loading = useMessages((s) => (id ? s.channels[id]?.loading : false) ?? false);
   const lastId = useGuild((s) => (id ? s.lastMessageIds[id] : undefined));
@@ -151,16 +156,14 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
   // Kartın bağlamı: DM'de sunucu yok (rol, rol rengi, yönetim gösterilmez); kanalda o sunucu
   const profileContext = useChannelContext(id);
   const [editing, setEditing] = useState<LocalMessage | null>(null);
-  // Geçmiş yüklenemedi (bağlantı yok): iskelet yerine hata ve "Tekrar dene"
-  const [failed, setFailed] = useState(false);
+  // Geçmiş yüklenemedi (bağlantı yok, otomatik denemeler bitti): iskelet yerine hata ve "Tekrar dene"
+  const failed = useMessages((s) => (id ? s.channels[id]?.failed : false) ?? false);
   const list = useRef<FlatList<Row>>(null);
   const keyboard = useKeyboardInset();
   const inVoice = useVoice((s) => s.status !== 'idle');
 
   const load = useCallback(() => {
-    if (!id) return;
-    setFailed(false);
-    void loadInitial(id).then(() => setFailed(!useMessages.getState().channels[id]?.loaded));
+    if (id) void loadInitial(id);
   }, [id]);
   useEffect(load, [load]);
 
@@ -183,8 +186,8 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
 
   // Ekran açık, uygulama önde ve en alttayken okundu say
   useEffect(() => {
-    if (id && loaded && watching && lastId && Number(lastId) > Number(readId ?? 0)) ackChannel(id);
-  }, [id, loaded, watching, lastId, readId]);
+    if (id && upToDate && watching && lastId && Number(lastId) > Number(readId ?? 0)) ackChannel(id);
+  }, [id, upToDate, watching, lastId, readId]);
 
   // Kanal açıldığında okunmamış ilk mesajın üstüne "YENİ" ayracı konur (masaüstündeki gibi);
   // bakmıyorken (aşağıda değilken ya da uygulama arkadayken) gelen ilk mesaj için de.
@@ -196,7 +199,7 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
   if (!dividerDecided.current && readAtOpen.current === undefined) readAtOpen.current = readId;
   const [dividerId, setDividerId] = useState<string | null>(null);
   useEffect(() => {
-    if (!loaded || !self || !guildReady) return;
+    if (!upToDate || !self || !guildReady) return;
     if (!dividerDecided.current) {
       dividerDecided.current = true;
       const first = messages.find(
@@ -209,7 +212,7 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
       const first = messages.find((m) => !m.status && m.authorId !== self.id && Number(m.id) > Number(readId ?? 0));
       if (first) setDividerId(first.id);
     }
-  }, [loaded, messages, watching, dividerId, lastId, readId, self, guildReady]);
+  }, [upToDate, messages, watching, dividerId, lastId, readId, self, guildReady]);
 
   // Markdown yalnızca mesaj içindeki @bahsetmeleri çözerken kullanıcıya bakar (ad, kimlik); bir üyenin
   // rolü/çevrimiçiliği/avatarı gibi bahsetmeyle ilgisiz alanları değişince `users` yine de baştan kurulur
@@ -291,7 +294,7 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
   const armed = useRef(false);
   const fresh = useMemo(() => {
     const keys = new Set<string>();
-    if (!armed.current || !loaded) return keys;
+    if (!armed.current || !upToDate) return keys;
     const prev = seen.current;
     let lastKnown = -1;
     messages.forEach((m, i) => {
@@ -306,11 +309,11 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
       keys.add(keyOf(m));
     }
     return keys;
-  }, [messages, loaded, self?.id]);
+  }, [messages, upToDate, self?.id]);
   useEffect(() => {
     seen.current = new Map(messages.map((m) => [keyOf(m), m]));
-    armed.current = loaded;
-  }, [messages, loaded]);
+    armed.current = upToDate;
+  }, [messages, upToDate]);
 
   // Aşağıdan ayrılınca gelen (başkalarının) mesajları sayılır: aşağı atla düğmesindeki sayı
   const [leftAt, setLeftAt] = useState<string | null>(null);
@@ -452,6 +455,11 @@ export function ChannelChat({ id, onOpenPanel }: { id: string; onOpenPanel: () =
       {header}
       <ConnectionBanner />
       {dm ? <DmCallStrip dmId={dm.id} /> : null}
+      {failed && loaded && !loading ? (
+        <Pressable style={styles.refreshFailed} onPress={load} accessibilityRole="button">
+          <Text style={styles.refreshFailedText}>Mesajlar yenilenemedi. Yeniden denemek için dokun.</Text>
+        </Pressable>
+      ) : null}
       <View style={styles.listArea}>
         {failed && !loaded && !loading ? (
           <ErrorState text="Mesajlar yüklenemedi. Bağlantını denetleyip yeniden dene." onRetry={load} />
@@ -1048,6 +1056,15 @@ const styles = createStyles(() => ({
   },
   headerTitle: { flex: 1, alignSelf: 'stretch', marginLeft: space.xs },
   listArea: { flex: 1 },
+  refreshFailed: {
+    backgroundColor: colors.active,
+    paddingVertical: 6,
+    paddingHorizontal: space.md,
+    marginHorizontal: space.sm,
+    marginTop: space.xs,
+    borderRadius: radius.md,
+  },
+  refreshFailedText: { color: colors.muted, fontSize: font.small - 0.5, textAlign: 'center' },
   loading: { minHeight: 60, justifyContent: 'center', paddingBottom: space.sm },
   title: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   titleText: { color: colors.head, fontSize: 18, fontWeight: '700', flexShrink: 1 },

@@ -39,7 +39,11 @@ const hasFiles = (e: DragEvent): boolean => e.dataTransfer.types.includes('Files
  */
 export function TextChannelView({ channel, dm }: { channel: Pick<Channel, 'id' | 'name'>; dm?: DmChannel }) {
   const self = useSession((s) => s.user)!;
-  const loaded = useMessages((s) => s.channels[channel.id]?.loaded ?? false);
+  // Yeniden bağlanınca tazeleme bitene kadar yüklü sayılmaz: ekrana gelmemiş mesajlar okundu sayılmasın
+  const loaded = useMessages((s) => {
+    const c = s.channels[channel.id];
+    return Boolean(c?.loaded && !c.stale);
+  });
   const lastId = useGuild((s) => s.lastMessageIds[channel.id]);
   const readId = useGuild((s) => s.readStates[channel.id]);
   const [atBottom, setAtBottom] = useState(true);

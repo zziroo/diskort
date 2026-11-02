@@ -19,7 +19,7 @@ import { env, type LocalFile } from './env';
 import { recentClientErrors } from './errors';
 import { gateway } from './gateway';
 import { useGuild } from './guild';
-import { useSession } from './session';
+import { sessionUserChanged, useSession } from './session';
 import { formatBytes, sendFile } from './uploads';
 
 export const feedbackApi = {
@@ -280,5 +280,5 @@ gateway.on((msg: GatewayServerMessage) => {
 
 // Oturum değişince (çıkış / başka hesap) temizlenir
 useSession.subscribe((s, prev) => {
-  if (s.token !== prev.token) useFeedback.setState(initial());
+  if (sessionUserChanged(s, prev)) useFeedback.setState(initial());
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClientMessage, GatewayServerMessage, User } from '@diskort/shared';
-import { configureClient, gateway, tokenExpiresAt, useSession } from '../src';
+import { ApiError, api, configureClient, gateway, tokenExpiresAt, useSession } from '../src';
 
 const b64url = (obj: unknown): string =>
   btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -81,6 +81,19 @@ describe('oturum jetonu', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toContain('/api/me');
     expect(useSession.getState().token).toBeNull();
+  });
+
+  it('yanıt beklenirken jeton yenilendiyse eski jetonun 401 yanıtı oturumu kapatmaz', async () => {
+    let resolve!: (r: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => (resolve = r))));
+    useSession.getState().setSession('t1', user);
+    const pending = api.listBlocks().catch((e: unknown) => e);
+    useSession.getState().setSession('t2', user);
+    resolve(new Response(JSON.stringify({ error: 'unauthorized', message: 'Oturum geçersiz' }), { status: 401 }));
+    const err = await pending;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 401 });
+    expect(useSession.getState().token).toBe('t2');
   });
 
   it('cihaz saati ilerideyse (sunucu 200 döner) oturum kalır, sonra yeniden bakılır', async () => {

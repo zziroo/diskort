@@ -78,8 +78,22 @@ export const CLIENT_FEATURES: readonly string[] = [
 /** Her isteğe eklenen özellik başlığı (bugün sunucuda buna bakan bir uç yok; eski bir özelliği ayırt etmek için) */
 export const clientFeatureHeaders = (): Record<string, string> => ({ [CLIENT_FEATURES_HEADER]: CLIENT_FEATURES.join(',') });
 
-/** Oturum jetonuyla JSON isteği; hata durumunda ApiError atar. */
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** Mesaj sayfası isteklerinin üst sınırı: uyku sırasında askıda kalan istek kanalı meşgul tutmasın */
+const MESSAGE_PAGE_TIMEOUT_MS = 20_000;
+
+const networkError = (): ApiError =>
+  new ApiError(0, 'network', 'Sunucuya ulaşılamadı. Adresi ve internet bağlantını kontrol et.');
+
+/** Oturum jetonuyla JSON isteği; hata durumunda ApiError atar. `timeoutMs` içinde bitmeyen istek ağ hatası sayılır. */
+export async function request<T>(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+  if (timeoutMs === undefined) return send<T>(method, path, body);
+  // AbortSignal.timeout React Native'de (Hermes) yok
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  return send<T>(method, path, body, abort.signal).finally(() => clearTimeout(timer));
+}
+
+async function send<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const token = useSession.getState().token;
   const headers: Record<string, string> = clientFeatureHeaders();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -91,16 +105,19 @@ export async function request<T>(method: string, path: string, body?: unknown): 
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   } catch {
-    throw new ApiError(0, 'network', 'Sunucuya ulaşılamadı. Adresi ve internet bağlantını kontrol et.');
+    throw networkError();
   }
 
   if (res.status === 204) return undefined as T;
   const data = (await res.json().catch(() => null)) as unknown;
+  if (signal?.aborted) throw networkError(); // süre gövde okunurken doldu: yarım yanıt boş sayılmasın
   if (!res.ok) {
     const err = data as Partial<ApiErrorBody> | null;
-    if (res.status === 401 && token) useSession.getState().logout();
+    // Yanıtı beklerken jeton yenilendiyse eski jetonun reddi oturumu kapatmaz
+    if (res.status === 401 && token && useSession.getState().token === token) useSession.getState().logout();
     throw new ApiError(res.status, err?.error ?? 'error', err?.message ?? `İstek başarısız (${res.status}).`);
   }
   return data as T;
@@ -194,7 +211,7 @@ export const api = {
     if (before) query.set('before', before);
     if (limit) query.set('limit', String(limit));
     const qs = query.toString();
-    return request<Message[]>('GET', `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`);
+    return request<Message[]>('GET', `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`, undefined, MESSAGE_PAGE_TIMEOUT_MS);
   },
   sendMessage: (
     channelId: string,

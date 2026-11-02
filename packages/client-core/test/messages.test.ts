@@ -1,12 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Attachment, GatewayServerMessage, Message } from '@diskort/shared';
 import {
+  ackChannel,
   addFiles,
+  api,
+  ApiError,
   configureClient,
   discardMessage,
   EMOJI_CATEGORIES,
+  flushAcks,
   gateway,
   loadInitial,
+  loadOlder,
   retryMessage,
   sendMessage,
   toggleReaction,
@@ -357,5 +362,427 @@ describe('yeniden bağlanınca tazeleme', () => {
     resolve(new Response(JSON.stringify(['10', '11', '12'].map((id) => message(id, id))), { status: 200 }));
     await done;
     expect(shown()).toEqual(['10', '11', '12', '14']);
+  });
+});
+
+describe('uyku ve yeniden bağlanma', () => {
+  const NETWORK_ERROR = 'Sunucuya ulaşılamadı. Adresi ve internet bağlantını kontrol et.';
+  const ready = (readStates: Record<string, string> = {}): void =>
+    receive({
+      t: 'READY',
+      d: {
+        user: me,
+        users: [],
+        guilds: [],
+        primaryGuildId: null,
+        voiceStates: [],
+        online: [],
+        lastMessageIds: {},
+        readStates,
+        mentionCounts: {},
+        attachmentMaxBytes: 1,
+        dms: [
+          {
+            id: 'c1',
+            participantIds: ['u1', 'u2'],
+            group: false,
+            name: null,
+            ownerId: null,
+            createdAt: 1,
+            lastMessageId: null,
+            lastActivityAt: 1,
+          },
+        ],
+      },
+    });
+  const pageOf = (list: string[]): Response => new Response(JSON.stringify(list.map((id) => message(id, id))), { status: 200 });
+  const cached = (list: string[], hasMore = false): void =>
+    useMessages.setState({
+      channels: { c1: { messages: list.map((id) => message(id, id)), hasMore, loading: false, loaded: true } },
+    });
+  const channel = () => useMessages.getState().channels.c1!;
+  const shown = () => channel().messages.map((m) => m.id);
+  /** Yanıtları testin elinden verilen fetch */
+  const held = () => {
+    const replies: ((r: Response | Error) => void)[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () => new Promise<Response>((resolve, reject) => replies.push((r) => (r instanceof Error ? reject(r) : resolve(r)))),
+      ),
+    );
+    return replies;
+  };
+  const offline = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('ağ yok');
+      }),
+    );
+  const calls = () => vi.mocked(fetch).mock.calls.length;
+  const ackCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/ack'));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useGuild.setState({ lastMessageIds: {}, readStates: {} });
+  });
+
+  afterEach(() => {
+    useSession.getState().logout(); // bekleyen denemeler sonraki teste kalmasın
+    vi.useRealTimers();
+  });
+
+  it('READY içeriği ekranda bırakır, kanal yüklü kalır; tazelenince güncel sayılır', async () => {
+    cached(['1', '2']);
+    const replies = held();
+    ready();
+    expect(channel()).toMatchObject({ loaded: true, stale: true, loading: true });
+    expect(shown()).toEqual(['1', '2']);
+    // Tazeleme sürerken gelen mesaj düşmez
+    receive({ t: 'MESSAGE_CREATE', d: message('4', 'yeni') });
+    expect(shown()).toEqual(['1', '2', '4']);
+
+    replies[0]!(pageOf(['1', '2', '3']));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(channel()).toMatchObject({ loaded: true, stale: false, loading: false });
+    expect(shown()).toEqual(['1', '2', '3', '4']);
+    expect(calls()).toBe(1);
+  });
+
+  it('bilinmeyen kanal yine önbellekten düşer', () => {
+    useMessages.setState({ channels: { gitti: { messages: [], hasMore: false, loading: false, loaded: true } } });
+    ready();
+    expect(useMessages.getState().channels.gitti).toBeUndefined();
+  });
+
+  it('eski mesajlar yüklenirken gelen READY: yükleme bitince tazeleme yapılır', async () => {
+    cached(['5', '6'], true);
+    const replies = held();
+    const older = loadOlder('c1');
+    ready();
+    expect(calls()).toBe(1); // süren istek bitmeden ikincisi başlamaz
+    expect(channel()).toMatchObject({ loaded: true, stale: true });
+
+    replies[0]!(pageOf(['3', '4']));
+    await older;
+    expect(calls()).toBe(2);
+    expect(vi.mocked(fetch).mock.calls[1]![0]).toBe('http://sunucu.test/api/channels/c1/messages');
+    expect(channel().stale).toBe(true);
+
+    replies[1]!(pageOf(['3', '4', '5', '6', '7']));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(channel()).toMatchObject({ stale: false, loading: false });
+    expect(shown()).toEqual(['3', '4', '5', '6', '7']);
+  });
+
+  it('eski mesaj yüklemesi başarısız olsa da READY sonrası tazeleme yapılır', async () => {
+    cached(['5', '6'], true);
+    const replies = held();
+    const older = loadOlder('c1');
+    ready();
+    replies[0]!(new TypeError('ağ yok'));
+    await older;
+    expect(errors).toEqual([NETWORK_ERROR]);
+    expect(calls()).toBe(2);
+    replies[1]!(pageOf(['5', '6', '7']));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(channel()).toMatchObject({ stale: false, loading: false });
+  });
+
+  it('tazeleme sürerken gelen ikinci READY: ilk yanıt tazelemeyi bitirmez, bir kez daha istenir', async () => {
+    cached(['1']);
+    const replies = held();
+    ready();
+    ready();
+    expect(calls()).toBe(1);
+    replies[0]!(pageOf(['1', '2']));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls()).toBe(2);
+    expect(channel()).toMatchObject({ stale: true, loading: true });
+    replies[1]!(pageOf(['1', '2', '3']));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls()).toBe(2);
+    expect(channel()).toMatchObject({ stale: false, loading: false });
+  });
+
+  it('tazeleme başarısızsa artan aralıklarla yeniden dener, sonunda bir kez bildirip vazgeçer', async () => {
+    cached(['1', '2']);
+    offline();
+    ready();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(calls()).toBe(1);
+    expect(channel()).toMatchObject({ loaded: true, stale: true, loading: false });
+    expect(channel().failed).toBeFalsy();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls()).toBe(2);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls()).toBe(3);
+    expect(errors).toEqual([]); // ara denemeler sessiz
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls()).toBe(4);
+    expect(channel()).toMatchObject({ loaded: true, stale: true, failed: true, loading: false });
+    expect(shown()).toEqual(['1', '2']);
+    expect(errors).toEqual([NETWORK_ERROR]);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(calls()).toBe(4);
+
+    // "Tekrar dene" tazelemeyi tamamlar
+    vi.stubGlobal('fetch', vi.fn(async () => pageOf(['1', '2', '3'])));
+    await loadInitial('c1');
+    expect(channel()).toMatchObject({ stale: false, failed: false });
+    expect(shown()).toEqual(['1', '2', '3']);
+  });
+
+  it('vazgeçilmiş kanalda eski mesajlar yüklenir, bu tazelemeyi yeniden başlatmaz', async () => {
+    cached(['5', '6'], true);
+    offline();
+    ready();
+    await vi.advanceTimersByTimeAsync(2_000 + 5_000 + 15_000);
+    expect(channel().failed).toBe(true);
+
+    vi.stubGlobal('fetch', vi.fn(async () => pageOf(['3', '4'])));
+    await loadOlder('c1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls()).toBe(1);
+    expect(shown()).toEqual(['3', '4', '5', '6']);
+    expect(channel()).toMatchObject({ stale: true, failed: true });
+  });
+
+  it('otomatik deneme başarılı olursa başka deneme ve bildirim olmaz', async () => {
+    cached(['1']);
+    offline();
+    ready();
+    await vi.advanceTimersByTimeAsync(0);
+    const ok = vi.fn(async () => pageOf(['1', '2']));
+    vi.stubGlobal('fetch', ok);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(ok).toHaveBeenCalledTimes(1);
+    expect(channel()).toMatchObject({ stale: false, failed: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(ok).toHaveBeenCalledTimes(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('elle yükleme deneme sayısını baştan başlatır, bekleyen denemenin yerine geçer', async () => {
+    useMessages.setState({ channels: {} });
+    offline();
+    await loadInitial('c1');
+    await vi.advanceTimersByTimeAsync(2_000 + 5_000);
+    expect(calls()).toBe(3);
+    await loadInitial('c1');
+    expect(calls()).toBe(4);
+    await vi.advanceTimersByTimeAsync(15_000); // eski beklemedeki deneme gelmedi
+    expect(calls()).toBe(6);
+    await vi.advanceTimersByTimeAsync(5_000 + 15_000);
+    expect(calls()).toBe(7);
+    expect(channel()).toMatchObject({ loaded: false, failed: true });
+    expect(errors).toEqual([NETWORK_ERROR]);
+  });
+
+  it('bekleyen deneme eski mesaj yüklemesine denk gelirse yüklemeden sonra yapılır', async () => {
+    cached(['5', '6'], true);
+    offline();
+    ready();
+    await vi.advanceTimersByTimeAsync(0);
+    const replies = held();
+    const older = loadOlder('c1');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(calls()).toBe(1);
+    replies[0]!(pageOf(['3', '4']));
+    await older;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(calls()).toBe(2);
+    replies[1]!(pageOf(['3', '4', '5', '6', '7']));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(channel()).toMatchObject({ stale: false });
+  });
+
+  it('kanal önbellekten çıktıysa ya da hesap değiştiyse deneme yapılmaz', async () => {
+    cached(['1']);
+    offline();
+    ready();
+    await vi.advanceTimersByTimeAsync(0);
+    receive({ t: 'DM_CHANNEL_DELETE', d: { id: 'c1' } });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls()).toBe(1);
+    expect(useMessages.getState().channels.c1).toBeUndefined();
+
+    cached(['1']);
+    offline();
+    ready();
+    await vi.advanceTimersByTimeAsync(0);
+    useSession.getState().setSession('baska', { ...me, id: 'u2' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls()).toBe(1);
+    expect(useMessages.getState().channels).toEqual({});
+    expect(errors).toEqual([]);
+  });
+
+  it('yanıtı beklenirken kanal çıktıysa önbelleğe geri yazılmaz', async () => {
+    cached(['1']);
+    const replies = held();
+    ready();
+    receive({ t: 'DM_CHANNEL_DELETE', d: { id: 'c1' } });
+    replies[0]!(new TypeError('ağ yok'));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls()).toBe(1);
+    expect(useMessages.getState().channels.c1).toBeUndefined();
+  });
+
+  it('uykuda askıda kalan sayfa isteği 20 saniyede ağ hatası olur, kanal meşgul kalmaz', async () => {
+    useMessages.setState({ channels: {} });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) =>
+            init.signal!.addEventListener('abort', () => reject(new DOMException('iptal', 'AbortError'))),
+          ),
+      ),
+    );
+    void loadInitial('c1');
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(channel().loading).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(channel().loading).toBe(false);
+    expect(errors).toEqual([]);
+
+    const err = api.listMessages('c1').catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await err).toBeInstanceOf(ApiError);
+    expect(await err).toMatchObject({ status: 0, code: 'network', message: NETWORK_ERROR });
+  });
+
+  it('süre gövde okunurken dolarsa da ağ hatasıdır; boş yanıt sayılmaz', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => ({
+        ok: true,
+        status: 200,
+        json: () => new Promise((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(new Error('iptal')))),
+      })),
+    );
+    const err = api.listMessages('c1').catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await err).toMatchObject({ status: 0, code: 'network' });
+  });
+
+  it('süre sınırı yalnızca sayfa isteklerinde: POST iptal sinyali taşımaz', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
+    await api.ack('c1', '5');
+    expect(vi.mocked(fetch).mock.calls[0]![1]!.signal).toBeUndefined();
+    await api.listMessages('c1').catch(() => undefined);
+    expect(vi.mocked(fetch).mock.calls[1]![1]!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('okundu bilgisi gidene kadar bekler: başarısızsa korunur, READY onu yeniden gönderir', async () => {
+    useGuild.setState({ lastMessageIds: { c1: '9' } });
+    offline();
+    ackChannel('c1');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ackCalls()).toHaveLength(1);
+    flushAcks(); // telefon arka plana geçti: hâlâ ağ yok
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ackCalls()).toHaveLength(2);
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/ack') ? new Response(null, { status: 204 }) : pageOf([]))));
+    ready({ c1: '5' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ackCalls()).toHaveLength(1);
+    expect(JSON.parse(ackCalls()[0]![1]!.body as string)).toEqual({ messageId: '9' });
+    // Sunucunun geride kalan bilgisi yerel okunmayı geri almaz
+    expect(useGuild.getState().readStates.c1).toBe('9');
+
+    // Gitti: bir daha gönderilmez
+    flushAcks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ackCalls()).toHaveLength(1);
+  });
+
+  it('kalıcı hatada (ör. kanal silinmiş) yeniden denenmez, hemen vazgeçilir', async () => {
+    cached(['1']);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: 'not_found', message: 'Kanal bulunamadı.' }), { status: 404 })),
+    );
+    ready();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls()).toBe(1);
+    expect(channel()).toMatchObject({ stale: true, failed: true, loading: false });
+    expect(errors).toEqual(['Kanal bulunamadı.']);
+  });
+
+  it('erişimi giden kanalın okundu bilgisi beklemede kalmaz', async () => {
+    useGuild.setState({ lastMessageIds: { c1: '9' } });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: 'forbidden', message: 'Yetkin yok.' }), { status: 403 })),
+    );
+    ackChannel('c1');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ackCalls()).toHaveLength(1);
+    flushAcks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ackCalls()).toHaveLength(1);
+  });
+
+  it('gönderilen okundu bilgisi sürerken daha yenisi geldiyse yenisi bekler', async () => {
+    useGuild.setState({ lastMessageIds: { c1: '9' } });
+    const replies = held();
+    ackChannel('c1');
+    await vi.advanceTimersByTimeAsync(500);
+    useGuild.setState({ lastMessageIds: { c1: '10' } });
+    ackChannel('c1');
+    replies[0]!(new Response(null, { status: 204 }));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ackCalls().map(([, init]) => JSON.parse(init!.body as string).messageId)).toEqual(['9', '10']);
+    flushAcks(); // 10'un yanıtı gelmedi: hâlâ bekliyor
+    expect(ackCalls()).toHaveLength(3);
+  });
+
+  it('hesap değişince bekleyen okundu bilgisi düşer', async () => {
+    useGuild.setState({ lastMessageIds: { c1: '9' } });
+    offline();
+    ackChannel('c1');
+    await vi.advanceTimersByTimeAsync(500);
+    useSession.getState().setSession('baska', { ...me, id: 'u2' });
+    flushAcks();
+    expect(ackCalls()).toHaveLength(1);
+  });
+
+  it('READY okunma durumlarını kanal kanal birleştirir: büyük olan kalır', () => {
+    useMessages.setState({ channels: {} });
+    useGuild.setState({ readStates: { c1: '9', c2: '100', c3: '4' } });
+    ready({ c1: '12', c2: '99', c4: '1' });
+    expect(useGuild.getState().readStates).toEqual({ c1: '12', c2: '100', c3: '4', c4: '1' });
+  });
+});
+
+describe('oturum jetonu yenilenince', () => {
+  const filled = (): void =>
+    useMessages.setState({
+      channels: { c1: { messages: [message('1', 'merhaba')], hasMore: false, loading: false, loaded: true } },
+      mentionCounts: { c1: 2 },
+    });
+
+  it('mesaj önbelleği korunur: kanal iskelette kalmaz', () => {
+    filled();
+    receive({ t: 'SESSION_TOKEN', d: { token: 'yenilenen' } });
+    expect(useMessages.getState().channels.c1).toMatchObject({ loaded: true, messages: [{ id: '1' }] });
+    expect(useMessages.getState().mentionCounts.c1).toBe(2);
+  });
+
+  it('başka hesapla girilince önbellek silinir', () => {
+    filled();
+    useSession.getState().setSession('baska', { ...me, id: 'u2' });
+    expect(useMessages.getState().channels).toEqual({});
+  });
+
+  it('çıkışta önbellek silinir', () => {
+    filled();
+    useSession.getState().logout();
+    expect(useMessages.getState().channels).toEqual({});
   });
 });

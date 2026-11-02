@@ -341,6 +341,11 @@ export const useGuild = create<GuildStore>()((set) => ({
       const profiles = byId(p.users);
       // Listedeki profiller (bekleyen istekler READY'nin users'ında olmayabilir)
       for (const e of [...friends.friends, ...friends.incoming, ...friends.outgoing]) profiles[e.userId] ??= e.user;
+      // Okunma yalnızca ileri gider: sunucu, henüz ulaşmamış okundu bilgimizi bilmiyor olabilir
+      const readStates = { ...p.readStates };
+      for (const [channelId, lastReadId] of Object.entries(s.readStates)) {
+        if (Number(lastReadId) > Number(readStates[channelId] ?? 0)) readStates[channelId] = lastReadId;
+      }
       const core: Core = { guilds, guildOrder, profiles, activeGuildId };
       return {
         ...derive({ ...s, activeGuildId: null }, core, { members: true, channels: true, profiles: true }, friendIds),
@@ -356,7 +361,7 @@ export const useGuild = create<GuildStore>()((set) => ({
         presences: presencesOf(p.online, p.presences),
         selfStatus: p.status ?? null,
         lastMessageIds: p.lastMessageIds,
-        readStates: p.readStates,
+        readStates,
         attachmentMaxBytes: p.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
       };
     }),

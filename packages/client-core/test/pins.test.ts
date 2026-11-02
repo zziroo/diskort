@@ -103,6 +103,24 @@ describe('sabitlenmiş mesajlar', () => {
     expect(usePins.getState().unseen.c2).toBe(true);
   });
 
+  it('eskimiş liste yenilenemezse eskimiş kalır: sonraki açılışta yeniden istenir', async () => {
+    usePins.setState({
+      channels: { c1: { items: [pinned('5', 'bir', 10)], loaded: true, loading: false, stale: true } },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => json({ error: 'server', message: 'Sunucu hatası.' }, 500)));
+    openPins('c1')();
+    await flush();
+    expect(usePins.getState().channels.c1).toMatchObject({ loading: false, stale: true });
+    expect(usePins.getState().channels.c1!.items.map((m) => m.id)).toEqual(['5']);
+    expect(errors).toEqual(['Sunucu hatası.']);
+
+    vi.stubGlobal('fetch', vi.fn(async () => json([pinned('6', 'iki', 20)])));
+    openPins('c1')();
+    await flush();
+    expect(usePins.getState().channels.c1).toMatchObject({ loading: false, stale: false });
+    expect(usePins.getState().channels.c1!.items.map((m) => m.id)).toEqual(['6']);
+  });
+
   it('kendi sabitlememiz mesajı işaretler ve nokta yakmaz; kaldırma hemen listeden çıkarır, hata olursa geri alır', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
     expect(await pinMessage({ id: '5', channelId: 'c1' })).toBe(true);

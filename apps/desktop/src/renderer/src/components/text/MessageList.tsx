@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Hash } from 'lucide-react';
 import type { Channel, DmChannel, User } from '@diskort/shared';
-import { clearJump, dmPartner, loadOlder, useMessages, type LocalMessage, useGuild } from '@diskort/client-core';
+import { clearJump, dmPartner, loadInitial, loadOlder, useMessages, type LocalMessage, useGuild } from '@diskort/client-core';
 import { DmAvatar } from '../dms/DmAvatar';
 import type { MarkdownContext } from '../../features/messages/markdown';
 import { animate, riseIn } from '../../lib/motion';
@@ -35,6 +35,12 @@ export function MessageList({ channel, dm, self, dividerId, onAtBottomChange, sc
   const messages = useMessages((s) => s.channels[channel.id]?.messages ?? EMPTY);
   const hasMore = useMessages((s) => s.channels[channel.id]?.hasMore ?? true);
   const loaded = useMessages((s) => s.channels[channel.id]?.loaded ?? false);
+  const stale = useMessages((s) => s.channels[channel.id]?.stale ?? false);
+  // Otomatik denemeler bitti, süren istek yok: iskelet yerine "Tekrar dene"
+  const gaveUp = useMessages((s) => {
+    const c = s.channels[channel.id];
+    return Boolean(c?.failed && !c.loading);
+  });
   const editingId = useMessages((s) => s.editingId);
   const jump = useMessages((s) => s.jump);
   const users = useGuild((s) => s.users);
@@ -75,6 +81,7 @@ export function MessageList({ channel, dm, self, dividerId, onAtBottomChange, sc
   // animasyon oynatılmaz. Bekleyen mesajımız onaylanınca (anahtarı değişir) yeniden oynatılmaz.
   const rendered = useRef<Map<string, LocalMessage>>(new Map());
   const armed = useRef(false);
+  const wasStale = useRef(false);
   useLayoutEffect(() => {
     const prev = rendered.current;
     const next = new Map(messages.map((m) => [keyOf(m), m]));
@@ -84,7 +91,8 @@ export function MessageList({ channel, dm, self, dividerId, onAtBottomChange, sc
       armed.current = true;
       // Geçmiş ilk kez geldi: iskeletten içeriğe yumuşak geçiş
       animate(contentRef.current, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
-    } else {
+    } else if (!stale && !wasStale.current) {
+      // Tazeleme sırasında ve toplu gelen sayfada oynatılmaz
       let lastKnown = -1;
       messages.forEach((m, i) => {
         if (prev.has(keyOf(m))) lastKnown = i;
@@ -97,8 +105,9 @@ export function MessageList({ channel, dm, self, dividerId, onAtBottomChange, sc
         riseIn(contentRef.current?.querySelector(`[data-message-id="${CSS.escape(m.id)}"]`));
       }
     }
+    wasStale.current = stale;
     rendered.current = next;
-  }, [messages, loaded, self.id]);
+  }, [messages, loaded, stale, self.id]);
 
   // Pencere/yazma kutusu boyutu değişince de altta kal
   useEffect(() => {
@@ -156,7 +165,14 @@ export function MessageList({ channel, dm, self, dividerId, onAtBottomChange, sc
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-scroll" onScroll={onScroll}>
       <div ref={contentRef} className="flex min-h-full flex-col justify-end pb-6">
-        {!loaded && !messages.length ? (
+        {gaveUp && !messages.length ? (
+          <div className="mx-4 mb-2 text-sm text-text-muted">
+            Mesajlar yüklenemedi.{' '}
+            <button className="text-link hover:underline" onClick={() => void loadInitial(channel.id)}>
+              Tekrar dene
+            </button>
+          </div>
+        ) : gaveUp && !loaded ? null : !loaded && !messages.length ? (
           <MessageSkeleton rows={8} className="shrink-0" />
         ) : hasMore || !loaded ? (
           <MessageSkeleton rows={2} className="shrink-0 pb-2" />
@@ -208,6 +224,15 @@ export function MessageList({ channel, dm, self, dividerId, onAtBottomChange, sc
             </Fragment>
           );
         })}
+
+        {gaveUp && messages.length > 0 && (
+          <div className="mx-4 mt-2 text-xs text-text-muted">
+            Mesajlar yenilenemedi.{' '}
+            <button className="text-link hover:underline" onClick={() => void loadInitial(channel.id)}>
+              Tekrar dene
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

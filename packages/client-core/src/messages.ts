@@ -22,7 +22,7 @@ import { gateway } from './gateway';
 import { gifEmbed } from './gifs';
 import { forgetReactionUsers } from './reactions';
 import { useGuild } from './guild';
-import { useSession } from './session';
+import { sessionUserChanged, useSession } from './session';
 import { DELETED_ROLE_LABEL } from './markdown';
 import { formatBytes, uploadFile } from './uploads';
 
@@ -41,6 +41,10 @@ export interface ChannelMessages {
   hasMore: boolean;
   loading: boolean;
   loaded: boolean;
+  /** Yeniden bağlanıldı, tazeleme henüz bitmedi: içerik ekranda kalır ama güncel olmayabilir (okundu sayılmaz) */
+  stale?: boolean;
+  /** Otomatik denemeler de sonuç vermedi: kullanıcının "Tekrar dene"si ya da yeni bağlantı beklenir */
+  failed?: boolean;
 }
 
 /** Yazma kutusunun üstündeki "… kişisine yanıt veriliyor": gönderilecek mesaj buna yanıt olur */
@@ -90,9 +94,16 @@ export const useMessages = create<MessagesStore>()(initialState);
 
 export const setEditing = (editingId: string | null): void => useMessages.setState({ editingId });
 
-// Oturum değişince (çıkış / başka hesap) tüm mesaj önbelleği temizlenir.
+// Oturum değişince (çıkış / başka hesap) tüm mesaj önbelleği ve bekleyen işler temizlenir.
 useSession.subscribe((s, prev) => {
-  if (s.token !== prev.token) useMessages.setState(initialState());
+  if (!sessionUserChanged(s, prev)) return;
+  useMessages.setState(initialState());
+  for (const timer of retryTimers.values()) clearTimeout(timer);
+  retryTimers.clear();
+  refreshAgain.clear();
+  for (const timer of ackTimers.values()) clearTimeout(timer);
+  ackTimers.clear();
+  pendingAcks.clear();
 });
 
 const EMPTY: ChannelMessages = { messages: [], hasMore: true, loading: false, loaded: false };
@@ -150,23 +161,72 @@ const selfId = (): string | undefined => useSession.getState().user?.id;
 
 // ---------- Yükleme ----------
 
-export async function loadInitial(channelId: string): Promise<void> {
+/** Başarısız yükleme ya da tazelemeden sonraki otomatik denemelerin beklemeleri; bitince vazgeçilir */
+const RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
+/** Kanal → bekleyen otomatik deneme */
+const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** İstek sürerken READY gelen kanallar: yanıt kopukluktan önceye ait olabilir, istek bitince yeniden tazelenir */
+const refreshAgain = new Set<string>();
+
+/** Kanal silinmiş ya da erişim gitmiş: aynı isteği yinelemenin anlamı yok */
+const isPermanent = (err: unknown): boolean =>
+  err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 429;
+
+function scheduleRetry(channelId: string, attempt: number): void {
+  retryTimers.set(
+    channelId,
+    setTimeout(() => {
+      retryTimers.delete(channelId);
+      const channel = useMessages.getState().channels[channelId];
+      if (!channel) return; // kanal önbellekten çıktı
+      if (channel.loading) scheduleRetry(channelId, attempt); // eski mesajlar yükleniyor: sonra
+      else void fetchNewest(channelId, attempt + 1);
+    }, RETRY_DELAYS_MS[attempt]),
+  );
+}
+
+/**
+ * Kanalın en yeni sayfasını ister (`attempt`: kaçıncı otomatik deneme). `stale` istek boyunca kalır, yalnızca
+ * başarıyla kalkar: tazeleme bitmeden ekrana gelmemiş mesajlar okundu sayılmasın.
+ */
+async function fetchNewest(channelId: string, attempt: number): Promise<void> {
   const current = useMessages.getState().channels[channelId];
-  if (current?.loaded || current?.loading) return;
   patch(channelId, () => ({ loading: true }));
   const before = new Set((current?.messages ?? []).filter((m) => !m.status).map((m) => m.id));
   try {
     const page = await api.listMessages(channelId);
+    const again = refreshAgain.delete(channelId);
+    if (!useMessages.getState().channels[channelId]) return; // kanal bu arada önbellekten çıktı
     patch(channelId, (c) => ({
       messages: reconcileNewest(c.messages, page, before, page.length >= MESSAGE_PAGE_SIZE),
       hasMore: page.length >= MESSAGE_PAGE_SIZE,
       loading: false,
       loaded: true,
+      stale: again,
+      failed: false,
     }));
+    if (again) void loadInitial(channelId);
   } catch (err) {
-    patch(channelId, () => ({ loading: false }));
-    env().notifyError(errorMessage(err));
+    const again = refreshAgain.delete(channelId);
+    if (!useMessages.getState().channels[channelId]) return;
+    const exhausted = !again && (attempt >= RETRY_DELAYS_MS.length || isPermanent(err));
+    patch(channelId, (c) => ({ loading: false, failed: c.failed || exhausted }));
+    if (again) void loadInitial(channelId);
+    else if (exhausted) env().notifyError(errorMessage(err));
+    else scheduleRetry(channelId, attempt);
   }
+}
+
+/**
+ * Kanal yüklü değilse ya da tazelenecekse en yeni sayfayı ister (kanal açılışı, "Tekrar dene", READY).
+ * Başarısız olursa kendiliğinden yeniden dener; her çağrı deneme sayısını baştan başlatır.
+ */
+export async function loadInitial(channelId: string): Promise<void> {
+  const current = useMessages.getState().channels[channelId];
+  if (current?.loading || (current?.loaded && !current.stale)) return;
+  clearTimeout(retryTimers.get(channelId));
+  retryTimers.delete(channelId);
+  await fetchNewest(channelId, 0);
 }
 
 export async function loadOlder(channelId: string, limit: number = MESSAGE_PAGE_SIZE): Promise<void> {
@@ -186,6 +246,7 @@ export async function loadOlder(channelId: string, limit: number = MESSAGE_PAGE_
     patch(channelId, () => ({ loading: false }));
     env().notifyError(errorMessage(err));
   }
+  if (refreshAgain.delete(channelId) && useMessages.getState().channels[channelId]) void loadInitial(channelId);
 }
 
 // ---------- Eklenecek dosyalar ----------
@@ -447,7 +508,7 @@ function removeLocal(channelId: string, id: string): void {
   // Silinen mesaj kanalın son mesajıysa okunmamış göstergesini yüklü listeye göre düzelt
   const guild = useGuild.getState();
   const channel = useMessages.getState().channels[channelId];
-  if (guild.lastMessageIds[channelId] === id && channel?.loaded) {
+  if (guild.lastMessageIds[channelId] === id && channel?.loaded && !channel.stale) {
     const last = [...channel.messages].reverse().find((m) => !m.status);
     guild.setLastMessageId(channelId, last?.id ?? null);
   }
@@ -510,8 +571,21 @@ export async function toggleReaction(channelId: string, messageId: string, emoji
 // ---------- Okundu bilgisi ----------
 
 const ackTimers = new Map<string, ReturnType<typeof setTimeout>>();
-/** Sunucuya henüz bildirilmemiş okundu bilgileri (kanal → mesaj) */
+/** Sunucuya henüz ulaşmamış okundu bilgileri (kanal → mesaj); gidemeyen READY'de yeniden gönderilir */
 const pendingAcks = new Map<string, string>();
+
+function sendAck(channelId: string, messageId: string): void {
+  api.ack(channelId, messageId).then(
+    () => {
+      // Bu arada daha yenisi beklemeye girdiyse o kalır
+      if (pendingAcks.get(channelId) === messageId) pendingAcks.delete(channelId);
+    },
+    (err) => {
+      // Ağ hatasında READY'de yeniden gönderilir; kanala erişim gittiyse hiç gidemez, beklemede kalmasın
+      if (isPermanent(err) && pendingAcks.get(channelId) === messageId) pendingAcks.delete(channelId);
+    },
+  );
+}
 
 /**
  * Bekleyen okundu bilgilerini hemen gönderir (ör. telefon uygulaması arka plana geçerken: zamanlayıcılar
@@ -521,9 +595,8 @@ export function flushAcks(): void {
   for (const [channelId, messageId] of pendingAcks) {
     clearTimeout(ackTimers.get(channelId));
     ackTimers.delete(channelId);
-    api.ack(channelId, messageId).catch(() => undefined);
+    sendAck(channelId, messageId);
   }
-  pendingAcks.clear();
 }
 
 /** Kanaldaki en son mesajı okundu olarak işaretler (sunucuya kısa bir gecikmeyle bildirir). */
@@ -545,8 +618,7 @@ export function ackChannel(channelId: string): void {
     channelId,
     setTimeout(() => {
       ackTimers.delete(channelId);
-      pendingAcks.delete(channelId);
-      api.ack(channelId, last).catch(() => undefined);
+      sendAck(channelId, last);
     }, 500),
   );
 }
@@ -700,13 +772,15 @@ gateway.on((msg: GatewayServerMessage) => {
       useMessages.setState({ mentionCounts: msg.d.mentionCounts });
       // Kopukken başka cihazda okunanlar (ör. telefonun bildirimleri kalksın)
       for (const [channelId, lastReadId] of Object.entries(msg.d.readStates)) env().onChannelRead?.(channelId, lastReadId);
-      // Yeniden bağlanınca yüklü kanalları tazele (kopukken gelen mesajlar kaçmasın). Kopukken görülemez olan
-      // kanal ya da listeden kalkan konuşma (ör. başka cihazdan gruptan ayrılındı) yüklenmez, önbellekten çıkar.
+      flushAcks(); // kopukken gidemeyenler
+      // Yeniden bağlanınca yüklü kanalları tazele (kopukken gelen mesajlar kaçmasın); içerik tazelenene kadar
+      // ekranda kalır. Kopukken görülemez olan kanal ya da listeden kalkan konuşma (ör. başka cihazdan gruptan
+      // ayrılındı) yüklenmez, önbellekten çıkar.
       const known = new Set([
         ...msg.d.guilds.flatMap((g) => g.channels.map((c) => c.id)),
         ...(msg.d.dms ?? []).map((d) => d.id),
       ]);
-      for (const channelId of Object.keys(useMessages.getState().channels)) {
+      for (const [channelId, channel] of Object.entries(useMessages.getState().channels)) {
         if (!known.has(channelId)) {
           useMessages.setState((s) => {
             const { [channelId]: _gone, ...channels } = s.channels;
@@ -714,7 +788,8 @@ gateway.on((msg: GatewayServerMessage) => {
           });
           continue;
         }
-        patch(channelId, () => ({ loaded: false }));
+        if (channel.loading) refreshAgain.add(channelId);
+        patch(channelId, () => ({ stale: true }));
         void loadInitial(channelId);
       }
       break;

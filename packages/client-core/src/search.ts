@@ -14,7 +14,7 @@ import { api, errorMessage } from './api';
 import { useGuild, type GuildStore } from './guild';
 import { permissionsOf } from './permissions';
 import { jumpToMessage } from './replies';
-import { useSession } from './session';
+import { sessionUserChanged, useSession } from './session';
 
 // Mesaj araması (Discord gibi): kapsam seçili sunucu ya da açık direkt mesaj konuşması; sorguda
 // from:, in:, has:, önce:, sonra:, tarih: işleçleri yazılabilir (sunucu çözer, bkz. @diskort/shared search.ts).
@@ -54,7 +54,7 @@ export const useSearch = create<SearchState>()(initial);
 
 // Oturum değişince sonuçlar temizlenir
 useSession.subscribe((s, prev) => {
-  if (s.token !== prev.token) useSearch.setState(initial());
+  if (sessionUserChanged(s, prev)) useSearch.setState(initial());
 });
 
 /** Kapsamın anahtarı (aynı kapsam mı karşılaştırması için) */

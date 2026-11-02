@@ -89,7 +89,8 @@ export async function sendFile<T>(
   }
   if (res.status === expectedStatus && data) return data as T;
   if (res.status === 0) throw new ApiError(0, 'network', `${failure}: sunucuya ulaşılamadı.`);
-  if (res.status === 401 && token) useSession.getState().logout();
+  // Yükleme sürerken jeton yenilendiyse eski jetonun reddi oturumu kapatmaz
+  if (res.status === 401 && token && useSession.getState().token === token) useSession.getState().logout();
   const err = data as Partial<ApiErrorBody> | null;
   throw new ApiError(res.status, err?.error ?? 'error', err?.message ?? `${failure} (${res.status}).`);
 }

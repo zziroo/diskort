@@ -5,7 +5,7 @@ import { env } from './env';
 import { gateway } from './gateway';
 import { useMessages } from './messages';
 import { jumpToMessage } from './replies';
-import { useSession } from './session';
+import { sessionUserChanged, useSession } from './session';
 
 // Discord'daki gibi sabitlenmiş mesajlar: yetkili biri (metin kanalında PIN_MESSAGES, direkt mesajda her
 // katılımcı) bir mesajı kanala sabitler; kanal başlığındaki raptiye düğmesi listeyi açar. Liste açılınca
@@ -34,7 +34,7 @@ const initialState = (): PinsStore => ({ channels: {}, unseen: {} });
 export const usePins = create<PinsStore>()(initialState);
 
 useSession.subscribe((s, prev) => {
-  if (s.token === prev.token) return;
+  if (!sessionUserChanged(s, prev)) return;
   usePins.setState(initialState());
   ownChanges.clear();
   lastPins.clear();
@@ -63,7 +63,7 @@ export async function loadPins(channelId: string, force = false): Promise<void> 
     // Yükleme sürerken yeni bir değişiklik geldiyse bir kez daha iste
     if (usePins.getState().channels[channelId]?.stale && openLists.has(channelId)) void loadPins(channelId);
   } catch (err) {
-    patch(channelId, () => ({ loading: false }));
+    patch(channelId, () => ({ loading: false, stale: true })); // başta kaldırılmıştı: açılışta yeniden istensin
     env().notifyError(errorMessage(err));
   }
 }

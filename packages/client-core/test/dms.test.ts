@@ -109,6 +109,7 @@ beforeEach(async () => {
   });
   useSession.getState().setSession('jeton', user('ben'));
   useMessages.setState({ channels: {}, mentionCounts: {}, pendingFiles: {} });
+  useGuild.setState({ readStates: {} }); // READY okunma durumlarını birleştirir, önceki testten kalmasın
   receive({ t: 'READY', d: ready() });
 });
 

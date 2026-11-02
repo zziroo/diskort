@@ -29,6 +29,14 @@ export function tokenExpiresAt(token: string): number | null {
   }
 }
 
+/**
+ * Oturumun sahibi değişti mi (giriş, çıkış, başka hesap). Hesaba bağlı önbellekler buna bakar, jetona değil:
+ * jeton aynı hesapta da değişir (sunucu kullanımda yeniler, şifre değişince yenisi gelir) ve önbellek silinirse
+ * açık kanal iskelette kalır, çünkü yükleme yalnız kanal değişince başlar.
+ */
+export const sessionUserChanged = (s: Pick<SessionStore, 'user'>, prev: Pick<SessionStore, 'user'>): boolean =>
+  s.user?.id !== prev.user?.id;
+
 // Depolama platformdan gelir; configureClient() çağrılınca okunur (bkz. configure.ts).
 const platformStorage: StateStorage = {
   getItem: (name) => env().storage.getItem(name),
