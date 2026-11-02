@@ -6,6 +6,9 @@ declare class VoiceServiceModule extends NativeModule<VoiceServiceModuleEvents> 
   start(title: string, text: string, muted: boolean): void;
   update(title: string, text: string, muted: boolean): void;
   stop(): void;
+  /** Arka planda da dolan zamanlayıcı (dolunca onTimer); yalnızca bu işlevi taşıyan APK'da var */
+  setTimer?(id: number, delayMs: number): void;
+  clearTimer?(id: number): void;
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   type LocalAudioTrack,
   type ConnectionQuality,
   ConnectionState,
+  CriticalTimers,
   DisconnectReason,
   type Participant,
   RemoteAudioTrack,
@@ -49,6 +50,7 @@ import {
 } from '../sounds';
 import { getSettings, useSettings } from '../stores/settings';
 import { toast } from '../stores/ui';
+import { installBackgroundTimers } from './backgroundTimers';
 import { MicGate, SILENT_LEVEL, type GateConfig, type MicLevel } from './micGate';
 import { voiceRoomName } from './roomName';
 import {
@@ -161,6 +163,13 @@ const SOUNDBOARD_RING_MS = 3000;
 const PROTO_SOURCE = { microphone: 2, screenShare: 3 } as const;
 /** Yeniden bağlanma bu süreyi aşarsa "bağlantı koptu" sesi çalınır; geri gelince "geri geldi" */
 const RECONNECT_SOUND_DELAY_MS = 2500;
+/** Tam yeniden bağlanmadan sonra izlenen yayın için bekleme: yayın ertelenen olaylarla gelir ya da bu arada bitmiştir */
+const WATCH_RESTORE_GRACE_MS = 5000;
+/**
+ * Reconnected'tan sonra yayın durumuna bakmadan önce: LiveKit izleri birlikte yeniden yayımlar, biri hata verirse
+ * Reconnected öteki bitmeden gelir. Mikrofon açılamadıysa (ör. o an meşgul) yeniden deneme de bu kadar sonra.
+ */
+const REPUBLISH_SETTLE_MS = 2000;
 
 /** LiveKit bu kaynağı yayınlamaya izin veriyor mu (sunucu izni kanaldaki yetkilere göre verir) */
 function canPublish(room: Room, source: number): boolean {
@@ -229,6 +238,15 @@ async function requestPermissions(): Promise<boolean> {
 }
 
 /**
+ * Süren sesten yeniden katılmada izin penceresi açılmaz, yalnızca bakılır. Uygulama arka planda olabilir;
+ * reddedilmiş bir izin (ör. bildirim) varken requestPermissions'ın isteği orada hiç dönmez ve katılma takılır.
+ */
+async function hasMicPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+}
+
+/**
  * Telefondaki sesli sohbet. Masaüstünden farklı olarak yankı engelleme
  * telefonun kendi donanımıyla yapılır; uygulama arka plandayken ön plan servisi bağlantıyı tutar.
  */
@@ -254,6 +272,12 @@ class MobileVoiceClient {
   /** Bağlantı birkaç saniyede geri gelmezse "koptu" sesi; geri gelince "geri geldi" */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lostSoundPlayed = false;
+  /** Sinyal kopması kısa sürede düzelmezse durum "yeniden bağlanıyor" olur (sesler reconnectTimer'da) */
+  private signalReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Gözden kaybolan izlenen yayın: bitti mi, bağlantı mı gitti henüz bilinmiyor (bkz. holdWatch) */
+  private heldWatch: string | null = null;
+  private watchGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  private restoreTimer: ReturnType<typeof setTimeout> | null = null;
   /** Ses oturumu ve ön plan servisi açık mı (yeniden katılmada kapatılmadan korunurlar) */
   private audioSessionActive = false;
   private serviceRunning = false;
@@ -293,6 +317,8 @@ class MobileVoiceClient {
       if (next.watching !== prev.watching || next.sharing !== prev.sharing) {
         noteVideoActivity(next.watching !== null || next.sharing);
       }
+      // Kilit ekranında görünen tek yer bildirim: kopma orada da görünür
+      if ((next.status === 'reconnecting') !== (prev.status === 'reconnecting')) this.updateNotification();
     });
     // Sunucuya yeniden bağlanınca ses durumunu tekrar bildir
     gateway.on((msg) => {
@@ -366,7 +392,7 @@ class MobileVoiceClient {
     useVoice.setState({ ...IDLE, channelId, status: 'connecting' });
 
     try {
-      const micGranted = await requestPermissions();
+      const micGranted = await (opts.rejoin ? hasMicPermission() : requestPermissions());
       const { url, token } = await api.joinVoice(channelId);
       if (seq !== this.joinSeq) return;
       this.serverUrl = url;
@@ -505,6 +531,13 @@ class MobileVoiceClient {
   watch(userId: string | null): void {
     const room = this.room;
     if (!room) return;
+    // Beklenen yayın bırakıldı: geri gelmesi beklenmez ("sona erdi" de gösterilmez, kendin kapattın)
+    const held = this.heldWatch;
+    if (held !== null && held !== userId) {
+      this.heldWatch = null;
+      this.clearWatchGrace();
+      useVoice.setState((s) => streamGone({ ...s, watching: null }, held));
+    }
     const previous = useVoice.getState().watching;
     for (const p of room.remoteParticipants.values()) {
       for (const pub of p.trackPublications.values()) {
@@ -735,6 +768,7 @@ class MobileVoiceClient {
 
   private notificationText(): string {
     const s = getSettings();
+    if (useVoice.getState().status === 'reconnecting') return 'Yeniden bağlanıyor…';
     if (s.selfDeaf) return 'Sağırlaştırıldın';
     if (selfVoiceState()?.serverDeaf) return 'Sunucuda sağırlaştırıldın';
     if (!useVoice.getState().micAllowed) return selfVoiceState()?.serverMute ? 'Sunucuda susturuldun' : 'Yalnızca dinliyorsun';
@@ -756,8 +790,17 @@ class MobileVoiceClient {
     if (!useVoice.getState().listenOnly) {
       await room.localParticipant.setMicrophoneEnabled(!this.micMuted(), captureOptions()).catch(() => undefined);
     }
-    const name = roomName(useVoice.getState().channelId);
-    VoiceService.update(name, this.notificationText(), this.micMuted());
+    // Beklerken sesten çıkılmış olabilir
+    if (this.room === room) this.updateNotification();
+  }
+
+  /**
+   * Bildirimi günceller. Servis yokken yazılmaz: servis durduktan sonra gelen güncelleme kapatılamayan, sahipsiz
+   * bir bildirim bırakır; servis henüz başlamadıysa başlarken güncel metni zaten yazar.
+   */
+  private updateNotification(): void {
+    if (!this.serviceRunning) return;
+    VoiceService.update(roomName(useVoice.getState().channelId), this.notificationText(), this.micMuted());
   }
 
   /** Kaydedilmiş kişi/yayın ses seviyelerini uygular (iz sonradan gelirse LiveKit aboneliğe uygular) */
@@ -807,6 +850,10 @@ class MobileVoiceClient {
     if (isAudio(pub)) {
       pub.setSubscribed(!this.deafened());
     } else if (pub.source === Track.Source.ScreenShare) {
+      if (this.heldWatch === participant.identity) {
+        this.heldWatch = null;
+        this.clearWatchGrace();
+      }
       useVoice.setState((s) => ({ streams: { ...s.streams, [participant.identity]: true } }));
       if (useVoice.getState().watching === participant.identity) pub.setSubscribed(true);
     } else if (pub.source === Track.Source.ScreenShareAudio) {
@@ -820,25 +867,30 @@ class MobileVoiceClient {
 
   private bind(room: Room): void {
     const bump = (): void => useVoice.setState((s) => ({ tracksVersion: s.tracksVersion + 1 }));
+    // Yeniden bağlanırken LiveKit'in söktükleri gerçek ayrılma ya da yayın bitişi değildir: sesi çalınmaz
+    const settled = (): boolean => this.room === room && useVoice.getState().status !== 'reconnecting';
     room
       .on(RoomEvent.TrackPublished, (pub, p) => {
+        if (this.room !== room) return;
         this.onPublication(pub, p);
         // Kanaldaki biri yayına başladı (katılırken zaten süren yayınlar için ses yok)
-        if (this.room === room && pub.source === Track.Source.ScreenShare) this.channelSounds.push('userStreamStart');
+        if (pub.source === Track.Source.ScreenShare) this.channelSounds.push('userStreamStart');
       })
       .on(RoomEvent.TrackUnpublished, (pub, p) => {
-        if (this.room === room && pub.source === Track.Source.ScreenShare) this.channelSounds.push('userStreamStop');
+        if (this.room !== room) return;
+        if (settled() && pub.source === Track.Source.ScreenShare) this.channelSounds.push('userStreamStop');
         if (pub.source === Track.Source.ScreenShareAudio) {
           useVoice.setState((s) => {
             const { [p.identity]: _gone, ...streamAudio } = s.streamAudio;
             return { streamAudio };
           });
         }
-        if (pub.source !== Track.Source.ScreenShare) return;
-        useVoice.setState((s) => streamGone(s, p.identity));
+        if (pub.source === Track.Source.ScreenShare) this.onStreamGone(room, p.identity);
       })
       .on(RoomEvent.LocalTrackUnpublished, (pub) => {
-        if (pub.source === Track.Source.ScreenShare) useVoice.setState({ sharing: false });
+        // Tam yeniden bağlanmada LiveKit izi kaldırıp yeniden yayımlar: sonuca Reconnected'ta bakılır
+        if (this.room !== room || pub.source !== Track.Source.ScreenShare) return;
+        if (useVoice.getState().status !== 'reconnecting') useVoice.setState({ sharing: false });
       })
       .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
         // Kaydedilmiş ses seviyesi (kişi ya da yayın sesi)
@@ -858,8 +910,9 @@ class MobileVoiceClient {
         this.channelSounds.push('userJoin', intro);
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
-        useVoice.setState((s) => streamGone(s, p.identity));
-        if (this.room === room) this.channelSounds.push('userLeave');
+        if (this.room !== room) return;
+        this.onStreamGone(room, p.identity);
+        if (settled()) this.channelSounds.push('userLeave');
       })
       // Bağlantı kalitesi göstergesi: yalnızca kendi bağlantımız (değişince bildirilir, ucuz)
       .on(RoomEvent.ConnectionQualityChanged, (quality: ConnectionQuality, participant: Participant) => {
@@ -883,13 +936,19 @@ class MobileVoiceClient {
       })
       .on(RoomEvent.Reconnecting, () => {
         this.duplicates.noteReconnect();
-        useVoice.setState({ status: 'reconnecting' });
         if (this.room !== room) return;
         voiceTelemetry.noteReconnect();
         voiceTrace.mark(Date.now(), 'reconnecting', 'reconnect');
+        useVoice.setState({ status: 'reconnecting' });
+        // Tam yeniden bağlanmada LiveKit katılımcıları bu olaydan hemen önce söker: kuyruktaki "çıktı" ve "yayın
+        // bitti" sesleri çalınmaz
+        this.channelSounds.quiet();
+        this.clearSignalReconnectTimer();
+        this.clearWatchGrace();
+        this.clearRestoreTimer();
         // Kısa kopmalar sessiz geçer; bağlantı birkaç saniyede gelmezse "koptu" sesi
         this.clearReconnectTimer();
-        this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = CriticalTimers.setTimeout(() => {
           this.reconnectTimer = null;
           if (this.room !== room || useVoice.getState().status !== 'reconnecting') return;
           this.lostSoundPlayed = true;
@@ -898,28 +957,37 @@ class MobileVoiceClient {
       })
       .on(RoomEvent.SignalReconnecting, () => {
         this.duplicates.noteReconnect();
-        if (this.room === room) voiceTrace.mark(Date.now(), 'signal-reconnecting', 'reconnect');
+        if (this.room !== room) return;
+        voiceTrace.mark(Date.now(), 'signal-reconnecting', 'reconnect');
+        // Sinyal hemen geri gelmezse kullanıcı görsün; "koptu" sesi yalnızca Reconnecting'te, iki kez çalmasın
+        this.clearSignalReconnectTimer();
+        this.signalReconnectTimer = CriticalTimers.setTimeout(() => {
+          this.signalReconnectTimer = null;
+          if (this.room === room && useVoice.getState().status === 'connected') useVoice.setState({ status: 'reconnecting' });
+        }, RECONNECT_SOUND_DELAY_MS);
       })
       .on(RoomEvent.Reconnected, () => {
         this.duplicates.noteReconnect();
+        if (this.room !== room) return;
+        voiceTrace.mark(Date.now(), 'reconnected');
+        this.clearSignalReconnectTimer();
         useVoice.setState({ status: 'connected' });
-        // Tam yeniden bağlanmada LiveKit izi kaldırıp yeniden yayımlar (LocalTrackUnpublished gelir). iOS'ta
-        // "sharing" yanlış kalırsa düğme yayını durdurmak yerine seçiciyi açardı.
-        if (ScreenBroadcast && this.room === room) {
-          useVoice.setState({ sharing: Boolean(room.localParticipant.getTrackPublication(Track.Source.ScreenShare)) });
-        }
-        if (this.room === room) {
-          voiceTrace.mark(Date.now(), 'reconnected');
-          // Yeniden bağlanınca LiveKit katılımcıları yeniden bildirebilir: ses seli olmasın
-          this.channelSounds.quiet();
-          const wasLost = this.lostSoundPlayed;
-          this.clearReconnectTimer();
-          if (wasLost) soundCue('reconnected');
-        }
+        // Yeniden bağlanınca LiveKit katılımcıları yeniden bildirebilir: ses seli olmasın
+        this.channelSounds.quiet();
+        const wasLost = this.lostSoundPlayed;
+        this.clearReconnectTimer();
+        if (wasLost) soundCue('reconnected');
         this.syncVoiceState();
         // Yeniden bağlanınca (ör. ping zaman aşımı) izler değişmiş olabilir: seviyeler ve yayın sesi
         // tercihi yeniden uygulanır
         this.applyVolumes(true);
+        // Katılımcılar ve yayınları bu olayın hemen ardından (ertelenen olaylarla) gelir; gelmeyen izleme süre
+        // sonunda bırakılır
+        this.startWatchGrace(room);
+        this.afterRepublish(room, () => {
+          this.restoreScreenShare(room);
+          void this.restoreMic(room);
+        });
       })
       .on(RoomEvent.Disconnected, (reason) => {
         // Kendi başlattığımız ayrılma değilse: sunucu çıkardı, başka cihaza geçildi ya da bağlantı koptu
@@ -945,19 +1013,111 @@ class MobileVoiceClient {
         const benign =
           reason === DisconnectReason.CLIENT_INITIATED || reason === DisconnectReason.DUPLICATE_IDENTITY || callEnded;
         toast(disconnectMessage(reason, channelId), benign ? 'info' : 'error');
-        // Kendimiz ayrılmadık (sunucu çıkardı, bağlantı koptu): masaüstündeki gibi "koptu" sesi
-        soundCue(reason === DisconnectReason.CLIENT_INITIATED || callEnded ? 'leave' : 'disconnect');
-        void this.leave();
+        // Kendimiz ayrılmadık (sunucu çıkardı, bağlantı koptu): masaüstündeki gibi "koptu" sesi. Ses oturumu
+        // kapandıktan sonra (normal kipte) çalınır; görüşme kipinden çıkarken kesilmez
+        const cue = reason === DisconnectReason.CLIENT_INITIATED || callEnded ? 'leave' : 'disconnect';
+        void this.leave().then(() => soundCue(cue));
       });
+  }
+
+  /**
+   * Kullanıcı gözden kayboldu ya da yayını bitti. İzlenmeyen yayının kaydı hemen silinir; izlenen yayında yayın mı
+   * bitti, bağlantı mı gitti o an bilinemez: LiveKit tam yeniden bağlanmada katılımcıları söker, Reconnecting'i
+   * aynı akışta hemen ardından verir. Karar akış bitince verilir: bağlantı yerindeyse hemen bırakılır, yeniden
+   * bağlanılıyorsa yayın geri gelene ya da süre dolana kadar izleme ve yayın kaydı kalır.
+   */
+  private onStreamGone(room: Room, identity: string): void {
+    if (useVoice.getState().watching !== identity) {
+      useVoice.setState((s) => streamGone(s, identity));
+      return;
+    }
+    this.heldWatch = identity;
+    queueMicrotask(() => {
+      if (this.room === room) this.releaseHeldWatch();
+    });
+  }
+
+  /** Geri gelmeyen izlemeyi bırakır; bağlantı beklenirken ya da bekleme süresindeyken bir şey yapmaz */
+  private releaseHeldWatch(): void {
+    const held = this.heldWatch;
+    if (held === null || this.watchGraceTimer !== null || useVoice.getState().status === 'reconnecting') return;
+    this.heldWatch = null;
+    useVoice.setState((s) => streamGone(s, held));
+  }
+
+  private startWatchGrace(room: Room): void {
+    if (this.heldWatch === null) return;
+    this.clearWatchGrace();
+    this.watchGraceTimer = CriticalTimers.setTimeout(() => {
+      this.watchGraceTimer = null;
+      if (this.room === room) this.releaseHeldWatch();
+    }, WATCH_RESTORE_GRACE_MS);
+  }
+
+  /** Yeniden yayının oturması için bekler (bkz. REPUBLISH_SETTLE_MS); bağlantı yine koptuysa Reconnected yeniden kurar */
+  private afterRepublish(room: Room, check: () => void): void {
+    this.clearRestoreTimer();
+    this.restoreTimer = CriticalTimers.setTimeout(() => {
+      this.restoreTimer = null;
+      if (this.room === room && useVoice.getState().status === 'connected') check();
+    }, REPUBLISH_SETTLE_MS);
+  }
+
+  /**
+   * Tam yeniden bağlanmada LiveKit ekran izini kaldırıp yeniden yayımlar. "sharing" yanlış kalırsa düğme yayını
+   * durdurmak yerine yeni yayın başlatmaya çalışırdı (iOS'ta seçici, Android'de izin penceresi).
+   */
+  private restoreScreenShare(room: Room): void {
+    const published = Boolean(room.localParticipant.getTrackPublication(Track.Source.ScreenShare));
+    // Yeniden yayımlanamadı: iOS'ta eklenti görüntüsü gitmeyen yayını sürdürmesin
+    if (useVoice.getState().sharing && !published) ScreenBroadcast?.stop();
+    useVoice.setState({ sharing: published });
+    // Android'de küçültme göndericiye yazılır, yeni göndericide kalmaz (bkz. scaleScreenShare)
+    if (published && !ScreenBroadcast) void this.scaleScreenShare(room);
+  }
+
+  /**
+   * Tam yeniden bağlanmada LiveKit mikrofonu yayından kaldırıp yeniden açar; açamazsa yalnızca günlüğe yazar ve
+   * Reconnected yine gelir: düğme açık görünür ama ses gitmez. Yayında olmayan mikrofon burada açılır. Susturulmuşsa
+   * dokunulmaz: LiveKit susturma kalkınca izi yoksa kendisi kurar.
+   */
+  private async restoreMic(room: Room, retried = false): Promise<void> {
+    if (this.micMuted() || room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track) return;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(true, captureOptions());
+    } catch (err) {
+      if (this.room !== room) return;
+      if (retried) {
+        reportClientError(err, 'ses-mikrofon');
+        toast('Mikrofon yeniden açılamadı. Susturup açmayı dene.', 'error');
+        return;
+      }
+      this.afterRepublish(room, () => void this.restoreMic(room, true));
+    }
   }
 
   /** Süren kapatma; yenisi bunu bekler */
   private tearingDown: Promise<void> = Promise.resolve();
 
   private clearReconnectTimer(): void {
-    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer !== null) CriticalTimers.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.lostSoundPlayed = false;
+  }
+
+  private clearSignalReconnectTimer(): void {
+    if (this.signalReconnectTimer !== null) CriticalTimers.clearTimeout(this.signalReconnectTimer);
+    this.signalReconnectTimer = null;
+  }
+
+  private clearWatchGrace(): void {
+    if (this.watchGraceTimer !== null) CriticalTimers.clearTimeout(this.watchGraceTimer);
+    this.watchGraceTimer = null;
+  }
+
+  private clearRestoreTimer(): void {
+    if (this.restoreTimer !== null) CriticalTimers.clearTimeout(this.restoreTimer);
+    this.restoreTimer = null;
   }
 
   /**
@@ -1020,6 +1180,10 @@ class MobileVoiceClient {
     this.stopSoundboard();
     this.introOwners.clear();
     this.clearReconnectTimer();
+    this.clearSignalReconnectTimer();
+    this.clearWatchGrace();
+    this.clearRestoreTimer();
+    this.heldWatch = null;
     this.gate.detach();
     // DPDFNet yeniden denemesi ayrılış sırasında modeli yükleyip mikrofonu yeniden açmasın
     suspendNoiseFilterRetry();
@@ -1051,6 +1215,8 @@ class MobileVoiceClient {
 setLogExtension((level, message, context) =>
   reportVoiceLog(level, LogLevel.warn, message, context, useVoice.getState().status !== 'idle'),
 );
+
+installBackgroundTimers();
 
 export const voice = new MobileVoiceClient();
 

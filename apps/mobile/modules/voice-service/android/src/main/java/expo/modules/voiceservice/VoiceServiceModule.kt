@@ -1,16 +1,22 @@
 package expo.modules.voiceservice
 
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.util.concurrent.ConcurrentHashMap
 
 class VoiceServiceModule : Module() {
+  private val timerHandler = Handler(Looper.getMainLooper())
+  private val timers = ConcurrentHashMap<Int, Runnable>()
+
   override fun definition() = ModuleDefinition {
     Name("VoiceService")
 
-    /** Bildirim düğmeleri: { action: "toggleMute" | "disconnect" } */
-    Events("onAction")
+    /** Bildirim düğmeleri: { action: "toggleMute" | "disconnect" }; zamanlayıcı: { id } */
+    Events("onAction", "onTimer")
 
     OnCreate {
       VoiceForegroundService.onAction = { action -> sendEvent("onAction", mapOf("action" to action)) }
@@ -18,6 +24,28 @@ class VoiceServiceModule : Module() {
 
     OnDestroy {
       VoiceForegroundService.onAction = null
+      timerHandler.removeCallbacksAndMessages(null)
+      timers.clear()
+    }
+
+    /**
+     * React Native'in JS zamanlayıcıları Activity duraklayınca durur (ekran kapalı, uygulama arka planda).
+     * LiveKit'in yeniden bağlanması ve pingi bunlara bağlı olduğu için arka planda da dolan zamanlayıcı
+     * (bkz. src/voice/backgroundTimers.ts). Ön plan servisinin WakeLock'u işlemciyi uyanık tutar.
+     */
+    Function("setTimer") { id: Int, delayMs: Double ->
+      val fire = Runnable {
+        timers.remove(id)
+        sendEvent("onTimer", mapOf("id" to id))
+      }
+      timers[id] = fire
+      timerHandler.postDelayed(fire, delayMs.toLong())
+      Unit
+    }
+
+    Function("clearTimer") { id: Int ->
+      timers.remove(id)?.let { timerHandler.removeCallbacks(it) }
+      Unit
     }
 
     /** Servisi başlatır; yalnızca uygulama öndeyken çağrılmalı (sese katılırken). */
