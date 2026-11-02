@@ -56,7 +56,7 @@ import {
   stopSoundboardSounds,
 } from '../../lib/sfx';
 import { getSettings, useSettings, type Settings } from '../../stores/settings';
-import { setVoice, useVoice, type MicLevel } from '../../stores/voice';
+import { setVoice, useVoice, type MicLevel, type RemoteStream } from '../../stores/voice';
 import {
   EMPTY_CONNECTION_STATS,
   setConnectionStats,
@@ -112,6 +112,11 @@ const QUALITY_WINDOW_MS = 10_000;
 const PREFETCH_TTL_MS = 60_000;
 /** Yeniden bağlanma bu süreyi aşarsa "bağlantı koptu" sesi çalınır; geri gelince "geri geldi" */
 const RECONNECT_SOUND_DELAY_MS = 2500;
+/**
+ * Yeniden bağlanınca izlenen yayın bu süre içinde geri gelmezse bırakılır: yayıncı da o an yeniden bağlanıyor
+ * olabilir; yayın gerçekten bittiyse yüzen pencere açık kalmaz.
+ */
+const WATCH_RESTORE_GRACE_MS = 5000;
 
 /** LiveKit protokolündeki kaynak numaraları (ParticipantPermission.canPublishSources) */
 const PROTO_SOURCE = { microphone: 2, screenShare: 3 } as const;
@@ -144,6 +149,22 @@ function qualityLabel(track: MediaStreamTrack, preset: { height: number; fps: nu
   const height = Math.round(s.height ?? preset.height);
   const fps = Math.round(s.frameRate ?? preset.fps);
   return `${height}p ${fps} FPS`;
+}
+
+/** Yayını biten kullanıcıları yayın ve izleme listelerinden çıkarır; büyütülen yayın bittiyse ızgaraya dönülür */
+function withoutStreams(
+  s: { streams: Record<string, RemoteStream>; watching: Record<string, true>; focusedStream: string | null },
+  ids: string[],
+): { streams: Record<string, RemoteStream>; watching: Record<string, true>; focusedStream: string | null } {
+  const streams = { ...s.streams };
+  const watching = { ...s.watching };
+  let focusedStream = s.focusedStream;
+  for (const id of ids) {
+    delete streams[id];
+    delete watching[id];
+    if (focusedStream === id) focusedStream = null;
+  }
+  return { streams, watching, focusedStream };
 }
 
 /** Paylaşılan kaynağın adı; sistem seçicisinde (macOS/tarayıcı) ad bilinmez, türü yazılır */
@@ -261,6 +282,12 @@ class VoiceClient {
   private readonly introOwners = new Map<string, string>();
   /** Bağlantı kısa süre içinde geri gelmezse "koptu" sesi; geri gelince "geri geldi" */
   private reconnectTimer: number | null = null;
+  /** Sinyal kopması kısa sürede düzelmezse durum "yeniden bağlanıyor" olur (sesler reconnectTimer'da) */
+  private signalReconnectTimer: number | null = null;
+  /** Yayını gözden kaybolan izlemeler: bağlantı gittiyse yeniden bağlanana kadar tutulur (bkz. holdWatch) */
+  private readonly heldWatches = new Set<string>();
+  /** Yeniden bağlanınca tutulan izlemelerin geri gelmesi için tanınan süre */
+  private watchGraceTimer: number | null = null;
   /** Ses paneli sesinin avatar halkasını söndüren zamanlayıcı */
   private soundboardRingTimer: number | null = null;
   private lostSoundPlayed = false;
@@ -532,6 +559,9 @@ class VoiceClient {
     stopSoundboardSounds();
     this.clearSoundboardRing();
     this.clearReconnectTimer();
+    this.clearSignalReconnectTimer();
+    this.clearWatchGrace();
+    this.heldWatches.clear();
     this.scheduleReupgrade(null);
     this.clearAutoRetry();
     this.clearRestartWait();
@@ -706,8 +736,11 @@ class VoiceClient {
       if (!micAllowed && this.mic) {
         await this.detachMic(room);
         this.updateNoiseState();
-      } else if (micAllowed && !this.mic && useVoice.getState().status === 'connected') {
-        await this.publishMic(room);
+      } else if (micAllowed && !this.mic) {
+        const status = useVoice.getState().status;
+        if (status === 'connected') await this.publishMic(room);
+        // Yeniden bağlanırken gelen izin: bağlantı dönünce yapılır (bu sıra bitmeden başlayamaz, beklenmez)
+        else if (status === 'reconnecting') void this.republishMic();
       }
     });
     if (this.screen && !this.canPublish(room, PROTO_SOURCE.screenShare)) await this.stopScreenShare();
@@ -1156,6 +1189,8 @@ class VoiceClient {
   // ---------- Oda olayları ----------
 
   private bindRoom(room: Room): void {
+    // Yeniden bağlanırken LiveKit'in söktükleri gerçek ayrılma ya da yayın bitişi değildir: sesi çalınmaz
+    const settled = (): boolean => room === this.room && useVoice.getState().status !== 'reconnecting';
     room
       .on(RoomEvent.TrackPublished, (pub, p) => {
         if (room === this.room) this.onPublication(pub, p, true);
@@ -1164,7 +1199,7 @@ class VoiceClient {
         if (pub.source === Track.Source.ScreenShare || pub.source === Track.Source.ScreenShareAudio) {
           this.refreshStream(p);
         }
-        if (pub.source === Track.Source.ScreenShare && room === this.room) this.channelSounds.push('userStreamStop');
+        if (pub.source === Track.Source.ScreenShare && settled()) this.channelSounds.push('userStreamStop');
       })
       .on(RoomEvent.TrackSubscribed, (track, pub, p) => this.onSubscribed(track, pub, p))
       .on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -1181,7 +1216,7 @@ class VoiceClient {
         this.remoteMeter.removeIdentity(p.identity);
         this.publishSpeaking();
         this.refreshStream(p);
-        if (room === this.room) this.channelSounds.push('userLeave');
+        if (settled()) this.channelSounds.push('userLeave');
       })
       .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
         this.serverSpeaking = new Set(speakers.filter((sp) => !sp.isLocal).map((sp) => sp.identity));
@@ -1196,6 +1231,11 @@ class VoiceClient {
         voiceTelemetry.noteReconnect();
         voiceTrace.mark(Date.now(), 'reconnecting', 'reconnect');
         setVoice({ status: 'reconnecting' });
+        // Tam yeniden bağlanmada LiveKit katılımcıları bu olaydan hemen önce söker: kuyruktaki "çıktı" ve "yayın
+        // bitti" sesleri çalınmaz
+        this.channelSounds.quiet();
+        this.clearSignalReconnectTimer();
+        this.clearWatchGrace();
         // Kısa kopmalar sessiz geçer; bağlantı birkaç saniyede gelmezse "koptu" sesi
         this.clearReconnectTimer();
         this.reconnectTimer = window.setTimeout(() => {
@@ -1207,20 +1247,40 @@ class VoiceClient {
       })
       .on(RoomEvent.SignalReconnecting, () => {
         this.duplicates.noteReconnect();
-        if (room === this.room) voiceTrace.mark(Date.now(), 'signal-reconnecting', 'reconnect');
+        if (room !== this.room) return;
+        voiceTrace.mark(Date.now(), 'signal-reconnecting', 'reconnect');
+        // Sinyal hemen geri gelmezse kullanıcı görsün; "koptu" sesi yalnızca Reconnecting'te, iki kez çalmasın
+        this.clearSignalReconnectTimer();
+        this.signalReconnectTimer = window.setTimeout(() => {
+          this.signalReconnectTimer = null;
+          if (room === this.room && useVoice.getState().status === 'connected') setVoice({ status: 'reconnecting' });
+        }, RECONNECT_SOUND_DELAY_MS);
       })
       .on(RoomEvent.Reconnected, () => {
         this.duplicates.noteReconnect();
         if (room !== this.room) return;
         voiceTrace.mark(Date.now(), 'reconnected');
+        this.clearSignalReconnectTimer();
         setVoice({ status: 'connected' });
         // Yeniden bağlanınca LiveKit katılımcıları yeniden bildirebilir: ses seli olmasın
         this.channelSounds.quiet();
         const wasLost = this.lostSoundPlayed;
         this.clearReconnectTimer();
         if (wasLost) playSound('reconnected');
-        // Bağlantı yokken istenen yeniden kurulum (model düştü, ayar değişti, yeniden deneme) şimdi yapılır
-        if (this.micSeq.takeDeferred()) void this.republishMic();
+        // Sunucu kaynağın adını çıkışta siler: tam yeniden bağlanmadan sonra yeniden bildirilir
+        this.screen?.preview.reportSource();
+        // Katılımcılar ve yayınları bu olayın hemen ardından (ertelenen olaylarla) gelir; gelmeyen izlemeler
+        // süre sonunda bırakılır
+        this.startWatchGrace(room);
+        // Bağlantı yokken istenen yeniden kurulum (model düştü, ayar değişti, yeniden deneme) şimdi yapılır. Tam
+        // yeniden bağlanmada LiveKit mikrofonu yayından kaldırıp yeniden açar; açamazsa yalnızca günlüğe yazar ve
+        // bu olay yine gelir: yayında olmayan mikrofon da kurulur (susturulmuşsa susturulmuş yayınlanır).
+        const deferred = this.micSeq.takeDeferred();
+        const micLost = this.micUnpublished(room);
+        if (deferred || micLost) {
+          this.clearRestartWait();
+          void this.republishMic({ auto: micLost });
+        }
       })
       .on(RoomEvent.AudioPlaybackStatusChanged, () => {
         if (!room.canPlaybackAudio) void room.startAudio().catch(() => undefined);
@@ -1264,6 +1324,18 @@ class VoiceClient {
     this.lostSoundPlayed = false;
   }
 
+  private clearSignalReconnectTimer(): void {
+    if (this.signalReconnectTimer !== null) window.clearTimeout(this.signalReconnectTimer);
+    this.signalReconnectTimer = null;
+  }
+
+  /** Mikrofon açık görünüyor ama yayında değil. Konuşma izni yoksa onPermissionsChanged ilgilenir. */
+  private micUnpublished(room: Room): boolean {
+    const mic = this.mic;
+    if (!mic || !this.canPublish(room, PROTO_SOURCE.microphone)) return false;
+    return !room.localParticipant.getTrackPublications().some((pub) => pub.track === mic);
+  }
+
   private onPublication(pub: RemoteTrackPublication, p: RemoteParticipant, published = false): void {
     if (pub.source === Track.Source.Microphone) {
       pub.setSubscribed(true);
@@ -1292,20 +1364,51 @@ class VoiceClient {
     const video = p.getTrackPublication(Track.Source.ScreenShare);
     const audio = p.getTrackPublication(Track.Source.ScreenShareAudio);
     const id = p.identity;
-    setVoice((s) => {
-      const streams = { ...s.streams };
-      const watching = { ...s.watching };
-      let focusedStream = s.focusedStream;
-      if (video) {
-        streams[id] = { hasAudio: Boolean(audio) };
-      } else {
-        delete streams[id];
-        delete watching[id];
-        // Büyütülen yayın bittiyse ızgaraya dönülür
-        if (focusedStream === id) focusedStream = null;
-      }
-      return { streams, watching, focusedStream };
+    if (video) {
+      this.heldWatches.delete(id);
+      setVoice((s) => ({ streams: { ...s.streams, [id]: { hasAudio: Boolean(audio) } } }));
+    } else if (this.room && useVoice.getState().watching[id]) {
+      this.holdWatch(id);
+    } else {
+      setVoice((s) => withoutStreams(s, [id]));
+    }
+  }
+
+  /**
+   * İzlenen yayın gözden kayboldu. Yayın mı bitti, bağlantı mı gitti o an bilinemez: LiveKit tam yeniden
+   * bağlanmada katılımcıları söker, Reconnecting'i aynı akışta hemen ardından verir (engine.pendingReconnect
+   * özel, üstelik daha önce kurulur). Bu yüzden izleme ve yayın kaydı durur, karar akış bitince verilir: bağlantı
+   * yerindeyse hemen bırakılır, yeniden bağlanılıyorsa yayın geri gelene ya da süre dolana kadar kalır.
+   */
+  private holdWatch(id: string): void {
+    const room = this.room;
+    this.heldWatches.add(id);
+    queueMicrotask(() => {
+      if (room === this.room) this.releaseHeldWatches();
     });
+  }
+
+  /** Geri gelmeyen izlemeleri bırakır; bağlantı beklenirken ya da bekleme süresindeyken bir şey yapmaz */
+  private releaseHeldWatches(): void {
+    if (this.heldWatches.size === 0 || this.watchGraceTimer !== null) return;
+    if (useVoice.getState().status === 'reconnecting') return;
+    const ids = [...this.heldWatches];
+    this.heldWatches.clear();
+    setVoice((s) => withoutStreams(s, ids));
+  }
+
+  private startWatchGrace(room: Room): void {
+    if (this.heldWatches.size === 0) return;
+    this.clearWatchGrace();
+    this.watchGraceTimer = window.setTimeout(() => {
+      this.watchGraceTimer = null;
+      if (room === this.room) this.releaseHeldWatches();
+    }, WATCH_RESTORE_GRACE_MS);
+  }
+
+  private clearWatchGrace(): void {
+    if (this.watchGraceTimer !== null) window.clearTimeout(this.watchGraceTimer);
+    this.watchGraceTimer = null;
   }
 
   /**

@@ -87,10 +87,15 @@ export class StreamPreviewUploader {
 
   constructor(
     private readonly track: MediaStreamTrack,
-    source: { name: string; kind: StreamSourceKind } | null,
+    private readonly source: { name: string; kind: StreamSourceKind } | null,
   ) {
-    if (source) void reportStreamSource(source.name, source.kind).catch(() => undefined);
+    this.reportSource();
     this.schedule(FIRST_DELAY_MS);
+  }
+
+  /** Kaynağın adını bildirir; sunucu onu katılımcı çıkınca siler, tam yeniden bağlanmadan sonra yeniden çağrılır. */
+  reportSource(): void {
+    if (this.source && !this.stopped) void reportStreamSource(this.source.name, this.source.kind).catch(() => undefined);
   }
 
   stop(): void {
