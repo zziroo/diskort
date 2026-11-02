@@ -1,4 +1,5 @@
 import { hasPermission, Permission, type User } from '@diskort/shared';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Store } from './db.js';
 import type { Gateway } from './gateway.js';
 import { TrackSource, type LiveKitService, type PublishSources } from './livekit.js';
@@ -23,6 +24,7 @@ export class VoiceModeration {
     private readonly livekit: LiveKitService,
     private readonly permissions: PermissionService,
     private readonly gateway: Pick<Gateway, 'sendToUsers'>,
+    private readonly log?: Pick<FastifyBaseLogger, 'warn'>,
   ) {
     // Susturmalar sunucu başına saklanır: kişi hangi sunucunun kanalına girerse oradaki durumu geçerlidir
     voice.setFlagResolver((userId, channelId) => this.flagsIn(userId, channelId));
@@ -130,7 +132,8 @@ export class VoiceModeration {
     this.gateway.sendToUsers([userId], { t: 'VOICE_MOVE', d: { channelId } });
     const timer = setTimeout(() => {
       const now = this.voice.get(userId);
-      if (now?.channelId === state.channelId && now.joinedAt === state.joinedAt) void this.disconnect(userId);
+      if (now?.channelId !== state.channelId || now.joinedAt !== state.joinedAt) return;
+      this.disconnect(userId).catch((err: unknown) => this.log?.warn({ err: String(err) }, 'taşınan üye sesten çıkarılamadı'));
     }, graceMs);
     timer.unref();
   }

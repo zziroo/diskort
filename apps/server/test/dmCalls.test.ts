@@ -211,6 +211,24 @@ describe('DM aramaları: çalma ve arama kaydı', () => {
     expect(missed).toHaveBeenCalledWith(expect.objectContaining({ id: dm.id }), ali.user.id, record.id, [veli.user.id]);
   });
 
+  it('çalmanın bitişi veritabanı hatasıyla duyurulamazsa süreç düşmez, arama sürer', async () => {
+    const ali = await s.member('ali');
+    const veli = await s.member('veli');
+    const dm = await openDm(ali, veli);
+    const v = await connect(veli.token);
+    joinRoom(ali, dm.id);
+    await v.settle();
+
+    const participants = vi.spyOn(s.ctx.permissions, 'dmParticipants').mockImplementationOnce(() => {
+      throw new Error('database is locked');
+    });
+    const warn = vi.spyOn(s.app.log, 'warn');
+    await wait(RING_MS + 150);
+    expect(participants).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'çalmanın bitişi duyurulamadı');
+    expect(s.ctx.calls.get(dm.id)).not.toBeNull();
+  });
+
   it('reddetme yalnızca reddedeni susturur; aramadaki biri yeniden çalabilir; grup katılımcıları hep birlikte çalınır', async () => {
     const ali = await s.member('ali');
     const veli = await s.member('veli');

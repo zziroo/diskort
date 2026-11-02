@@ -1,4 +1,5 @@
 import { DM_CALL_RING_MS, Permission, type DmCall, type Message, type MessageUpdate } from '@diskort/shared';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Store } from './db.js';
 import type { Gateway } from './gateway.js';
 import type { PermissionService } from './permissions.js';
@@ -46,6 +47,7 @@ export interface DmCallDeps {
   gateway: Pick<Gateway, 'sendDm' | 'dispatchChannel' | 'pushRecipients' | 'sendReadState' | 'statuses'>;
   voice: VoiceStateStore;
   push: Pick<PushService, 'notifyCall' | 'notifyMissedCall'>;
+  log?: Pick<FastifyBaseLogger, 'warn'>;
   /** Testler: çalma süresi (varsayılan DM_CALL_RING_MS) ve saat */
   ringMs?: number;
   now?: () => number;
@@ -373,7 +375,12 @@ export class DmCallService {
         if (call.ringing.get(id) !== timer) return;
         call.ringing.delete(id);
         call.ringAt.delete(id);
-        if (this.calls.get(call.channelId) === call) this.announce(call);
+        if (this.calls.get(call.channelId) !== call) return;
+        try {
+          this.announce(call);
+        } catch (err) {
+          this.deps.log?.warn({ err: String(err) }, 'çalmanın bitişi duyurulamadı');
+        }
       }, this.ringMs);
       timer.unref?.();
       call.ringing.set(id, timer);

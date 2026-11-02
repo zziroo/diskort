@@ -69,6 +69,8 @@ export class Coalescer<T> {
     private readonly apply: (value: T) => void,
     private readonly burst = STATE_BURST,
     private readonly intervalMs = STATE_MIN_INTERVAL_MS,
+    /** Zamanlayıcıdan uygulanan değer hata verdi (burada yakalanmazsa süreç düşer) */
+    private readonly onError: (err: unknown) => void = () => {},
   ) {
     this.tokens = burst;
     this.at = Date.now();
@@ -108,7 +110,11 @@ export class Coalescer<T> {
     if (!pending) return;
     this.refill();
     this.tokens--; // zamanlayıcı biraz erken çalışmışsa hafif eksiye düşebilir; sonraki bekleme uzar
-    this.apply(pending.value);
+    try {
+      this.apply(pending.value);
+    } catch (err) {
+      this.onError(err);
+    }
   }
 }
 
@@ -293,7 +299,12 @@ export class Gateway {
   /** Süresi dolan durumları ve özel durumları temizler (düzenli aralıkla çağrılır) */
   expireStatuses(now = Date.now()): void {
     if (this.closing) return;
-    for (const id of this.statuses.expire(now)) this.statusChanged(id);
+    this.bestEffort('süresi dolan durumlar temizlenemedi', () => {
+      // Süre dolumu çoktan yazıldı: biri duyurulamazsa kalanlar yine duyurulur
+      for (const id of this.statuses.expire(now)) {
+        this.bestEffort('süresi dolan durum duyurulamadı', () => this.statusChanged(id));
+      }
+    });
   }
 
   /**
@@ -621,6 +632,13 @@ export class Gateway {
       return;
     }
     this.anonymousByIp.set(ip, anonymous + 1);
+    // Zamanlayıcıdan uygulanamayan değer için bağlantı kapanır: istemci son durumunu READY'de yeniden bildirir,
+    // ama sunucuda yazılmış değerin duyurusu kaybolduysa diğerleri onu sonraki değişikliğe kadar göremez
+    const coalesce = <T>(apply: (value: T) => void, burst?: number, intervalMs?: number): Coalescer<T> =>
+      new Coalescer(apply, burst, intervalMs, (err) => {
+        this.log?.warn({ err: String(err) }, 'oturum durumu uygulanamadı');
+        socket.close(4000, 'internal error');
+      });
     const session: Session = {
       socket,
       userId: null,
@@ -631,20 +649,20 @@ export class Gateway {
       identifying: false,
       closed: false,
       alive: true,
-      idleUpdates: new Coalescer((idle) => {
+      idleUpdates: coalesce((idle) => {
         if (session.closed || !session.userId || session.idle === idle) return;
         session.idle = idle;
         this.announcePresence(session.userId);
       }),
-      voiceUpdates: new Coalescer((flags) => {
+      voiceUpdates: coalesce((flags) => {
         if (!session.closed && session.userId) this.voice.setSelf(session.userId, flags);
       }),
-      watchUpdates: new Coalescer((userIds) => {
+      watchUpdates: coalesce((userIds) => {
         if (session.closed || !session.userId) return;
         session.reportsWatching = true;
         this.voice.setWatching(session.userId, userIds, session.id);
       }),
-      activityUpdates: new Coalescer(
+      activityUpdates: coalesce(
         (reported) => {
           if (session.closed || !session.userId) return;
           // Önce bu oturumun önceki listesi, sonra kişinin öteki oturumları (yeniden bağlanmada eskisi düşmeden)
@@ -748,8 +766,8 @@ export class Gateway {
   }
 
   /**
-   * Oturum kapanırken yapılan yan iş. Veritabanına inebilir; hata yukarı çıkarsa temizlik yarıda kalır ve
-   * `socket.on('close')` içinde yakalayan olmadığından süreç düşer. Duyuru kaybolabilir, temizlik kaybolmamalı.
+   * Olay ya da zamanlayıcı içindeki yan iş. Veritabanına inebilir; hata yukarı çıkarsa yakalayan olmadığından
+   * süreç düşer, oturum kapanışı da yarıda kalır. Duyuru kaybolabilir, temizlik kaybolmamalı.
    */
   private bestEffort(what: string, work: () => void): void {
     try {

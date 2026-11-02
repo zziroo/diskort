@@ -252,6 +252,48 @@ describe('gateway oturumları', () => {
     expect(client.of('INVALID_SESSION')).toHaveLength(1);
   });
 
+  it('zamanlayıcıdan uygulanan durumda veritabanı hatası: bağlantı 4000 ile kapanır, süreç düşmez', async () => {
+    const ali = await s.member('ali');
+    const client = await connect(ali.token);
+    const g = s.ctx.gateway as unknown as {
+      sessions: Set<{ idleUpdates: { tokens: number; push: (idle: boolean) => void } }>;
+    };
+    const [session] = g.sessions;
+    session!.idleUpdates.tokens = 0; // kova boş: değer zamanlayıcıya düşer
+    const contacts = vi.spyOn(s.ctx.permissions, 'contacts').mockImplementationOnce(dbLocked);
+    const warn = vi.spyOn(s.app.log, 'warn');
+    const code = closed(client.ws);
+    session!.idleUpdates.push(true);
+    expect(await code).toBe(4000);
+    expect(contacts).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'oturum durumu uygulanamadı');
+  });
+
+  it('süresi dolan durumlarda veritabanı hatası: fırlatmaz, biri duyurulamazsa kalanlar duyurulur', async () => {
+    const g = s.ctx.gateway;
+    const warn = vi.spyOn(s.app.log, 'warn');
+    vi.spyOn(g.statuses, 'expire').mockImplementationOnce(dbLocked);
+    expect(() => g.expireStatuses()).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'süresi dolan durumlar temizlenemedi');
+
+    vi.spyOn(g.statuses, 'expire').mockReturnValueOnce(['a', 'b']);
+    const changed = vi.spyOn(g, 'statusChanged').mockImplementationOnce(dbLocked).mockImplementationOnce(() => {});
+    expect(() => g.expireStatuses()).not.toThrow();
+    expect(changed.mock.calls).toEqual([['a'], ['b']]);
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'süresi dolan durum duyurulamadı');
+  });
+
+  it('taşınan üyenin süre sonunda sesten çıkarılması hata verirse süreç düşmez', async () => {
+    const ali = await s.member('ali');
+    s.ctx.voice.join(ali.user.id, s.channel('voice').id);
+    const leave = vi.spyOn(s.ctx.voice, 'leave').mockImplementationOnce(dbLocked);
+    const warn = vi.spyOn(s.app.log, 'warn');
+    s.ctx.moderation.move(ali.user.id, 'baska-kanal', 10);
+    await wait(60);
+    expect(leave).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'taşınan üye sesten çıkarılamadı');
+  });
+
   it('şifre değişince diğer cihazların bağlantısı kapanır, bu cihazınki kalır; bildirim jetonları silinir', async () => {
     const ali = await s.member('ali');
     const other = await connect(ali.token);
@@ -569,5 +611,26 @@ describe('gateway oturumları', () => {
     await wait(80);
     // 11 ya kovadan anında uygulandı ya da iptal edildi; iptalden sonra hiçbir şey gelmez
     expect(applied.filter((v) => v > 11)).toEqual([]);
+  });
+
+  it('Coalescer: zamanlayıcıda fırlayan hata onError\'a gider, sonraki değer işlenir', async () => {
+    const applied: number[] = [];
+    const errors: unknown[] = [];
+    const c = new Coalescer<number>(
+      (v) => {
+        if (v === 2) throw new Error('database is locked');
+        applied.push(v);
+      },
+      1,
+      20,
+      (err) => errors.push(err),
+    );
+    c.push(1);
+    c.push(2);
+    await wait(60);
+    expect(errors).toHaveLength(1);
+    c.push(3);
+    await wait(60);
+    expect(applied).toEqual([1, 3]);
   });
 });

@@ -181,7 +181,7 @@ export async function buildApp(
     activityIcons,
     app.log,
   );
-  const moderation = new VoiceModeration(store, voice, livekit, permissions, gateway);
+  const moderation = new VoiceModeration(store, voice, livekit, permissions, gateway, app.log);
   const push =
     opts.push ?? new PushService(store, config.fcmServiceAccountFile, app.log, fetch, createApns(config, app.log));
   // DM aramaları: ses durumundan kurulur/biter, çalma ve arama kaydı (bkz. dmCalls.ts)
@@ -191,6 +191,7 @@ export async function buildApp(
     gateway,
     voice,
     push,
+    log: app.log,
     ...(opts.callRingMs !== undefined ? { ringMs: opts.callRingMs } : {}),
   });
   gateway.callsFor = (userId) => calls.callsFor(userId);
