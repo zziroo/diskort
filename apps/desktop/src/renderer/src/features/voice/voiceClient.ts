@@ -25,6 +25,7 @@ import {
   gateway,
   guildSoundUrl,
   introSoundUrl,
+  isGuildVoiceChannel,
   linkQuality,
   outboundDelta,
   parseTransportStats,
@@ -117,6 +118,20 @@ const RECONNECT_SOUND_DELAY_MS = 2500;
  * olabilir; yayın gerçekten bittiyse yüzen pencere açık kalmaz.
  */
 const WATCH_RESTORE_GRACE_MS = 5000;
+/** LiveKit vazgeçince kanala kendiliğinden dönülebilen kopmalar: ağ türü, belirsiz. Sunucunun ya da kullanıcının bitirdikleri burada yok. */
+const REJOINABLE_REASONS: ReadonlySet<DisconnectReason | undefined> = new Set([
+  undefined,
+  DisconnectReason.UNKNOWN_REASON,
+  DisconnectReason.STATE_MISMATCH,
+  DisconnectReason.JOIN_FAILURE,
+  DisconnectReason.SIGNAL_CLOSE,
+]);
+/** Bağlantı bundan uzun süredir yoksa dönülmez: gece kapalı kalan dizüstü sabah açık mikrofonla odaya girmesin */
+const REJOIN_MAX_GAP_MS = 30 * 60_000;
+/** Uyanışta ağ geçidinin hazır olması en çok bu kadar beklenir */
+const REJOIN_GATEWAY_WAIT_MS = 30_000;
+/** Dönüşten sonra bu süre içindeki kopmada yeniden denenmez (LiveKit'in vazgeçmesi de dakika sürer): döngü olmasın */
+const REJOIN_COOLDOWN_MS = 5 * 60_000;
 
 /** LiveKit protokolündeki kaynak numaraları (ParticipantPermission.canPublishSources) */
 const PROTO_SOURCE = { microphone: 2, screenShare: 3 } as const;
@@ -291,6 +306,11 @@ class VoiceClient {
   /** Ses paneli sesinin avatar halkasını söndüren zamanlayıcı */
   private soundboardRingTimer: number | null = null;
   private lostSoundPlayed = false;
+  /** Bağlantının sağlam görüldüğü son an (bağlanılmamışsa 0); uyku boyunca ilerlemez (bkz. noteAlive) */
+  private aliveAt = 0;
+  private lastRejoinAt = 0;
+  /** Kendiliğinden dönüşte ağ geçidi beklemesini keser (bkz. gatewayReady) */
+  private cancelGatewayWait: (() => void) | null = null;
 
   /** Odada yayınlanan mikrofonun işlemcisi; seviye/hata/yeniden kurulum yalnızca ondan dikkate alınır */
   private get processor(): MicProcessor | null {
@@ -410,6 +430,7 @@ class VoiceClient {
       this.applyVolumes();
       setConnectionStats({ server: this.serverInfo(room, url) });
       setVoice({ channelId, status: 'connected', micAllowed: this.canPublish(room, PROTO_SOURCE.microphone) });
+      this.aliveAt = Date.now();
       // Bağlantı kurulunca (öncesinde değil) çalınır; kanaldakilerin girişleri ve yayınları ses seli yapmaz
       this.channelSounds.quiet();
       this.startStats();
@@ -554,6 +575,8 @@ class VoiceClient {
   }
 
   private async teardownRoom(): Promise<void> {
+    this.cancelGatewayWait?.();
+    this.aliveAt = 0;
     this.channelSounds.cancel();
     stopIntroSound();
     stopSoundboardSounds();
@@ -1260,6 +1283,7 @@ class VoiceClient {
         this.duplicates.noteReconnect();
         if (room !== this.room) return;
         voiceTrace.mark(Date.now(), 'reconnected');
+        this.aliveAt = Date.now();
         this.clearSignalReconnectTimer();
         setVoice({ status: 'connected' });
         // Yeniden bağlanınca LiveKit katılımcıları yeniden bildirebilir: ses seli olmasın
@@ -1305,17 +1329,105 @@ class VoiceClient {
             .catch(() => undefined);
           return;
         }
-        this.joinSeq++;
-        void this.teardownRoom();
-        setVoice({
-          ...RESET_ROOM_STATE,
-          channelId: null,
-          status: 'idle',
-          error: disconnectMessage(reason, Boolean(channelId && useGuild.getState().dms[channelId])),
-        });
-        // Kendin ayrılmadın (bağlantı koptu, çıkarıldın, başka cihazdan girildi): "koptu" sesi
-        playSound(reason === DisconnectReason.CLIENT_INITIATED ? 'leave' : 'disconnect');
+        if (channelId && this.canRejoin(channelId, reason)) {
+          void this.rejoinAfterDrop(channelId, reason);
+          return;
+        }
+        this.finishDisconnect(channelId, reason);
       });
+  }
+
+  private finishDisconnect(channelId: string | null, reason?: DisconnectReason): void {
+    this.joinSeq++;
+    void this.teardownRoom();
+    setVoice({
+      ...RESET_ROOM_STATE,
+      channelId: null,
+      status: 'idle',
+      error: disconnectMessage(reason, Boolean(channelId && useGuild.getState().dms[channelId])),
+    });
+    // Kendin ayrılmadın (bağlantı koptu, çıkarıldın, başka cihazdan girildi): "koptu" sesi
+    playSound(reason === DisconnectReason.CLIENT_INITIATED ? 'leave' : 'disconnect');
+  }
+
+  /**
+   * Yalnız sunucu kanalına dönülür: DM'de yeniden katılmak karşı tarafı çaldırabilir, listeden kapatılmış konuşmanın
+   * araması da `dms`'te görünmez. Hiç bağlanmamış odada aliveAt 0'dır.
+   */
+  private canRejoin(channelId: string, reason?: DisconnectReason): boolean {
+    const now = Date.now();
+    return (
+      REJOINABLE_REASONS.has(reason) &&
+      isGuildVoiceChannel(useGuild.getState(), channelId) &&
+      now - this.aliveAt <= REJOIN_MAX_GAP_MS &&
+      now - this.lastRejoinAt >= REJOIN_COOLDOWN_MS
+    );
+  }
+
+  /**
+   * LiveKit vazgeçti: ağ geçidi hazır olunca kanala bir kez sessizce dönülür; olmazsa bugünkü gibi hata ve ses.
+   * Ekran paylaşımı ve izlenen yayınlar geri gelmez. Kullanıcının ayrılması/başka kanala girmesi joinSeq'i değiştirir.
+   */
+  private async rejoinAfterDrop(channelId: string, reason?: DisconnectReason): Promise<void> {
+    const wasLost = this.lostSoundPlayed;
+    const seq = ++this.joinSeq;
+    this.lastRejoinAt = Date.now();
+    const torn = this.teardownRoom();
+    setVoice({ ...RESET_ROOM_STATE, channelId, status: 'reconnecting', error: null });
+    await torn;
+    if (seq !== this.joinSeq) return;
+    const deadline = Date.now() + REJOIN_GATEWAY_WAIT_MS;
+    const ready = await this.gatewayReady();
+    if (seq !== this.joinSeq) return;
+    // Bekleme sırasında makine yeniden uyuduysa uyanışta kanala girilmez; başka cihazdan girilen kanal da düşürülmez
+    if (!ready || Date.now() > deadline || this.inOtherChannel(channelId)) {
+      this.finishDisconnect(channelId, reason);
+      return;
+    }
+    setVoice({ status: 'idle' }); // join aynı kanaldaki etkin durumu "zaten bağlı" sayar
+    const joining = this.join(channelId, { silent: true });
+    const attempt = this.joinSeq;
+    await joining;
+    if (attempt !== this.joinSeq) return; // kullanıcı işlemi ya da bağlanırken kapanan oda (finishDisconnect)
+    if (useVoice.getState().status === 'idle') this.finishDisconnect(channelId, reason);
+    else if (wasLost) playSound('reconnected');
+  }
+
+  /**
+   * Ses durumumuz başka kanalı mı gösteriyor (READY tazeler). Aynı kanaldaki kayıt ayrım yapmaz: telefondan da girilmiş
+   * olabilir, kopan bu oturumun webhook'u henüz gelmemiş de; onu ayırmak sunucudan oturum bilgisi ister.
+   */
+  private inOtherChannel(channelId: string): boolean {
+    const selfId = useSession.getState().user?.id;
+    const state = selfId ? useGuild.getState().voiceStates[selfId] : undefined;
+    return state !== undefined && state.channelId !== channelId;
+  }
+
+  /** Ağ geçidi hazır mı; en çok REJOIN_GATEWAY_WAIT_MS beklenir, teardownRoom beklemeyi keser */
+  private gatewayReady(): Promise<boolean> {
+    if (useGuild.getState().status === 'ready') return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const finish = (ready: boolean): void => {
+        unsubscribe();
+        window.clearTimeout(timer);
+        this.cancelGatewayWait = null;
+        resolve(ready);
+      };
+      const unsubscribe = useGuild.subscribe((s) => {
+        if (s.status === 'ready') finish(true);
+      });
+      const timer = window.setTimeout(() => finish(false), REJOIN_GATEWAY_WAIT_MS);
+      this.cancelGatewayWait = () => finish(false);
+    });
+  }
+
+  /**
+   * Uyanışta aralık, LiveKit kopmayı fark etmeden çalışır: büyük boşlukta damga ilerlemez, yoksa sabahki kopma
+   * taze görünürdü. Oda uykudan sağ çıktıysa Reconnected damgayı yeniler.
+   */
+  private noteAlive(): void {
+    const now = Date.now();
+    if (useVoice.getState().status === 'connected' && now - this.aliveAt <= REJOIN_MAX_GAP_MS) this.aliveAt = now;
   }
 
   private clearReconnectTimer(): void {
@@ -1660,6 +1772,7 @@ class VoiceClient {
     this.statsTick = 0;
     this.statsTimer = window.setInterval(() => {
       this.statsTick++;
+      this.noteAlive();
       void this.collectStats(this.statsTick % STATS_EVERY_TICKS === 0);
     }, TRACE_INTERVAL_MS);
     void this.collectStats();

@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   playSound: vi.fn(),
   setWatching: vi.fn(),
   failCapture: false,
+  /** Bağlantı kurulamaz: throw = yalnız ret, close = LiveKit gibi önce Disconnected, sonra ret */
+  failConnect: null as 'throw' | 'close' | null,
 }));
 
 vi.mock('livekit-client', async (original) => {
@@ -41,7 +43,10 @@ vi.mock('livekit-client', async (original) => {
     emit(event: string, ...args: never[]): void {
       for (const fn of this.handlers.get(event) ?? []) fn(...args);
     }
-    connect = vi.fn(async () => undefined);
+    connect = vi.fn(async () => {
+      if (h.failConnect === 'close') this.emit(actual.RoomEvent.Disconnected);
+      if (h.failConnect) throw new Error('bağlanılamadı');
+    });
     disconnect = vi.fn(async () => undefined);
     startAudio = vi.fn(async () => undefined);
   }
@@ -77,7 +82,7 @@ vi.mock('@diskort/client-core', async (original) => ({
   reportClientError: vi.fn(),
   reportVoiceLog: vi.fn(),
   voiceTelemetry: { setContext: vi.fn(), noteReconnect: vi.fn(), reset: vi.fn() },
-  voiceTrace: { mark: vi.fn(), stop: vi.fn() },
+  voiceTrace: { mark: vi.fn(), start: vi.fn(), stop: vi.fn() },
 }));
 
 vi.mock('../src/renderer/src/lib/bridge', () => ({ bridge: {}, isMac: false }));
@@ -183,6 +188,9 @@ const flush = (): Promise<void> => vi.advanceTimersByTimeAsync(0).then(() => und
 let voice: typeof import('../src/renderer/src/features/voice/voiceClient').voice;
 let useVoice: typeof import('../src/renderer/src/stores/voice').useVoice;
 let useSettings: typeof import('../src/renderer/src/stores/settings').useSettings;
+let useGuild: typeof import('@diskort/client-core').useGuild;
+let useSession: typeof import('@diskort/client-core').useSession;
+let joinVoice: ReturnType<typeof vi.fn>;
 let room: FakeRoom;
 
 const SCREEN = [Track.Source.ScreenShare, Track.Source.ScreenShareAudio];
@@ -215,11 +223,16 @@ beforeEach(async () => {
   h.rooms.length = 0;
   h.tracks.length = 0;
   h.failCapture = false;
+  h.failConnect = null;
   h.playSound.mockClear();
   h.setWatching.mockClear();
   ({ voice } = await import('../src/renderer/src/features/voice/voiceClient'));
   ({ useVoice } = await import('../src/renderer/src/stores/voice'));
   ({ useSettings } = await import('../src/renderer/src/stores/settings'));
+  const core = await import('@diskort/client-core');
+  useGuild = core.useGuild;
+  useSession = core.useSession;
+  joinVoice = core.api.joinVoice as unknown as ReturnType<typeof vi.fn>;
   useSettings.setState({ noise: 'off', selfMute: false, selfDeaf: false });
   const internals = voice as unknown as { startStats(): void; bindDeviceChange(): void };
   internals.startStats = () => undefined;
@@ -403,7 +416,7 @@ describe('tam yeniden bağlanmada izlenen yayın', () => {
   it('yeniden bağlanamazsa tutulanlar temizlenir ve geç zamanlayıcı bir şey yapmaz', async () => {
     await joinAndWatch();
     unwind(room);
-    room.emit(RoomEvent.Disconnected, DisconnectReason.UNKNOWN_REASON);
+    room.emit(RoomEvent.Disconnected, DisconnectReason.SERVER_SHUTDOWN);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(useVoice.getState()).toMatchObject({ status: 'idle', watching: {}, focusedStream: null, streams: {} });
   });
@@ -411,7 +424,7 @@ describe('tam yeniden bağlanmada izlenen yayın', () => {
   it('kopan odada tutulan izleme sonraki odaya taşınmaz', async () => {
     await joinAndWatch();
     unwind(room);
-    room.emit(RoomEvent.Disconnected, DisconnectReason.UNKNOWN_REASON);
+    room.emit(RoomEvent.Disconnected, DisconnectReason.SERVER_SHUTDOWN);
     await flush();
     const joined = voice.join('kanal', { silent: true });
     await flush();
@@ -485,9 +498,270 @@ describe('sinyal kopması', () => {
   it('bağlantı kapanınca zamanlayıcı durumu ezmez', async () => {
     await joinAndWatch();
     room.emit(RoomEvent.SignalReconnecting);
-    room.emit(RoomEvent.Disconnected, DisconnectReason.UNKNOWN_REASON);
+    room.emit(RoomEvent.Disconnected, DisconnectReason.SERVER_SHUTDOWN);
     await vi.advanceTimersByTimeAsync(5000);
     expect(useVoice.getState().status).toBe('idle');
+  });
+});
+
+describe('uzun kopmadan sonra kanala dönüş', () => {
+  const MINUTE = 60_000;
+  const lose = (reason?: DisconnectReason): void => room.emit(RoomEvent.Disconnected, reason);
+  /** Uyku: saat ilerler, zamanlayıcılar çalışmaz */
+  const sleep = (ms: number): void => void vi.setSystemTime(Date.now() + ms);
+  const settle = (): Promise<unknown> => vi.advanceTimersByTimeAsync(50);
+  const sounds = (): string[] => h.playSound.mock.calls.map((c) => c[0] as string);
+
+  const expectGaveUp = (): void => {
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle', error: 'Ses bağlantısı koptu.' });
+    expect(sounds()).toEqual(['disconnect']);
+  };
+
+  beforeEach(async () => {
+    // Zaman damgası gerçek istatistik aralığında ilerler; yalnız ölçüm atlanır
+    const internals = voice as unknown as { startStats?: unknown; collectStats(): Promise<void> };
+    delete internals.startStats;
+    internals.collectStats = async () => undefined;
+    useGuild.setState({ status: 'ready', dms: {}, dmCalls: {}, channelGuild: { kanal: 'sunucu', diger: 'sunucu' } });
+    await joinAndWatch();
+    joinVoice.mockClear();
+  });
+
+  it.each([
+    ['nedensiz (LiveKit vazgeçti)', undefined],
+    ['UNKNOWN_REASON', DisconnectReason.UNKNOWN_REASON],
+    ['STATE_MISMATCH', DisconnectReason.STATE_MISMATCH],
+    ['JOIN_FAILURE', DisconnectReason.JOIN_FAILURE],
+    ['SIGNAL_CLOSE', DisconnectReason.SIGNAL_CLOSE],
+  ])('%s: yeni jetonla bir kez sessizce döner', async (_name, reason) => {
+    lose(reason);
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expect(joinVoice).toHaveBeenCalledTimes(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'connected', error: null });
+    expect(sounds()).toEqual([]);
+  });
+
+  it.each([
+    ['CLIENT_INITIATED', DisconnectReason.CLIENT_INITIATED],
+    ['DUPLICATE_IDENTITY', DisconnectReason.DUPLICATE_IDENTITY],
+    ['PARTICIPANT_REMOVED', DisconnectReason.PARTICIPANT_REMOVED],
+    ['ROOM_DELETED', DisconnectReason.ROOM_DELETED],
+    ['ROOM_CLOSED', DisconnectReason.ROOM_CLOSED],
+    ['SERVER_SHUTDOWN', DisconnectReason.SERVER_SHUTDOWN],
+    ['USER_UNAVAILABLE', DisconnectReason.USER_UNAVAILABLE],
+  ])('%s: dönülmez', async (_name, reason) => {
+    lose(reason);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.rooms).toHaveLength(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle' });
+  });
+
+  it.each([
+    ['listede açık', { dms: { kanal: {} } }],
+    ['listeden kapatılmış, arama sürüyor', { dmCalls: { kanal: {} } }],
+    ['listeden kapatılmış, arama da silinmiş', {}],
+  ])('DM aramasına dönülmez: %s', async (_name, state) => {
+    useGuild.setState({ channelGuild: {}, ...state } as never);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expect(joinVoice).not.toHaveBeenCalled();
+    expectGaveUp();
+  });
+
+  describe('başka cihazdan girilmişse', () => {
+    const stateIn = (channelId: string): never => ({ ben: { userId: 'ben', channelId } }) as never;
+
+    // setState kalıcı depolamaya yazar, o da configureClient ister
+    beforeEach(() => void vi.spyOn(useSession, 'getState').mockReturnValue({ user: { id: 'ben' } } as never));
+
+    it('başka kanaldaysa dönülmez, o oturum düşürülmez', async () => {
+      useGuild.setState({ status: 'reconnecting' });
+      lose();
+      await settle();
+      useGuild.setState({ status: 'ready', voiceStates: stateIn('diger') });
+      await settle();
+      expect(h.rooms).toHaveLength(1);
+      expect(joinVoice).not.toHaveBeenCalled();
+      expectGaveUp();
+    });
+
+    it('ağ geçidi hiç kopmadıysa da kayda bakılır', async () => {
+      useGuild.setState({ voiceStates: stateIn('diger') });
+      lose();
+      await settle();
+      expect(h.rooms).toHaveLength(1);
+      expectGaveUp();
+    });
+
+    it('kayıt aynı kanalı gösteriyorsa (eski olabilir) dönülür', async () => {
+      useGuild.setState({ voiceStates: stateIn('kanal') });
+      lose();
+      await settle();
+      expect(h.rooms).toHaveLength(2);
+      expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'connected', error: null });
+    });
+  });
+
+  it('uykuda süre aşıldıysa dönülmez', async () => {
+    sleep(31 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expectGaveUp();
+  });
+
+  it('uyanışta aralık kopmadan önce çalışsa da süre aşımı görülür', async () => {
+    sleep(8 * 60 * MINUTE);
+    await vi.advanceTimersByTimeAsync(3000); // durum hâlâ "bağlı": LiveKit kopmayı henüz fark etmedi
+    room.emit(RoomEvent.Reconnecting);
+    await vi.advanceTimersByTimeAsync(40_000);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expect(useVoice.getState()).toMatchObject({ status: 'idle', error: 'Ses bağlantısı koptu.' });
+  });
+
+  it('süreden kısa uykuda döner', async () => {
+    sleep(29 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+  });
+
+  it('uzun süredir uyanık ve bağlıysa süre işlemez', async () => {
+    await vi.advanceTimersByTimeAsync(31 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+  });
+
+  it('oda uykudan sağ çıktıysa sonraki kopmada döner', async () => {
+    sleep(31 * MINUTE);
+    await vi.advanceTimersByTimeAsync(2000);
+    room.emit(RoomEvent.Reconnected);
+    await vi.advanceTimersByTimeAsync(10_000);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+  });
+
+  it('ağ geçidini bekler, beklerken hata ve ses yok; hazır olunca döner', async () => {
+    useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.rooms).toHaveLength(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'reconnecting', error: null });
+    expect(sounds()).toEqual([]);
+    useGuild.setState({ status: 'ready' });
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'connected', error: null });
+    expect(sounds()).toEqual([]);
+  });
+
+  it('ağ geçidi gelmezse süre sonunda vazgeçer, geç gelen hazır durumu bir şey yapmaz', async () => {
+    useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(useVoice.getState().status).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(1);
+    expectGaveUp();
+    useGuild.setState({ status: 'ready' });
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+  });
+
+  it('beklerken makine yeniden uyursa uyanışta kanala girilmez', async () => {
+    useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    sleep(8 * 60 * MINUTE);
+    useGuild.setState({ status: 'ready' });
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expectGaveUp();
+  });
+
+  it('ayrılmak bekleyen denemeyi iptal eder', async () => {
+    useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    await voice.leave();
+    expect(vi.getTimerCount()).toBe(0); // bekleme süresi söküldü
+    useGuild.setState({ status: 'ready' });
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.rooms).toHaveLength(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle', error: null });
+    expect(sounds()).toEqual(['leave']);
+  });
+
+  it('beklerken başka kanala girilirse eski kanala dönülmez', async () => {
+    useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    void voice.join('diger', { silent: true });
+    await settle();
+    useGuild.setState({ status: 'ready' });
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.rooms).toHaveLength(2);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'diger', status: 'connected', error: null });
+    expect(sounds()).toEqual([]);
+  });
+
+  it.each(['throw', 'close'] as const)('dönüş başarısızsa hata gösterilir, ses bir kez (%s)', async (how) => {
+    h.failConnect = how;
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expectGaveUp();
+  });
+
+  it('dönülen oda hemen ölürse ikinci deneme yapılmaz', async () => {
+    lose();
+    await settle();
+    room = h.rooms.at(-1) as FakeRoom;
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expectGaveUp();
+  });
+
+  it('dönüş uzun sürdüyse sonraki kopma yeniden denenir', async () => {
+    lose();
+    await settle();
+    room = h.rooms.at(-1) as FakeRoom;
+    await vi.advanceTimersByTimeAsync(6 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(3);
+  });
+
+  it('hiç bağlanmamış odanın kapanması dönüş açmaz', async () => {
+    await voice.leave();
+    h.playSound.mockClear();
+    h.failConnect = 'close';
+    await voice.join('kanal', { silent: true });
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expectGaveUp();
+  });
+
+  it('"koptu" sesi çaldıysa dönünce "geri geldi" çalar', async () => {
+    room.emit(RoomEvent.Reconnecting);
+    await vi.advanceTimersByTimeAsync(2500);
+    lose();
+    await settle();
+    expect(sounds()).toEqual(['disconnect', 'reconnected']);
+  });
+
+  it('kullanıcının susturması korunur', async () => {
+    useSettings.setState({ selfMute: true });
+    lose();
+    await settle();
+    expect((h.tracks.at(-1) as FakeTrack).isMuted).toBe(true);
   });
 });
 
