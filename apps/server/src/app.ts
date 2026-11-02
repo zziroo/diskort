@@ -179,6 +179,7 @@ export async function buildApp(
     { gifs: gifs.enabled },
     undefined,
     activityIcons,
+    app.log,
   );
   const moderation = new VoiceModeration(store, voice, livekit, permissions, gateway);
   const push =

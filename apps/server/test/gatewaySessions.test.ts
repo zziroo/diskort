@@ -180,6 +180,78 @@ describe('gateway oturumları', () => {
     expect(client.of('INVALID_SESSION')).toHaveLength(0);
   });
 
+  it('kapanıştaki yan işlerde veritabanı hatası: fırlatmaz, oturum listelerden düşer', async () => {
+    const ali = await s.member('ali');
+    await connect(ali.token);
+    const g = s.ctx.gateway as unknown as {
+      sessions: Set<{ reportsWatching: boolean }>;
+      drop: (session: unknown) => void;
+    };
+    const [session] = g.sessions;
+    session!.reportsWatching = true;
+    const watching = vi.spyOn(s.ctx.voice, 'setWatching').mockImplementationOnce(dbLocked);
+    const contacts = vi.spyOn(s.ctx.permissions, 'contacts').mockImplementationOnce(dbLocked);
+    const warn = vi.spyOn(s.app.log, 'warn');
+
+    expect(() => g.drop(session)).not.toThrow();
+    expect(watching).toHaveBeenCalledOnce();
+    expect(contacts).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledTimes(2); // yutulan hata iz bırakır
+    expect(s.ctx.gateway.isOnline(ali.user.id)).toBe(false);
+    expect(s.ctx.gateway.connectedUserIds()).not.toContain(ali.user.id);
+    expect(s.ctx.gateway.openSockets()).toBe(0);
+  });
+
+  it('veritabanı hatasıyla gidemeyen çevrimdışı duyurusu sonraki duyuruda gider', async () => {
+    const ali = await s.member('ali');
+    const veli = await s.member('veli');
+    const watcher = await connect(veli.token);
+    const client = await connect(ali.token);
+    await watcher.settle();
+    const offline = () => watcher.of('PRESENCE_UPDATE').filter((p) => p.userId === ali.user.id && !p.online);
+
+    const contacts = vi.spyOn(s.ctx.permissions, 'contacts').mockImplementationOnce(dbLocked);
+    client.ws.close();
+    await closed(client.ws);
+    await watcher.settle();
+    expect(contacts).toHaveBeenCalledOnce();
+    expect(offline()).toHaveLength(0);
+
+    s.ctx.gateway.statusChanged(ali.user.id);
+    await watcher.settle();
+    expect(offline()).toHaveLength(1);
+  });
+
+  it('çevrimdışı duyurusu gidemeyen kişi aynı durumla dönünce çevrimiçi duyurusu bastırılmaz', async () => {
+    const ali = await s.member('ali');
+    const veli = await s.member('veli');
+    const watcher = await connect(veli.token);
+    const client = await connect(ali.token);
+    await watcher.settle();
+    const online = () => watcher.of('PRESENCE_UPDATE').filter((p) => p.userId === ali.user.id && p.online);
+    const before = online().length;
+
+    vi.spyOn(s.ctx.permissions, 'contacts').mockImplementationOnce(dbLocked);
+    client.ws.close();
+    await closed(client.ws);
+    await watcher.settle();
+
+    await connect(ali.token);
+    await watcher.settle();
+    expect(online()).toHaveLength(before + 1);
+  });
+
+  it('oturumlar kapatılırken veritabanı hatası bağlantıyı açık bırakmaz (şifre sıfırlama)', async () => {
+    const ali = await s.member('ali');
+    const client = await connect(ali.token);
+    const contacts = vi.spyOn(s.ctx.permissions, 'contacts').mockImplementationOnce(dbLocked);
+    const code = closed(client.ws);
+    s.ctx.gateway.disconnectUser(ali.user.id, 'Şifre sıfırlandı.');
+    expect(await code).toBe(4004);
+    expect(contacts).toHaveBeenCalledOnce();
+    expect(client.of('INVALID_SESSION')).toHaveLength(1);
+  });
+
   it('şifre değişince diğer cihazların bağlantısı kapanır, bu cihazınki kalır; bildirim jetonları silinir', async () => {
     const ali = await s.member('ali');
     const other = await connect(ali.token);
@@ -401,6 +473,30 @@ describe('gateway oturumları', () => {
       expect(device.of('SESSION_TOKEN')).toHaveLength(0);
       expect(thief.of('SESSION_TOKEN')).toHaveLength(0);
       expect((await me(token)).statusCode).toBe(401);
+    });
+
+    it('yenileme denetiminde veritabanı hatası bağlantıyı etkilemez, jeton sonraki turda yenilenir', async () => {
+      const ali = await s.member('ali');
+      const client = await connectGateway(s.app, ali.token, [CLIENT_FEATURE_DM, CLIENT_FEATURE_SESSION_TOKEN]);
+      clients.push(client);
+      const g = s.ctx.gateway as unknown as {
+        sessions: Set<{ tokenIssuedAt: number | null }>;
+        renewToken: (session: unknown) => Promise<void>;
+      };
+      const [session] = g.sessions;
+      session!.tokenIssuedAt! -= 2 * DAY_MS;
+      const spy = vi.spyOn(s.ctx.store, 'getSessionsValidAfter').mockImplementationOnce(dbLocked);
+      const warn = vi.spyOn(s.app.log, 'warn');
+
+      await expect(g.renewToken(session)).resolves.toBeUndefined();
+      expect(spy).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledOnce();
+      expect(client.of('SESSION_TOKEN')).toHaveLength(0);
+      expect(client.ws.readyState).toBe(WebSocket.OPEN);
+
+      ageAndPing(0);
+      await client.settle();
+      expect(client.of('SESSION_TOKEN')).toHaveLength(1);
     });
 
     it('bağlıyken yenilenen jeton, başka cihazdan şifre değişince geçersizleşir', async () => {

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 import {
   CLIENT_FEATURE_DM,
@@ -168,6 +168,7 @@ interface Session {
 type IdentifyData = Extract<GatewayClientMessage, { t: 'IDENTIFY' }>['d'];
 
 const OFFLINE_KEY = JSON.stringify(OFFLINE_PRESENCE);
+const ANNOUNCE_FAILED = '';
 /** Son bağlantısı kapanan hesap bu süre içinde yeniden bağlanırsa "yeniden bağlanma" sayılır */
 const RECONNECT_WINDOW_MS = 60_000;
 
@@ -221,6 +222,7 @@ export class Gateway {
     readonly statuses: StatusStore = new StatusStore(store),
     /** Sunucuda saklanan etkinlik ikonları (olmayan ikon bildirilirse etkinlik ikonsuz görünür) */
     private readonly activityIcons: { has(key: string): boolean } = { has: () => false },
+    private readonly log?: Pick<FastifyBaseLogger, 'warn'>,
   ) {
     // Kişi kendi ses durumunu her zaman alır (kanalı görme yetkisini kaybedip çıkarılırken de)
     voice.on('update', (state) =>
@@ -732,7 +734,9 @@ export class Gateway {
     if (!userId) return;
     // Bu bağlantının izleme isteği silinir (uygulama çöktü, ağ koptu); diğer cihazlarınki kalır. İstemci
     // yeniden bağlanınca (seste ise) yeniden bildirir: hayalet izleyici kalmaz.
-    if (session.reportsWatching && !this.closing) this.voice.setWatching(userId, [], session.id);
+    if (session.reportsWatching && !this.closing) {
+      this.bestEffort('izleme isteği silinemedi', () => this.voice.setWatching(userId, [], session.id));
+    }
     const set = this.byUser.get(userId);
     if (!set?.delete(session)) return;
     if (set.size === 0) {
@@ -740,7 +744,19 @@ export class Gateway {
       if (this.lastClosed.size > 5_000) this.lastClosed.clear();
       this.lastClosed.set(userId, Date.now());
     }
-    this.announcePresence(userId);
+    this.bestEffort('durum duyurusu gönderilemedi', () => this.announcePresence(userId));
+  }
+
+  /**
+   * Oturum kapanırken yapılan yan iş. Veritabanına inebilir; hata yukarı çıkarsa temizlik yarıda kalır ve
+   * `socket.on('close')` içinde yakalayan olmadığından süreç düşer. Duyuru kaybolabilir, temizlik kaybolmamalı.
+   */
+  private bestEffort(what: string, work: () => void): void {
+    try {
+      work();
+    } catch (err) {
+      this.log?.warn({ err: String(err) }, what);
+    }
   }
 
   /**
@@ -752,13 +768,21 @@ export class Gateway {
     const presence = this.presenceOf(userId);
     const key = JSON.stringify(presence);
     if (key === (this.announced.get(userId) ?? OFFLINE_KEY)) return;
+    let contacts: Set<string>;
+    try {
+      contacts = this.permissions.contacts(userId);
+    } catch (err) {
+      // Veritabanına inebilir. Duyuru gidemedi: hiçbir duruma eşit olmayan değer, sonraki çağrı ne olursa olsun duyurur
+      this.announced.set(userId, ANNOUNCE_FAILED);
+      throw err;
+    }
     if (presence.status === 'offline') this.announced.delete(userId);
     else this.announced.set(userId, key);
     const data = JSON.stringify({
       t: 'PRESENCE_UPDATE',
       d: { userId, online: presence.status !== 'offline', ...presence },
     } satisfies GatewayServerMessage);
-    for (const id of this.permissions.contacts(userId)) {
+    for (const id of contacts) {
       for (const s of this.byUser.get(id) ?? []) {
         if (s !== except && s.socket.readyState === s.socket.OPEN) this.out(s, data);
       }
@@ -891,7 +915,14 @@ export class Gateway {
     // Şifre değiştikten sonra açık kalmış bir bağlantının artık geçersiz jetonu (bu cihazın kendisi yeni
     // jetonla sürer, bkz. exceptToken; jetonu çalınmış bir yabancı da olabilir) yenilenmez: yenilense
     // şifre değişikliği o oturumu hesaptan atamazdı
-    const validAfter = this.store.getSessionsValidAfter(s.userId);
+    let validAfter: number | null;
+    try {
+      validAfter = this.store.getSessionsValidAfter(s.userId);
+    } catch (err) {
+      // Çağıranlar sonucu beklemez, yakalanmayan ret süreci düşürürdü. Yenileme sonraki pingAll turunda denenir
+      this.log?.warn({ err: String(err) }, 'jeton yenileme denetimi başarısız');
+      return;
+    }
     if (validAfter === null || s.tokenIssuedAt < validAfter) return;
     // İmza sürerken (ya da gönderim başarısızsa) tekrar denenmesin: bir sonraki yenileme bir gün sonra
     s.tokenIssuedAt = now;
