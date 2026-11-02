@@ -14,6 +14,8 @@ import { useSession } from './session';
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 5000, 10000];
 /** Öne gelince açık görünen bağlantının yoklaması: bu sürede HEARTBEAT_ACK gelmezse bağlantı ölü sayılır */
 const RESUME_PROBE_MS = 5000;
+/** Bağlantı açılışından READY'ye kadar en uzun bekleme: el sıkışma takılırsa ya da HELLO/READY gelmezse yeniden bağlanılır */
+const READY_TIMEOUT_MS = 15000;
 
 /** Aynı etkinliğin başlangıcı en çok bu kadar oynadıysa (yuvarlama, gecikme) yeniden bildirilmez */
 const ACTIVITY_START_TOLERANCE_MS = 2000;
@@ -30,6 +32,8 @@ class GatewayClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** resume() yoklamasının zaman aşımı (HEARTBEAT_ACK gelince temizlenir) */
   private probeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** READY zaman aşımı (READY gelince temizlenir) */
+  private readyTimer: ReturnType<typeof setTimeout> | null = null;
   private attempts = 0;
   private awaitingAck = false;
   private active = false;
@@ -82,6 +86,7 @@ class GatewayClient {
    * Bekleyen yeniden bağlanma denemesini beklemeden hemen bağlan (mobilde uygulama öne gelince ya da
    * ağ değişince). Bağlantı açık görünüyorsa hemen yoklanır: arka planda TCP yolu ölmüş olabilir ve
    * kapanış olayı dakikalarca gelmeyebilir. RESUME_PROBE_MS içinde yanıt gelmezse yeniden bağlanılır.
+   * READY gelmemiş bağlantı yoklanmaz (yanıt gelmez); ona READY_TIMEOUT_MS bakar.
    */
   resume(): void {
     if (!this.active) return;
@@ -91,7 +96,7 @@ class GatewayClient {
       this.open();
       return;
     }
-    if (ws.readyState !== WebSocket.OPEN || this.probeTimer !== null) return;
+    if (!this.identified || ws.readyState !== WebSocket.OPEN || this.probeTimer !== null) return;
     this.send({ t: 'HEARTBEAT' });
     this.probeTimer = setTimeout(() => {
       this.probeTimer = null;
@@ -164,7 +169,13 @@ class GatewayClient {
     if (this.identified) this.send({ t: 'STREAM_WATCH_SET', d: { userIds: next } });
   }
 
+  /**
+   * Kimlik doğrulanmadan gönderilen mesaj bağlantıyı kapatır (4003), bu yüzden READY'ye kadar IDENTIFY
+   * dışında her şey atılır. Kaybolan bir şey olmaz: boşta durumu, izleme ve etkinlikler READY'de yeniden
+   * gönderilir.
+   */
   send(msg: GatewayClientMessage): void {
+    if (!this.identified && msg.t !== 'IDENTIFY') return;
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 
@@ -200,6 +211,13 @@ class GatewayClient {
     const ws = new WebSocket(url);
     this.ws = ws;
     this.identified = false;
+    // Sıradan zamanlayıcı: uykudan çıkınca hemen çalışır ve takılı kalmış el sıkışmanın yerine yenisi açılır
+    this.readyTimer = setTimeout(() => {
+      this.readyTimer = null;
+      if (this.ws !== ws) return;
+      this.dropSocket('ready timeout');
+      if (this.active) this.scheduleReconnect();
+    }, READY_TIMEOUT_MS);
 
     ws.onmessage = (ev) => {
       let msg: GatewayServerMessage;
@@ -237,6 +255,8 @@ class GatewayClient {
       case 'READY':
         this.attempts = 0;
         this.identified = true;
+        if (this.readyTimer !== null) clearTimeout(this.readyTimer);
+        this.readyTimer = null;
         useGuild.getState().setReady(msg.d);
         useSession.getState().setUser(msg.d.user);
         // Yeni oturum etkin sayılır; boştaysak hemen bildir
@@ -283,6 +303,8 @@ class GatewayClient {
   private startHeartbeat(interval: number): void {
     this.awaitingAck = false;
     this.heartbeatTimer = setInterval(() => {
+      // READY'den önce heartbeat gönderilmez, yanıt da beklenmez; o aralığa READY_TIMEOUT_MS bakar
+      if (!this.identified) return;
       if (this.awaitingAck) {
         // Yanıt gelmedi: bağlantı ölü. Kapanış olayı ölü TCP yolunda ~1 dk gecikebilir; beklemeden
         // bırakılır ve yeniden bağlanılır.
@@ -321,9 +343,11 @@ class GatewayClient {
     if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer);
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
     if (this.probeTimer !== null) clearTimeout(this.probeTimer);
+    if (this.readyTimer !== null) clearTimeout(this.readyTimer);
     this.heartbeatTimer = null;
     this.reconnectTimer = null;
     this.probeTimer = null;
+    this.readyTimer = null;
   }
 }
 

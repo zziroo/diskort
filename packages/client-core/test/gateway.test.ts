@@ -40,6 +40,13 @@ class FakeSocket {
     this.readyState = FakeSocket.OPEN;
     this.receive({ t: 'HELLO', d: { heartbeatInterval } });
   }
+  /** Sunucu kimliği doğruladı */
+  ready(): void {
+    this.receive({
+      t: 'READY',
+      d: { user: me, users: [], guilds: [], voiceStates: [], online: [], lastMessageIds: {}, readStates: {}, mentionCounts: {} },
+    });
+  }
 }
 
 beforeEach(async () => {
@@ -83,6 +90,8 @@ describe('gateway bağlantısı', () => {
     // Yeniden bağlanma zamanlayıcısı beklerken connect()/resume() hemen bağlanır
     gateway.connect();
     expect(FakeSocket.opened).toHaveLength(2);
+    FakeSocket.opened[1]!.hello(60_000);
+    FakeSocket.opened[1]!.ready();
     // Bekleyen zamanlayıcı ikinci bir bağlantı açmaz
     vi.advanceTimersByTime(30_000);
     expect(FakeSocket.opened).toHaveLength(2);
@@ -134,6 +143,7 @@ describe('ölü bağlantı', () => {
     const first = FakeSocket.opened[0]!;
     first.dead = true;
     first.hello(1000);
+    first.ready();
 
     vi.advanceTimersByTime(1000); // HEARTBEAT gönderildi
     expect(first.sent).toContain('HEARTBEAT');
@@ -155,6 +165,7 @@ describe('ölü bağlantı', () => {
     gateway.connect();
     const ws = FakeSocket.opened[0]!;
     ws.hello(1000);
+    ws.ready();
     for (let i = 0; i < 5; i++) {
       vi.advanceTimersByTime(1000);
       ws.receive({ t: 'HEARTBEAT_ACK' });
@@ -168,6 +179,7 @@ describe('ölü bağlantı', () => {
     gateway.connect();
     const first = FakeSocket.opened[0]!;
     first.hello(60_000);
+    first.ready();
     first.dead = true;
 
     gateway.resume();
@@ -188,11 +200,140 @@ describe('ölü bağlantı', () => {
     gateway.connect();
     const ws = FakeSocket.opened[0]!;
     ws.hello(60_000);
+    ws.ready();
 
     gateway.resume();
     ws.receive({ t: 'HEARTBEAT_ACK' });
     vi.advanceTimersByTime(10_000);
     expect(ws.closed).toBe(false);
     expect(FakeSocket.opened).toHaveLength(1);
+  });
+});
+
+describe('READY öncesi', () => {
+  it('IDENTIFY dışında her şey atılır; boşta durumu READY ile gider', () => {
+    gateway.connect();
+    const ws = FakeSocket.opened[0]!;
+    ws.hello(60_000);
+    expect(ws.sent).toEqual(['IDENTIFY']);
+
+    gateway.send({ t: 'TYPING_START', d: { channelId: 'c1' } });
+    gateway.setIdle(true);
+    expect(ws.sent).toEqual(['IDENTIFY']);
+
+    ws.ready();
+    expect(ws.sent).toEqual(['IDENTIFY', 'IDLE_SET']);
+    gateway.send({ t: 'TYPING_START', d: { channelId: 'c1' } });
+    expect(ws.sent).toEqual(['IDENTIFY', 'IDLE_SET', 'TYPING_START']);
+    gateway.setIdle(false); // Sonraki testlere boşta durumu kalmasın
+  });
+
+  it('resume() hiçbir şey yapmaz: yoklama gönderilmez, yoklama zaman aşımı çalışmaz', () => {
+    vi.useFakeTimers();
+    gateway.connect();
+    const ws = FakeSocket.opened[0]!;
+    ws.hello(60_000);
+
+    gateway.resume();
+    expect(ws.sent).toEqual(['IDENTIFY']);
+    vi.advanceTimersByTime(14_000);
+    expect(ws.closed).toBe(false);
+    expect(FakeSocket.opened).toHaveLength(1);
+  });
+
+  it('heartbeat aralığı geçse de gönderilmez ve bağlantı bırakılmaz', () => {
+    vi.useFakeTimers();
+    gateway.connect();
+    const ws = FakeSocket.opened[0]!;
+    ws.hello(1000);
+
+    vi.advanceTimersByTime(5000);
+    expect(ws.sent).toEqual(['IDENTIFY']);
+    expect(ws.closed).toBe(false);
+
+    // READY'den sonra heartbeat normal işler
+    ws.ready();
+    vi.advanceTimersByTime(1000);
+    expect(ws.sent).toEqual(['IDENTIFY', 'HEARTBEAT']);
+  });
+});
+
+describe('READY zaman aşımı', () => {
+  it('el sıkışma takılırsa bağlantı bırakılır ve yeniden bağlanılır', () => {
+    vi.useFakeTimers();
+    gateway.connect();
+    const first = FakeSocket.opened[0]!;
+    first.dead = true; // Soket hiç açılmadı, HELLO da gelmedi
+
+    vi.advanceTimersByTime(14_999);
+    expect(first.closed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(first.closed).toBe(true);
+    expect(first.onclose).toBeNull();
+    expect(useGuild.getState().status).toBe('reconnecting');
+
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.opened).toHaveLength(2);
+  });
+
+  it('HELLO geldi READY gelmediyse de yeniden bağlanılır; yeni bağlantının süresi baştan başlar', () => {
+    vi.useFakeTimers();
+    gateway.connect();
+    const first = FakeSocket.opened[0]!;
+    first.dead = true;
+    first.hello(60_000);
+
+    vi.advanceTimersByTime(15_000 + 500);
+    expect(first.closed).toBe(true);
+    expect(FakeSocket.opened).toHaveLength(2);
+
+    const second = FakeSocket.opened[1]!;
+    vi.advanceTimersByTime(14_999);
+    expect(second.closed).toBe(false);
+  });
+
+  it('READY süreyi iptal eder', () => {
+    vi.useFakeTimers();
+    gateway.connect();
+    const ws = FakeSocket.opened[0]!;
+    ws.hello(60_000);
+    ws.ready();
+
+    vi.advanceTimersByTime(30_000);
+    expect(ws.closed).toBe(false);
+    expect(FakeSocket.opened).toHaveLength(1);
+  });
+
+  it('süre dolunca heartbeat ikinci bir yeniden bağlanma kurmaz', () => {
+    vi.useFakeTimers();
+    gateway.connect();
+    const first = FakeSocket.opened[0]!;
+    first.dead = true;
+    first.hello(1000);
+
+    // Süre dolduğu anda heartbeat da çalışır; ardından yalnızca bir yeni bağlantı açılmalı
+    vi.advanceTimersByTime(15_000);
+    expect(first.closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.opened).toHaveLength(2);
+    FakeSocket.opened[1]!.hello(60_000);
+    FakeSocket.opened[1]!.ready();
+    vi.advanceTimersByTime(30_000);
+    expect(FakeSocket.opened).toHaveLength(2);
+  });
+
+  it('kapanış olayı ve çıkış süreyi temizler', () => {
+    vi.useFakeTimers();
+    gateway.connect();
+    FakeSocket.opened[0]!.close(4000); // Kapanış: yalnızca yeniden bağlanma zamanlayıcısı kalır
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(500);
+    expect(FakeSocket.opened).toHaveLength(2);
+
+    gateway.disconnect();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(30_000);
+    expect(FakeSocket.opened).toHaveLength(2);
   });
 });

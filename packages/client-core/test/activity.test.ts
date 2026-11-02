@@ -150,9 +150,9 @@ describe('etkinlik bildirimi', () => {
     setActivities([game(60_000, { icon: 'b'.repeat(64) })]);
     expect(ws.activities).toEqual([]);
 
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(10_000);
     ws.receive({ t: 'READY', d: ready });
-    expect(ws.activities).toEqual([[game(90_000, { icon: 'b'.repeat(64) })]]);
+    expect(ws.activities).toEqual([[game(70_000, { icon: 'b'.repeat(64) })]]);
   });
 
   it('yeniden bağlanınca tam liste yeniden bildirilir; süreler yerel başlangıçtan hesaplanır', () => {
