@@ -844,7 +844,8 @@ export class Store {
   constructor(file: string) {
     if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+    // busy_timeout önce: WAL'a geçiş de kilit ister. Yönetim araçları (admin-cli, feedback-cli) aynı dosyaya yazar
+    this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.migrate();
   }
 

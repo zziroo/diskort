@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
-import { SignJWT, decodeJwt, jwtVerify } from 'jose';
+import { SignJWT, decodeJwt, jwtVerify, type JWTPayload } from 'jose';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { User } from '@diskort/shared';
 import type { Store } from './db.js';
@@ -73,17 +73,19 @@ export class AuthService {
   /**
    * Geçerli bir oturum jetonuysa kullanıcıyı döner. Şifre değiştikten önce verilmiş jetonlar geçersizdir.
    * Hesap hiçbir sunucunun üyesi olmasa da giriş yapabilir (sunucu kurar ya da davetle katılır).
+   * Veritabanı hatası yukarı çıkar: null "jeton geçersiz" demektir ve istemcinin oturumunu kapatır.
    */
   async userFromToken(token: string): Promise<User | null> {
+    let payload: JWTPayload;
     try {
-      const { payload } = await jwtVerify(token, this.key, { algorithms: ['HS256'] });
-      if (!payload.sub || payload.iat === undefined) return null;
-      const validAfter = this.store.getSessionsValidAfter(payload.sub);
-      if (validAfter === null || payload.iat * 1000 < validAfter) return null;
-      return this.store.getUser(payload.sub);
+      ({ payload } = await jwtVerify(token, this.key, { algorithms: ['HS256'] }));
     } catch {
       return null;
     }
+    if (!payload.sub || payload.iat === undefined) return null;
+    const validAfter = this.store.getSessionsValidAfter(payload.sub);
+    if (validAfter === null || payload.iat * 1000 < validAfter) return null;
+    return this.store.getUser(payload.sub);
   }
 
   /** Fastify preHandler: Authorization: Bearer <token> */

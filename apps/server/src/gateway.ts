@@ -776,6 +776,8 @@ export class Gateway {
       }
       return;
     }
+    // IDENTIFY sürerken gelen mesaj bağlantıyı kapatmaz (güncel istemci READY'den önce göndermez, eskileri gönderebilir)
+    if (s.identifying) return;
     if (!s.userId) {
       s.socket.close(4003, 'not identified');
       return;

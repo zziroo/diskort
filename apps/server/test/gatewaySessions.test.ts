@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLIENT_FEATURE_DM,
   CLIENT_FEATURE_PRESENCE,
@@ -34,6 +34,28 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Bağlantının kapanma kodunu bekler */
 const closed = (ws: WebSocket): Promise<number> =>
   ws.readyState === ws.CLOSED ? Promise.resolve(-1) : new Promise((r) => ws.once('close', (code) => r(code)));
+
+/** Kimliksiz bağlantı: HELLO gelince döner; gelen mesajların türleri `seen` listesine düşer */
+const rawClient = async (): Promise<{ ws: WebSocket; seen: GatewayServerMessage['t'][] }> => {
+  const { port } = s.app.server.address() as { port: number };
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/gateway`);
+  const seen: GatewayServerMessage['t'][] = [];
+  await new Promise<void>((resolve) =>
+    ws.on('message', (raw) => {
+      const { t } = JSON.parse(raw.toString()) as GatewayServerMessage;
+      seen.push(t);
+      if (t === 'HELLO') resolve();
+    }),
+  );
+  return { ws, seen };
+};
+
+const identifyWith = (ws: WebSocket, token: string): void =>
+  ws.send(JSON.stringify({ t: 'IDENTIFY', d: { token, features: [CLIENT_FEATURE_DM] } }));
+
+const dbLocked = (): never => {
+  throw new Error('database is locked');
+};
 
 describe('gateway oturumları', () => {
   it("eski istemcinin bildirdiği kaldırılmış 'cosmetic_packs' ve bilinmeyen bayraklar yok sayılır", async () => {
@@ -78,6 +100,84 @@ describe('gateway oturumları', () => {
     expect(s.ctx.gateway.connectedUserIds()).not.toContain(ali.user.id);
     expect(s.ctx.gateway.sessionsInfo()).toEqual([]);
     expect(s.ctx.gateway.openSockets()).toBe(0);
+  });
+
+  it('kimlik doğrulanırken gelen mesajlar yok sayılır: bağlantı kapanmaz, READY gelir, sonrası normal işler', async () => {
+    const ali = await s.member('ali');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const original = s.ctx.auth.userFromToken.bind(s.ctx.auth);
+    s.ctx.auth.userFromToken = async (token: string): Promise<User | null> => {
+      await gate;
+      return original(token);
+    };
+
+    const { ws, seen } = await rawClient();
+    identifyWith(ws, ali.token);
+    await wait(50); // IDENTIFY sunucuda jeton denetiminde bekliyor
+    ws.send(JSON.stringify({ t: 'HEARTBEAT' }));
+    ws.send(JSON.stringify({ t: 'IDLE_SET', d: { idle: true } }));
+    await wait(50);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(seen).not.toContain('HEARTBEAT_ACK');
+
+    release();
+    await wait(100);
+    expect(seen).toContain('READY');
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(seen).not.toContain('HEARTBEAT_ACK'); // yok sayılan mesaj sonradan işlenmez
+    expect(s.ctx.gateway.presenceOf(ali.user.id).status).toBe('online');
+
+    ws.send(JSON.stringify({ t: 'HEARTBEAT' }));
+    await wait(50);
+    expect(seen).toContain('HEARTBEAT_ACK');
+    ws.close();
+    await closed(ws);
+  });
+
+  it('IDENTIFY göndermeden gelen mesaj bağlantıyı 4003 ile kapatır', async () => {
+    const { ws } = await rawClient();
+    const code = closed(ws);
+    ws.send(JSON.stringify({ t: 'HEARTBEAT' }));
+    expect(await code).toBe(4003);
+  });
+
+  it('IDENTIFY jeton denetiminde veritabanı hatası: 4000 ile kapanır (çıkış yok), yeniden bağlanan girer', async () => {
+    const ali = await s.member('ali');
+    for (const method of ['getSessionsValidAfter', 'getUser'] as const) {
+      const spy = vi.spyOn(s.ctx.store, method).mockImplementationOnce(dbLocked);
+      const { ws, seen } = await rawClient();
+      const code = closed(ws);
+      identifyWith(ws, ali.token);
+      expect(await code).toBe(4000);
+      expect(seen).not.toContain('INVALID_SESSION');
+      expect(spy).toHaveBeenCalledOnce();
+      spy.mockRestore();
+    }
+    expect(s.ctx.gateway.isOnline(ali.user.id)).toBe(false);
+
+    const client = await connect(ali.token);
+    expect(client.ready.user.id).toBe(ali.user.id);
+  });
+
+  it('geçersiz jetonla IDENTIFY yine INVALID_SESSION ve 4004 alır', async () => {
+    const { ws, seen } = await rawClient();
+    const code = closed(ws);
+    identifyWith(ws, 'jeton-degil');
+    expect(await code).toBe(4004);
+    expect(seen).toContain('INVALID_SESSION');
+  });
+
+  it('SESSION_TOKEN_SET denetiminde veritabanı hatası: 4000 ile kapanır, oturum geçersiz sayılmaz', async () => {
+    const ali = await s.member('ali');
+    const client = await connect(ali.token);
+    const token = await s.ctx.auth.issueToken(ali.user.id, Date.now() - 5_000);
+    const spy = vi.spyOn(s.ctx.store, 'getSessionsValidAfter').mockImplementationOnce(dbLocked);
+    const code = closed(client.ws);
+    client.ws.send(JSON.stringify({ t: 'SESSION_TOKEN_SET', d: { token } }));
+    expect(await code).toBe(4000);
+    expect(spy).toHaveBeenCalledOnce();
+    expect(client.of('INVALID_SESSION')).toHaveLength(0);
   });
 
   it('şifre değişince diğer cihazların bağlantısı kapanır, bu cihazınki kalır; bildirim jetonları silinir', async () => {

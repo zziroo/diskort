@@ -219,6 +219,28 @@ describe('kimlik doğrulama ve davetler', () => {
   it('jetonsuz istek 401 döner', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/me' })).statusCode).toBe(401);
   });
+
+  it('jeton denetiminde veritabanı hatası 500 döner (istemciyi çıkaran 401 değil); bozuk jeton 401 kalır', async () => {
+    const token = await adminToken();
+    const me = (bearer: string) =>
+      app.inject({ method: 'GET', url: '/api/me', headers: { authorization: `Bearer ${bearer}` } });
+    for (const method of ['getSessionsValidAfter', 'getUser'] as const) {
+      const spy = vi.spyOn(ctx.store, method).mockImplementationOnce(() => {
+        throw new Error('database is locked');
+      });
+      expect((await me(token)).statusCode).toBe(500);
+      expect(spy).toHaveBeenCalledOnce();
+      spy.mockRestore();
+    }
+    expect((await me(token)).statusCode).toBe(200);
+    expect((await me(`${token}x`)).statusCode).toBe(401);
+    expect((await me('jeton-degil')).statusCode).toBe(401);
+    expect(await ctx.auth.userFromToken('jeton-degil')).toBeNull();
+  });
+
+  it('veritabanı bağlantısı kilidi hata vermeden önce bekler (busy_timeout)', () => {
+    expect(ctx.store.db.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
+  });
 });
 
 describe('ses kanalları', () => {
