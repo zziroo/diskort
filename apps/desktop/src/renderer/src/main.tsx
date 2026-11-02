@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AppCrashScreen, ErrorBoundary } from './components/ErrorBoundary';
 import { installTurnPortRewrite } from './features/voice/turnPort';
+import { installShiftHeld } from './lib/shiftHeld';
 import { installTheme } from './lib/theme';
 import { voice } from './features/voice/voiceClient';
 import { micDebug } from './features/voice/micProcessor';
@@ -15,6 +16,7 @@ import './styles.css';
 
 // Kayıtlı tema ilk çizimden önce uygulanır (varsayılan temanın bir an görünüp seçili temaya dönmemesi için)
 installTheme();
+installShiftHeld();
 
 // Herhangi bir WebRTC bağlantısı kurulmadan önce (bkz. turnPort.ts)
 installTurnPortRewrite();

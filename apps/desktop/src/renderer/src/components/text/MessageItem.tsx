@@ -209,7 +209,7 @@ export const MessageItem = memo(function MessageItem({ message, author, compact,
   return (
     <div
       className={cn(
-        'group relative flex pr-12 pl-4 transition-colors duration-75 hover:bg-msg-hover',
+        'msg-row group relative flex pr-12 pl-4 transition-colors duration-75 hover:bg-msg-hover',
         compact ? 'py-0.5' : 'mt-[17px] py-0.5',
         mentioned && !replying && 'border-l-2 border-warn bg-warn/[0.08] pl-[14px] hover:bg-warn/[0.12]',
         replying && 'border-l-2 border-brand bg-brand/[0.08] pl-[14px] hover:bg-brand/[0.12]',
@@ -410,7 +410,7 @@ export const MessageItem = memo(function MessageItem({ message, author, compact,
           )}
           {canDelete && (
             <button
-              className="p-1.5 text-danger transition-colors hover:bg-bg-hover"
+              className="shift-danger p-1.5 text-danger transition-colors hover:bg-bg-hover"
               data-tooltip="Sil (Shift ile onaysız)"
               aria-label="Sil"
               onClick={(e) => void confirmDelete(message, e.shiftKey)}

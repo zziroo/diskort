@@ -285,7 +285,7 @@ function PinsPopout({
                     <button
                       data-tooltip="Sabitlemeyi kaldır (Shift ile onaysız)"
                       aria-label="Sabitlemeyi kaldır"
-                      className="press-icon rounded bg-bg-side p-1 text-text-muted shadow hover:bg-bg-hover hover:text-text-head"
+                      className="shift-danger press-icon rounded bg-bg-side p-1 text-text-muted shadow hover:bg-bg-hover hover:text-text-head"
                       onClick={(e) => void confirmUnpin(m, e.shiftKey)}
                     >
                       <X size={14} className="ico-rotate" />

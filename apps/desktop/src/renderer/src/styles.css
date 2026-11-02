@@ -138,6 +138,18 @@
   }
 }
 
+/* Shift basılıyken (lib/shiftHeld.ts) onaysız çalışacak düğme dolu kırmızıya döner; üstüne gelinince mesaj satırı da kızarır */
+:root[data-shift-held] .shift-danger {
+  background-color: var(--color-danger);
+  color: #fff;
+}
+:root[data-shift-held] .shift-danger:hover {
+  background-color: var(--color-danger-hover);
+}
+:root[data-shift-held] .msg-row:has(.shift-danger:hover) {
+  background-color: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+
 /* Konuşan kullanıcı yeşil halkası: yumuşak açılır, konuşma bitince biraz daha yavaş söner */
 .avatar-ring {
   box-shadow:
