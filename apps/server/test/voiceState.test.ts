@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { VoiceStateStore } from '../src/voiceState.js';
 
 describe('ses durumu', () => {
@@ -31,5 +31,24 @@ describe('ses durumu', () => {
     voice.join('u1', 'c2', false, 'PA_2');
     expect(voice.leave('u1', 'c1', 'PA_1')).toBe(false);
     expect(voice.get('u1')?.channelId).toBe('c2');
+  });
+
+  it('ayrılış dinleyicisi hata verirse sonraki dinleyiciler ve izleyici temizliği sürer', () => {
+    const warn = vi.fn();
+    const voice = new VoiceStateStore({ warn });
+    const deleted: string[] = [];
+    voice.on('delete', () => {
+      throw new Error('database is locked');
+    });
+    voice.on('delete', (d) => deleted.push(d.userId));
+    voice.join('izleyen', 'c1');
+    voice.join('yayinci', 'c1', true);
+    voice.setWatching('izleyen', ['yayinci']);
+    expect(voice.get('izleyen')?.watching).toEqual(['yayinci']);
+
+    expect(voice.leave('yayinci', 'c1')).toBe(true);
+    expect(deleted).toEqual(['yayinci']);
+    expect(voice.get('izleyen')?.watching).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'ses ayrılışı işlenemedi');
   });
 });

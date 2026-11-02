@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { STREAM_WATCH_MAX, type StreamSourceKind, type VoiceState } from '@diskort/shared';
+import type { FastifyBaseLogger } from 'fastify';
 
 type SelfFlags = { selfMute: boolean; selfDeaf: boolean };
 export type StreamSource = { name: string; kind: StreamSourceKind };
@@ -47,6 +48,10 @@ export class VoiceStateStore extends EventEmitter<VoiceEvents> {
   private readonly watchRequests = new Map<string, Map<string, Set<string>>>();
   /** Kanala katılırken kişinin o kanalın sunucusundaki susturma/sağırlaştırma durumu */
   private flagsOf: ((userId: string, channelId: string) => ServerFlags) | null = null;
+
+  constructor(private readonly log?: Pick<FastifyBaseLogger, 'warn'>) {
+    super();
+  }
 
   setFlagResolver(fn: (userId: string, channelId: string) => ServerFlags): void {
     this.flagsOf = fn;
@@ -286,7 +291,14 @@ export class VoiceStateStore extends EventEmitter<VoiceEvents> {
     this.states.delete(userId);
     this.sessions.delete(userId);
     this.streamSources.delete(userId);
-    this.emit('delete', { userId, channelId: prev.channelId });
+    // Durum silindi, yeniden denenmez: bir dinleyicinin hatası sonrakileri ve izleyici temizliğini atlatmasın
+    for (const listener of this.rawListeners('delete')) {
+      try {
+        listener({ userId, channelId: prev.channelId });
+      } catch (err) {
+        this.log?.warn({ err: String(err) }, 'ses ayrılışı işlenemedi');
+      }
+    }
     // Ayrılan yayıncının izleyicileri düşer; ayrılanın kendi isteği kalır (bkz. watchRequests)
     this.refreshViewersOf(userId, true);
   }

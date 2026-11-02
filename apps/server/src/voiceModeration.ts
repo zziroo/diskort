@@ -97,7 +97,13 @@ export class VoiceModeration {
     const key = `${channelId}:${sources.join(',')}`;
     if (this.applied.get(userId) === key) return;
     this.applied.set(userId, key);
-    await this.livekit.setPublishSources(channelId, userId, sources);
+    try {
+      await this.livekit.setPublishSources(channelId, userId, sources);
+    } catch (err) {
+      // Uygulanmadı: kayıt silinir, sonraki eşitleme (enforceAll) yeniden dener. Katılımcı ayrılmışsa durumu da düşer.
+      if (this.applied.get(userId) === key) this.applied.delete(userId);
+      this.log?.warn({ err: String(err) }, 'ses izni uygulanamadı');
+    }
   }
 
   /** Sunucu tarafı susturma/sağırlaştırma: o sunucuda kalıcıdır, kanaldan çıkıp girince de sürer. */

@@ -157,7 +157,7 @@ export async function buildApp(
   const guild = store.ensureGuild(config.guildName);
   const permissions = new PermissionService(store);
   const auth = new AuthService(config.jwtSecret, store, permissions);
-  const voice = new VoiceStateStore();
+  const voice = new VoiceStateStore(app.log);
   const livekit = opts.livekit ?? new LiveKitService(config);
   const releases = opts.releases ?? new ReleaseService(config.githubRepo);
   const clientVersions = new ClientVersionPolicy(releases, config.enforceClientVersion, config.minMobileVersions);

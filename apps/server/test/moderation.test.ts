@@ -236,6 +236,22 @@ describe('ses izinleri: veritabanı hatası süreci düşürmez', () => {
     expect(s.livekit.of('setPublishSources').map((args) => args.slice(0, 2))).toEqual([[channel.id, ali.user.id]]);
   });
 
+  it('LiveKit izni reddederse ret yok, loglanır; sonraki eşitleme yeniden dener', async () => {
+    const ali = await s.member('ali');
+    const channel = s.channel('voice');
+    s.ctx.voice.join(ali.user.id, channel.id);
+    const set = vi.spyOn(s.livekit, 'setPublishSources').mockRejectedValueOnce(new Error('livekit geçici hata'));
+    const warn = vi.spyOn(s.app.log, 'warn');
+
+    await expect(s.ctx.moderation.enforceAll()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'ses izni uygulanamadı');
+    await s.ctx.moderation.enforceAll();
+    expect(set).toHaveBeenCalledTimes(2);
+    // Uygulandıktan sonra gereksiz LiveKit çağrısı yok
+    await s.ctx.moderation.enforceAll();
+    expect(set).toHaveBeenCalledTimes(2);
+  });
+
   it('DM aramasındaki kişi denetlenemezse ret yok, loglanır', async () => {
     const ali = await s.member('ali');
     const veli = await s.member('veli');

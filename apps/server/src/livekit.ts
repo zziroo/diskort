@@ -92,13 +92,12 @@ export class LiveKitService {
     return token.toJwt();
   }
 
-  /** Bağlı katılımcının yayın izinlerini değiştirir (izni alınan kaynağın yayını LiveKit'te kapanır). */
+  /**
+   * Bağlı katılımcının yayın izinlerini değiştirir (izni alınan kaynağın yayını LiveKit'te kapanır). Hata çağırana
+   * gider: izin uygulanmadıysa yeniden denenmeli (bkz. VoiceModeration.enforce).
+   */
   async setPublishSources(channelId: string, userId: string, sources: PublishSources): Promise<void> {
-    try {
-      await this.rooms.updateParticipant(voiceRoomName(channelId), userId, { permission: permission(sources) });
-    } catch {
-      // Katılımcı ayrılmış olabilir.
-    }
+    await this.rooms.updateParticipant(voiceRoomName(channelId), userId, { permission: permission(sources) });
   }
 
   /** Katılımcının mikrofonunu sunucudan susturur (izin de ayrıca alınır; bu anında sessizlik içindir). */
