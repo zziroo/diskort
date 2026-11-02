@@ -5,7 +5,8 @@
  * mikrofon izi bir AnalyserNode'a bağlanır; seviyeler tek ortak zamanlayıcıyla okunur.
  *
  * Ölçüm kişi başı ses seviyesinden (ve yerel susturmadan) öncedir: halka, Discord'daki gibi kişinin konuştuğunu
- * gösterir, senin onu ne kadar duyduğunu değil. Yayın sesi (ekran paylaşımı) ölçülmez.
+ * gösterir, senin onu ne kadar duyduğunu değil. Sağırken ölçüm sürer ama halkalar gösterilmez (voiceClient
+ * `publishSpeaking`). Yayın sesi (ekran paylaşımı) ölçülmez.
  */
 
 /**

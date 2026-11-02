@@ -779,3 +779,33 @@ describe('yayın kaynağının adı', () => {
     expect(reportSource).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('sağırken konuşma halkaları', () => {
+  it('başkalarının halkası söner, sağırlık kalkınca geri gelir', async () => {
+    const p = await joinAndWatch('konusan');
+    room.emit(RoomEvent.ActiveSpeakersChanged, [p]);
+    expect(useVoice.getState().speaking).toEqual({ konusan: true });
+    useSettings.setState({ selfDeaf: true });
+    expect(useVoice.getState().speaking).toEqual({});
+    room.emit(RoomEvent.ActiveSpeakersChanged, [p]);
+    expect(useVoice.getState().speaking).toEqual({});
+    useSettings.setState({ selfDeaf: false });
+    expect(useVoice.getState().speaking).toEqual({ konusan: true });
+  });
+
+  it('yalnız mikrofon kapalıyken halkalar yanmaya devam eder', async () => {
+    const p = await joinAndWatch('konusan');
+    room.emit(RoomEvent.ActiveSpeakersChanged, [p]);
+    useSettings.setState({ selfMute: true });
+    expect(useVoice.getState().speaking).toEqual({ konusan: true });
+  });
+
+  it('sunucuda sağırlaştırılınca da söner', async () => {
+    const p = await joinAndWatch('konusan');
+    vi.spyOn(useSession, 'getState').mockReturnValue({ user: { id: 'ben' } } as never);
+    room.emit(RoomEvent.ActiveSpeakersChanged, [p]);
+    const state = { userId: 'ben', channelId: 'kanal', serverDeaf: true };
+    useGuild.setState({ voiceStates: { ben: state } as never });
+    expect(useVoice.getState().speaking).toEqual({});
+  });
+});

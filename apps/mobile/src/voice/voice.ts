@@ -6,6 +6,7 @@ import {
   gateway,
   guildSoundUrl,
   introSoundUrl,
+  isGuildVoiceChannel,
   reportClientError,
   reportVoiceLog,
   setStreamVolume,
@@ -170,6 +171,29 @@ const WATCH_RESTORE_GRACE_MS = 5000;
  * Reconnected öteki bitmeden gelir. Mikrofon açılamadıysa (ör. o an meşgul) yeniden deneme de bu kadar sonra.
  */
 const REPUBLISH_SETTLE_MS = 2000;
+/** LiveKit vazgeçince kanala kendiliğinden dönülebilen kopmalar: ağ türü, belirsiz. Sunucunun ya da kullanıcının bitirdikleri burada yok. */
+const REJOINABLE_REASONS: ReadonlySet<DisconnectReason | undefined> = new Set([
+  undefined,
+  DisconnectReason.UNKNOWN_REASON,
+  DisconnectReason.STATE_MISMATCH,
+  DisconnectReason.JOIN_FAILURE,
+  DisconnectReason.SIGNAL_CLOSE,
+]);
+/** Bağlantı bundan uzun süredir yoksa dönülmez: saatlerce donmuş uygulama sonradan açık mikrofonla odaya girmesin */
+const REJOIN_MAX_GAP_MS = 30 * 60_000;
+/** Ağ geçidinin hazır olması en çok bu kadar beklenir */
+const REJOIN_GATEWAY_WAIT_MS = 30_000;
+/** Beklerken ağ geçidi bu aralıkla dürtülür: kendi yeniden bağlanma zamanlayıcısı Android arka planda durur */
+const REJOIN_GATEWAY_POKE_MS = 5000;
+/**
+ * Dönüşte bağlanma için üst sınır. LiveKit'in el sıkışma süreleri düz setTimeout'tur, Android arka planda dolmaz:
+ * takılan deneme bildirimi ve servisi açık bırakmasın. Öndeyken LiveKit'in kendi süreleri (15 + 15 sn) daha önce biter.
+ */
+const REJOIN_CONNECT_WAIT_MS = 45_000;
+/** Dönüşten sonra bu süre içindeki kopmada yeniden denenmez (LiveKit'in vazgeçmesi de dakika sürer): döngü olmasın */
+const REJOIN_COOLDOWN_MS = 5 * 60_000;
+/** Bağlantının sağlam görüldüğü an bu aralıkla damgalanır (bkz. startAliveTimer) */
+const ALIVE_TICK_MS = 10_000;
 
 /** LiveKit bu kaynağı yayınlamaya izin veriyor mu (sunucu izni kanaldaki yetkilere göre verir) */
 function canPublish(room: Room, source: number): boolean {
@@ -278,9 +302,17 @@ class MobileVoiceClient {
   private heldWatch: string | null = null;
   private watchGraceTimer: ReturnType<typeof setTimeout> | null = null;
   private restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Bağlantının sağlam görüldüğü son an (bağlanılmamışsa 0); donma boyunca ilerlemez (bkz. startAliveTimer) */
+  private aliveAt = 0;
+  private aliveTimer: ReturnType<typeof CriticalTimers.setInterval> | null = null;
+  private lastRejoinAt = 0;
+  /** Kendiliğinden dönüşte ağ geçidi beklemesini keser (bkz. gatewayReady) */
+  private cancelGatewayWait: (() => void) | null = null;
   /** Ses oturumu ve ön plan servisi açık mı (yeniden katılmada kapatılmadan korunurlar) */
   private audioSessionActive = false;
   private serviceRunning = false;
+  /** Son ActiveSpeakersChanged; sağırlık değişince halkalar bundan yeniden hesaplanır */
+  private activeSpeakers: { identity: string; isLocal: boolean }[] = [];
 
   constructor() {
     // DPDFNet yetişemedi ya da hata verdi: mikrofon WebRTC'nin standart gürültü engellemesiyle yeniden açılır
@@ -379,8 +411,8 @@ class MobileVoiceClient {
 
   /**
    * @param opts.silent Sessiz geri dönüş ("başka cihaz" uyarısından sonra): katılma sesi çalınmaz
-   * @param opts.rejoin Süren sesten yeniden katılma (taşınma, "başka cihaz" sonrası geri dönüş; uygulama arka
-   * planda olabilir): yalnızca oda değişir, ses oturumu ve ön plan servisi kapatılmaz. Android 12+ arka
+   * @param opts.rejoin Süren sesten yeniden katılma (taşınma, "başka cihaz" sonrası ya da uzun kopuştan sonra geri
+   * dönüş; uygulama arka planda olabilir): yalnızca oda değişir, ses oturumu ve ön plan servisi kapatılmaz. Android 12+ arka
    * planda ön plan servisini yeniden başlatmaya izin vermez.
    */
   async join(channelId: string, opts: { silent?: boolean; rejoin?: boolean } = {}): Promise<void> {
@@ -445,6 +477,7 @@ class MobileVoiceClient {
         listenOnly: !micGranted,
         micAllowed: canPublish(room, PROTO_SOURCE.microphone),
       });
+      this.startAliveTimer();
       // Katılma sesi bağlantı ve ses oturumu (görüşme kipi) kurulduktan sonra: önce çalınca kip değişirken
       // kesiliyordu
       this.channelSounds.quiet();
@@ -768,7 +801,9 @@ class MobileVoiceClient {
 
   private notificationText(): string {
     const s = getSettings();
-    if (useVoice.getState().status === 'reconnecting') return 'Yeniden bağlanıyor…';
+    const status = useVoice.getState().status;
+    // "Bağlanıyor": servis çalışırken yalnızca süren sesten yeniden katılmada görülür, ilk katılmada servis henüz yok
+    if (status === 'reconnecting' || status === 'connecting') return 'Yeniden bağlanıyor…';
     if (s.selfDeaf) return 'Sağırlaştırıldın';
     if (selfVoiceState()?.serverDeaf) return 'Sunucuda sağırlaştırıldın';
     if (!useVoice.getState().micAllowed) return selfVoiceState()?.serverMute ? 'Sunucuda susturuldun' : 'Yalnızca dinliyorsun';
@@ -776,9 +811,22 @@ class MobileVoiceClient {
     return 'Sesli sohbete bağlı';
   }
 
+  /** Sağırken başkalarının halkası yanmaz: duymadığın konuşmayı halkadan da izleyemezsin */
+  private publishSpeaking(): void {
+    // Konuşan kümesi değişmediyse yazma: her olayda yeni nesne, tüm abonelerin yeniden çizilmesine
+    // ve Animated düğümlerinin birikmesine (Android OOM) yol açıyordu. Karşılaştırma sıradan bağımsız.
+    const deaf = this.deafened();
+    const prev = useVoice.getState().speaking;
+    const ids = new Set(this.activeSpeakers.filter((p) => p.isLocal || !deaf).map((p) => p.identity));
+    const prevKeys = Object.keys(prev);
+    if (prevKeys.length === ids.size && prevKeys.every((id) => ids.has(id))) return;
+    useVoice.setState({ speaking: Object.fromEntries([...ids].map((id) => [id, true as const])) });
+  }
+
   private async applyLocalState(): Promise<void> {
     const room = this.room;
     this.syncVoiceState();
+    this.publishSpeaking();
     if (!room) return;
     const deaf = this.deafened();
     // Sağırken diğerlerinin sesi hiç indirilmez (hem sessizlik hem veri tasarrufu)
@@ -919,13 +967,8 @@ class MobileVoiceClient {
         if (participant.isLocal && this.room === room) useVoice.setState({ quality: quality as VoiceQuality });
       })
       .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
-        // Konuşan kümesi değişmediyse yazma: her olayda yeni nesne, tüm abonelerin yeniden çizilmesine
-        // ve Animated düğümlerinin birikmesine (Android OOM) yol açıyordu. Karşılaştırma sıradan bağımsız.
-        const prev = useVoice.getState().speaking;
-        const ids = new Set(speakers.map((p) => p.identity));
-        const prevKeys = Object.keys(prev);
-        if (prevKeys.length === ids.size && prevKeys.every((id) => ids.has(id))) return;
-        useVoice.setState({ speaking: Object.fromEntries([...ids].map((id) => [id, true as const])) });
+        this.activeSpeakers = speakers.map((p) => ({ identity: p.identity, isLocal: p.isLocal }));
+        this.publishSpeaking();
       })
       // İzinler değişti (rol, kanal izni, sunucuda susturma): mikrofonu ve yayını ona göre aç/kapat
       .on(RoomEvent.ParticipantPermissionsChanged, (_prev, participant) => {
@@ -970,6 +1013,7 @@ class MobileVoiceClient {
         this.duplicates.noteReconnect();
         if (this.room !== room) return;
         voiceTrace.mark(Date.now(), 'reconnected');
+        this.aliveAt = Date.now();
         this.clearSignalReconnectTimer();
         useVoice.setState({ status: 'connected' });
         // Yeniden bağlanınca LiveKit katılımcıları yeniden bildirebilir: ses seli olmasın
@@ -1010,14 +1054,142 @@ class MobileVoiceClient {
           this.join(channelId, { silent: true, rejoin: true }).catch((err: Error) => toast(err.message, 'error'));
           return;
         }
-        const benign =
-          reason === DisconnectReason.CLIENT_INITIATED || reason === DisconnectReason.DUPLICATE_IDENTITY || callEnded;
-        toast(disconnectMessage(reason, channelId), benign ? 'info' : 'error');
-        // Kendimiz ayrılmadık (sunucu çıkardı, bağlantı koptu): masaüstündeki gibi "koptu" sesi. Ses oturumu
-        // kapandıktan sonra (normal kipte) çalınır; görüşme kipinden çıkarken kesilmez
-        const cue = reason === DisconnectReason.CLIENT_INITIATED || callEnded ? 'leave' : 'disconnect';
-        void this.leave().then(() => soundCue(cue));
+        if (channelId && this.canRejoin(channelId, reason)) {
+          void this.rejoinAfterDrop(channelId, reason);
+          return;
+        }
+        this.finishDisconnect(channelId, reason, callEnded);
       });
+  }
+
+  private finishDisconnect(channelId: string | null, reason?: DisconnectReason, callEnded = false): void {
+    const benign =
+      reason === DisconnectReason.CLIENT_INITIATED || reason === DisconnectReason.DUPLICATE_IDENTITY || callEnded;
+    toast(disconnectMessage(reason, channelId), benign ? 'info' : 'error');
+    // Kendimiz ayrılmadık (sunucu çıkardı, bağlantı koptu): masaüstündeki gibi "koptu" sesi. Ses oturumu
+    // kapandıktan sonra (normal kipte) çalınır; görüşme kipinden çıkarken kesilmez
+    const cue = reason === DisconnectReason.CLIENT_INITIATED || callEnded ? 'leave' : 'disconnect';
+    // Soğuma dönüş döngüsünü keser; sesten düşüldüyse döngü bitmiştir, elle girişin sonraki kopuşu dönebilir
+    this.lastRejoinAt = 0;
+    void this.leave().then(() => soundCue(cue));
+  }
+
+  /**
+   * Yalnız sunucu kanalına dönülür: DM'de yeniden katılmak karşı tarafı çaldırabilir, listeden kapatılmış konuşmanın
+   * araması da `dms`'te görünmez. Hiç bağlanmamış odada aliveAt 0'dır.
+   */
+  private canRejoin(channelId: string, reason?: DisconnectReason): boolean {
+    const now = Date.now();
+    return (
+      REJOINABLE_REASONS.has(reason) &&
+      isGuildVoiceChannel(useGuild.getState(), channelId) &&
+      now - this.aliveAt <= REJOIN_MAX_GAP_MS &&
+      now - this.lastRejoinAt >= REJOIN_COOLDOWN_MS
+    );
+  }
+
+  /**
+   * LiveKit vazgeçti: ağ geçidi hazır olunca kanala bir kez sessizce dönülür; olmazsa bugünkü gibi hata ve ses.
+   * Uygulama arka planda olabilir: ses oturumu ve ön plan servisi dönüş boyunca kapatılmaz (Android 12+ arka planda
+   * mikrofon servisini yeniden başlatmaz), başarısızlıkta finishDisconnect kapatır. Ekran paylaşımı geri gelmez, izlenen
+   * yayın gelir. Kullanıcının ayrılması/başka kanala girmesi joinSeq'i değiştirir.
+   */
+  private async rejoinAfterDrop(channelId: string, reason?: DisconnectReason): Promise<void> {
+    const { watching } = useVoice.getState();
+    const wasLost = this.lostSoundPlayed;
+    const seq = ++this.joinSeq;
+    this.lastRejoinAt = Date.now();
+    const torn = this.teardown({ keepSession: true });
+    useVoice.setState({ ...IDLE, channelId, status: 'reconnecting' });
+    await torn;
+    // Önce iz (bkz. setScreenShare); iOS'ta eklenti görüntüsü gitmeyen yayını sürdürmesin. Koşulsuz: LiveKit'in
+    // sökümü "sharing"i buraya gelmeden sıfırlamış olabilir, yayın yokken istek etkisizdir
+    ScreenBroadcast?.stop();
+    if (seq !== this.joinSeq) return;
+    const deadline = Date.now() + REJOIN_GATEWAY_WAIT_MS;
+    const ready = await this.gatewayReady();
+    if (seq !== this.joinSeq) return;
+    // Bekleme sırasında telefon uyuduysa uyanışta kanala girilmez; başka cihazdan girilen kanal da düşürülmez
+    if (!ready || Date.now() > deadline || this.inOtherChannel(channelId)) {
+      this.finishDisconnect(channelId, reason);
+      return;
+    }
+    const joining = this.join(channelId, { silent: true, rejoin: true });
+    const attempt = this.joinSeq;
+    const giveUp = CriticalTimers.setTimeout(() => {
+      if (attempt === this.joinSeq && useVoice.getState().status !== 'connected') this.finishDisconnect(channelId, reason);
+    }, REJOIN_CONNECT_WAIT_MS);
+    await joining.catch(() => undefined); // hata finishDisconnect'te gösterilir, join durumu boşa çekmiştir
+    CriticalTimers.clearTimeout(giveUp);
+    if (attempt !== this.joinSeq) return; // kullanıcı işlemi ya da bağlanırken kapanan oda (finishDisconnect)
+    if (useVoice.getState().status === 'idle') {
+      this.finishDisconnect(channelId, reason);
+      return;
+    }
+    this.restoreWatch(watching);
+    if (wasLost) soundCue('reconnected');
+  }
+
+  /** Dönüşten sonra kopuşta izlenen yayın sürüyorsa yeniden izlenir, bittiyse "sona erdi" görünür; bu arada açılan yayına dokunulmaz */
+  private restoreWatch(userId: string | null): void {
+    const { watching, streams } = useVoice.getState();
+    if (!userId || watching !== null) return;
+    if (streams[userId]) this.watch(userId);
+    else useVoice.setState({ streamEnded: userId });
+  }
+
+  /**
+   * Ses durumumuz başka kanalı mı gösteriyor (READY tazeler). Aynı kanaldaki kayıt ayrım yapmaz: başka cihazdan da
+   * girilmiş olabilir, kopan bu oturumun webhook'u henüz gelmemiş de; onu ayırmak sunucudan oturum bilgisi ister.
+   */
+  private inOtherChannel(channelId: string): boolean {
+    const state = selfVoiceState();
+    return state !== undefined && state.channelId !== channelId;
+  }
+
+  /**
+   * Ağ geçidi hazır mı; en çok REJOIN_GATEWAY_WAIT_MS beklenir, teardown beklemeyi keser. Süreler CriticalTimers'la
+   * kurulur, ağ geçidi de dürtülür: JS zamanlayıcıları Android arka planda durur (bkz. backgroundTimers.ts), süre
+   * dolmaz, ağ geçidinin yeniden bağlanması da öne dönene kadar başlamazdı.
+   */
+  private gatewayReady(): Promise<boolean> {
+    if (useGuild.getState().status === 'ready') return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const finish = (ready: boolean): void => {
+        unsubscribe();
+        CriticalTimers.clearTimeout(timer);
+        CriticalTimers.clearInterval(poke);
+        this.cancelGatewayWait = null;
+        resolve(ready);
+      };
+      const unsubscribe = useGuild.subscribe((s) => {
+        if (s.status === 'ready') finish(true);
+      });
+      const timer = CriticalTimers.setTimeout(() => finish(false), REJOIN_GATEWAY_WAIT_MS);
+      const poke = CriticalTimers.setInterval(() => gateway.resume(), REJOIN_GATEWAY_POKE_MS);
+      this.cancelGatewayWait = () => finish(false);
+      gateway.resume();
+    });
+  }
+
+  /**
+   * Bağlıyken aliveAt'i ilerletir. CriticalTimers: Android arka planda da çalışmalı, yoksa uzun süre cebinde bağlı
+   * kalan telefonun damgası eskir ve dönülmezdi. Uygulama donup çözülünce aralık, LiveKit kopmayı fark etmeden çalışır:
+   * büyük boşlukta damga ilerlemez, yoksa sonraki kopma taze görünürdü. Oda donmadan sağ çıktıysa Reconnected damgayı yeniler.
+   */
+  private startAliveTimer(): void {
+    this.clearAliveTimer();
+    this.aliveAt = Date.now();
+    this.aliveTimer = CriticalTimers.setInterval(() => {
+      const now = Date.now();
+      if (useVoice.getState().status === 'connected' && now - this.aliveAt <= REJOIN_MAX_GAP_MS) this.aliveAt = now;
+    }, ALIVE_TICK_MS);
+  }
+
+  private clearAliveTimer(): void {
+    if (this.aliveTimer !== null) CriticalTimers.clearInterval(this.aliveTimer);
+    this.aliveTimer = null;
+    this.aliveAt = 0;
   }
 
   /**
@@ -1175,6 +1347,9 @@ class MobileVoiceClient {
   private teardown(opts: { keepSession?: boolean } = {}): Promise<void> {
     const room = this.room;
     this.room = null;
+    this.cancelGatewayWait?.();
+    this.clearAliveTimer();
+    this.activeSpeakers = [];
     this.channelSounds.cancel();
     stopIntroSound();
     this.stopSoundboard();

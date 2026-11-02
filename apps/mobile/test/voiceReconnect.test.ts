@@ -12,8 +12,11 @@ const h = vi.hoisted(() => ({
   toast: vi.fn(),
   setWatching: vi.fn(),
   send: vi.fn(),
+  resume: vi.fn(),
   reportClientError: vi.fn(),
   order: [] as string[],
+  failConnect: null as null | 'throw' | 'close' | 'hang',
+  onConnect: null as null | ((room: never) => void),
   platform: 'android',
   broadcast: null as null | { addListener: () => void; stop: () => void; isActive: () => Promise<boolean> },
   settings: { selfMute: false, selfDeaf: false, speaker: false } as Record<string, unknown>,
@@ -58,7 +61,15 @@ vi.mock('livekit-client', async (original) => {
     emit(event: string, ...args: never[]): void {
       for (const fn of this.handlers.get(event) ?? []) fn(...args);
     }
-    connect = vi.fn(async () => undefined);
+    connect = vi.fn(async () => {
+      h.onConnect?.(this as never);
+      if (h.failConnect === 'throw') throw new Error('could not establish pc connection');
+      if (h.failConnect === 'hang') await new Promise(() => undefined);
+      if (h.failConnect === 'close') {
+        this.state = 'disconnected';
+        this.emit(actual.RoomEvent.Disconnected, actual.DisconnectReason.JOIN_FAILURE as never);
+      }
+    });
     disconnect = vi.fn(async () => undefined);
     removeAllListeners = vi.fn();
   }
@@ -103,7 +114,7 @@ vi.mock('react-native', () => ({
 vi.mock('@diskort/client-core', async (original) => ({
   ...(await original<typeof import('@diskort/client-core')>()),
   api: { joinVoice: vi.fn(async () => ({ url: 'wss://ses.test', token: 'jeton' })) },
-  gateway: { on: vi.fn(), send: h.send, setWatching: h.setWatching },
+  gateway: { on: vi.fn(), send: h.send, setWatching: h.setWatching, resume: h.resume },
   reportClientError: h.reportClientError,
   reportVoiceLog: vi.fn(),
   voiceTelemetry: { noteReconnect: vi.fn() },
@@ -240,12 +251,14 @@ beforeEach(async () => {
   vi.resetModules();
   h.rooms.length = 0;
   h.order.length = 0;
+  h.failConnect = null;
+  h.onConnect = null;
   h.settings = { selfMute: false, selfDeaf: false, speaker: false, voiceActivity: false, vadAuto: true, vadThresholdDb: -50 };
   h.settings.set = (patch: Record<string, unknown>) => Object.assign(h.settings, patch);
   h.settings.userVolumes = {};
   h.settings.streamVolumes = {};
   h.settings.streamMuted = {};
-  for (const fn of [h.soundCue, h.toast, h.setWatching, h.send, h.reportClientError, h.requestMultiple, h.check]) fn.mockClear();
+  for (const fn of [h.soundCue, h.toast, h.setWatching, h.send, h.resume, h.reportClientError, h.requestMultiple, h.check]) fn.mockClear();
   for (const fn of [h.voiceService.start, h.voiceService.update, h.voiceService.stop]) fn.mockClear();
   await load('android');
 });
@@ -697,14 +710,495 @@ describe('sesten çıkış', () => {
     await flush();
     expect(h.order).toEqual(['stopAudioSession', 'sound:disconnect']);
   });
+});
 
-  it('uzun kopuşta kendiliğinden yeniden katılmaz (ürün kararı bekliyor)', async () => {
-    await join();
+describe('uzun kopuştan sonra kanala dönüş', () => {
+  const MINUTE = 60_000;
+  const lose = (reason?: DisconnectReason): void => {
     room.state = 'disconnected';
-    room.emit(RoomEvent.Disconnected, DisconnectReason.UNKNOWN_REASON);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(useVoice.getState()).toMatchObject({ status: 'idle', channelId: null });
+    room.emit(RoomEvent.Disconnected, reason);
+  };
+  /** Uyku: saat ilerler, zamanlayıcılar çalışmaz */
+  const sleep = (ms: number): void => void vi.setSystemTime(Date.now() + ms);
+  const settle = (): Promise<unknown> => vi.advanceTimersByTimeAsync(50);
+  const sounds = (): string[] => h.soundCue.mock.calls.map((c) => c[0] as string);
+  const latest = (): FakeRoom => h.rooms.at(-1) as FakeRoom;
+
+  let core: typeof import('@diskort/client-core');
+
+  /** Bir kez hata, bir kez "koptu" sesi; servis ve ses oturumu kapalı, sonrasında bildirim yazılmaz */
+  const expectGaveUp = (): void => {
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle' });
+    expect(h.toast.mock.calls).toEqual([['Ses bağlantısı koptu.', 'error']]);
+    expect(sounds()).toEqual(['disconnect']);
+    expect(h.voiceService.stop).toHaveBeenCalled();
+    expect(h.order.indexOf('stopAudioSession')).toBeGreaterThanOrEqual(0);
+    expect(h.order.at(-1)).toBe('sound:disconnect');
+  };
+
+  beforeEach(async () => {
+    core = await import('@diskort/client-core');
+    core.useGuild.setState({ status: 'ready', dms: {}, dmCalls: {}, voiceStates: {}, channelGuild: { kanal: 'sunucu', diger: 'sunucu' } });
+    await join();
+    h.order.length = 0;
+    h.soundCue.mockClear();
+    h.voiceService.update.mockClear();
+    h.voiceService.stop.mockClear();
+    h.voiceService.start.mockClear();
+    vi.mocked(core.api.joinVoice).mockClear();
+  });
+
+  it.each([
+    ['nedensiz (LiveKit vazgeçti)', undefined],
+    ['UNKNOWN_REASON', DisconnectReason.UNKNOWN_REASON],
+    ['STATE_MISMATCH', DisconnectReason.STATE_MISMATCH],
+    ['JOIN_FAILURE', DisconnectReason.JOIN_FAILURE],
+    ['SIGNAL_CLOSE', DisconnectReason.SIGNAL_CLOSE],
+  ])('%s: yeni jetonla bir kez sessizce döner', async (_name, reason) => {
+    lose(reason);
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expect(core.api.joinVoice).toHaveBeenCalledTimes(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'connected' });
+    expect(sounds()).toEqual([]);
+    expect(h.toast).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['CLIENT_INITIATED', DisconnectReason.CLIENT_INITIATED],
+    ['DUPLICATE_IDENTITY', DisconnectReason.DUPLICATE_IDENTITY],
+    ['PARTICIPANT_REMOVED', DisconnectReason.PARTICIPANT_REMOVED],
+    ['ROOM_DELETED', DisconnectReason.ROOM_DELETED],
+    ['ROOM_CLOSED', DisconnectReason.ROOM_CLOSED],
+    ['SERVER_SHUTDOWN', DisconnectReason.SERVER_SHUTDOWN],
+    ['USER_UNAVAILABLE', DisconnectReason.USER_UNAVAILABLE],
+  ])('%s: dönülmez', async (_name, reason) => {
+    lose(reason);
+    await vi.advanceTimersByTimeAsync(MINUTE);
     expect(h.rooms).toHaveLength(1);
-    expect(h.toast).toHaveBeenCalledWith('Ses bağlantısı koptu.', 'error');
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle' });
+    expect(h.voiceService.stop).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['listede açık', { dms: { kanal: {} } }],
+    ['listeden kapatılmış, arama sürüyor', { dmCalls: { kanal: {} } }],
+    ['listeden kapatılmış, arama da silinmiş', {}],
+  ])('DM aramasına dönülmez: %s', async (_name, state) => {
+    core.useGuild.setState({ channelGuild: {}, ...state } as never);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expect(core.api.joinVoice).not.toHaveBeenCalled();
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle' });
+  });
+
+  describe('başka cihazdan girilmişse', () => {
+    const stateIn = (channelId: string): never => ({ ben: { userId: 'ben', channelId } }) as never;
+
+    // setState kalıcı depolamaya yazar, o da configureClient ister
+    beforeEach(() => void vi.spyOn(core.useSession, 'getState').mockReturnValue({ user: { id: 'ben' } } as never));
+
+    it('başka kanaldaysa dönülmez, o oturum düşürülmez', async () => {
+      core.useGuild.setState({ status: 'reconnecting' });
+      lose();
+      await settle();
+      core.useGuild.setState({ status: 'ready', voiceStates: stateIn('diger') });
+      await settle();
+      expect(h.rooms).toHaveLength(1);
+      expect(core.api.joinVoice).not.toHaveBeenCalled();
+      expectGaveUp();
+    });
+
+    it('kayıt aynı kanalı gösteriyorsa (eski olabilir) dönülür', async () => {
+      core.useGuild.setState({ voiceStates: stateIn('kanal') });
+      lose();
+      await settle();
+      expect(h.rooms).toHaveLength(2);
+      expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'connected' });
+    });
+  });
+
+  it('uykuda süre aşıldıysa dönülmez', async () => {
+    sleep(31 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expectGaveUp();
+  });
+
+  it('uyanışta zamanlayıcı kopmadan önce çalışsa da süre aşımı görülür', async () => {
+    sleep(8 * 60 * MINUTE);
+    await vi.advanceTimersByTimeAsync(11_000); // durum hâlâ "bağlı": LiveKit kopmayı henüz fark etmedi
+    room.emit(RoomEvent.Reconnecting);
+    await vi.advanceTimersByTimeAsync(40_000);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle' });
+  });
+
+  it('süreden kısa uykuda döner', async () => {
+    sleep(29 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+  });
+
+  it('uzun süredir bağlıysa süre işlemez', async () => {
+    await vi.advanceTimersByTimeAsync(31 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+  });
+
+  it('oda uykudan sağ çıktıysa sonraki kopmada döner', async () => {
+    sleep(31 * MINUTE);
+    await vi.advanceTimersByTimeAsync(11_000);
+    room.emit(RoomEvent.Reconnected);
+    await vi.advanceTimersByTimeAsync(10_000);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+  });
+
+  it('süreler arka planda da dolan zamanlayıcılarla kurulur (Android JS zamanlayıcıları durur)', async () => {
+    const { CriticalTimers } = await import('livekit-client');
+    const timeout = vi.spyOn(CriticalTimers, 'setTimeout');
+    const interval = vi.spyOn(CriticalTimers, 'setInterval');
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    expect(timeout.mock.calls.some(([, ms]) => ms === 30_000)).toBe(true);
+    expect(interval).toHaveBeenCalled();
+    core.useGuild.setState({ status: 'ready' });
+    await settle();
+    expect(timeout.mock.calls.some(([, ms]) => ms === 45_000)).toBe(true);
+    expect(interval.mock.calls.length).toBeGreaterThan(1); // yeni odanın canlılık damgası
+  });
+
+  it('ağ geçidini bekler, beklerken hata ve ses yok; hazır olunca döner', async () => {
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.rooms).toHaveLength(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'reconnecting' });
+    expect(sounds()).toEqual([]);
+    expect(h.toast).not.toHaveBeenCalled();
+    core.useGuild.setState({ status: 'ready' });
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'connected' });
+    expect(sounds()).toEqual([]);
+  });
+
+  it('beklerken ağ geçidi dürtülür: kendi yeniden bağlanma zamanlayıcısı arka planda durur', async () => {
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    expect(h.resume).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.resume).toHaveBeenCalledTimes(3);
+    core.useGuild.setState({ status: 'ready' });
+    await settle();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.resume).toHaveBeenCalledTimes(3);
+  });
+
+  it('ağ geçidi hazırsa dürtülmez', async () => {
+    lose();
+    await settle();
+    expect(h.resume).not.toHaveBeenCalled();
+  });
+
+  it('ağ geçidi gelmezse süre sonunda vazgeçer; servis kapanır, geç gelen hazır durumu bir şey yapmaz', async () => {
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(useVoice.getState().status).toBe('reconnecting');
+    expect(h.voiceService.stop).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expectGaveUp();
+    h.voiceService.update.mockClear();
+    core.useGuild.setState({ status: 'ready' });
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expect(h.voiceService.update).not.toHaveBeenCalled();
+  });
+
+  it('beklerken telefon uyursa uyanışta kanala girilmez', async () => {
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    sleep(8 * 60 * MINUTE);
+    core.useGuild.setState({ status: 'ready' });
+    await settle();
+    expect(h.rooms).toHaveLength(1);
+    expectGaveUp();
+  });
+
+  it('ayrılmak bekleyen denemeyi iptal eder (bildirimdeki düğme, arayüz güncellemesi)', async () => {
+    const before = vi.getTimerCount();
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    expect(useVoice.getState().status).not.toBe('idle');
+    await voice.leave();
+    expect(vi.getTimerCount()).toBeLessThan(before); // bekleme ve canlılık damgası söküldü
+    core.useGuild.setState({ status: 'ready' });
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.rooms).toHaveLength(1);
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle' });
+    expect(h.voiceService.stop).toHaveBeenCalledTimes(1);
+    expect(h.toast).not.toHaveBeenCalled();
+    expect(sounds()).toEqual([]);
+  });
+
+  it('beklerken başka kanala girilirse eski kanala dönülmez', async () => {
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    void voice.join('diger', { silent: true });
+    await settle();
+    core.useGuild.setState({ status: 'ready' });
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.rooms).toHaveLength(2);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'diger', status: 'connected' });
+    expect(h.toast).not.toHaveBeenCalled();
+  });
+
+  it('beklerken yetkili başka kanala taşırsa eski kanala dönülmez', async () => {
+    core.useGuild.setState({ status: 'reconnecting' });
+    lose();
+    await settle();
+    const onGateway = vi.mocked(core.gateway.on).mock.calls.at(-1)![0];
+    onGateway({ t: 'VOICE_MOVE', d: { channelId: 'diger' } } as never);
+    await settle();
+    core.useGuild.setState({ status: 'ready' });
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.rooms).toHaveLength(2);
+    expect(useVoice.getState()).toMatchObject({ channelId: 'diger', status: 'connected' });
+    expect(h.voiceService.stop).not.toHaveBeenCalled();
+  });
+
+  it('ön plan servisi ve ses oturumu kapatılmadan döner, durum hiç boşa düşmez', async () => {
+    const statuses: string[] = [];
+    const stop = useVoice.subscribe((s) => void statuses.push(s.status));
+    lose();
+    await settle();
+    stop();
+    expect(h.voiceService.stop).not.toHaveBeenCalled();
+    expect(h.voiceService.start).not.toHaveBeenCalled();
+    expect(h.order).not.toContain('stopAudioSession');
+    expect(statuses).not.toContain('idle'); // setBeforeReload boştaki durumda sesten çıkmaz
+    expect(h.voiceService.update.mock.calls.at(-1)?.[1]).toBe('Sesli sohbete bağlı');
+  });
+
+  it('dönüş sürerken bildirim "bağlı" demez', async () => {
+    let release = (): void => undefined;
+    vi.mocked(core.api.joinVoice).mockImplementationOnce(
+      () => new Promise((resolve) => (release = () => resolve({ url: 'wss://ses.test', token: 'jeton' } as never))),
+    );
+    lose();
+    await settle();
+    expect(useVoice.getState().status).toBe('connecting');
+    for (const call of h.voiceService.update.mock.calls) expect(call[1]).toBe('Yeniden bağlanıyor…');
+    expect(h.voiceService.update).toHaveBeenCalled();
+    release();
+    await settle();
+    expect(h.voiceService.update.mock.calls.at(-1)?.[1]).toBe('Sesli sohbete bağlı');
+  });
+
+  it.each(['throw', 'close'] as const)('dönüş başarısızsa hata bir kez gösterilir, servis kapanır (%s)', async (how) => {
+    h.failConnect = how;
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expectGaveUp();
+    h.voiceService.update.mockClear();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(h.voiceService.update).not.toHaveBeenCalled();
+  });
+
+  it('takılan bağlanma süre sonunda bırakılır: bildirim ve servis sızmaz', async () => {
+    h.failConnect = 'hang';
+    lose();
+    await settle();
+    expect(useVoice.getState().status).toBe('connecting');
+    expect(h.voiceService.stop).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(45_000);
+    expectGaveUp();
+  });
+
+  it('dönüş bitince süre dolsa da bağlı oda düşürülmez', async () => {
+    lose();
+    await settle();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(useVoice.getState().status).toBe('connected');
+    expect(h.toast).not.toHaveBeenCalled();
+  });
+
+  it('dönülen oda hemen ölürse ikinci deneme yapılmaz', async () => {
+    lose();
+    await settle();
+    room = latest();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expectGaveUp();
+  });
+
+  it('dönüş uzun sürdüyse sonraki kopma yeniden denenir', async () => {
+    lose();
+    await settle();
+    room = latest();
+    await vi.advanceTimersByTimeAsync(6 * MINUTE);
+    lose();
+    await settle();
+    expect(h.rooms).toHaveLength(3);
+  });
+
+  it('hiç bağlanmamış odanın kapanması dönüş açmaz', async () => {
+    await voice.leave();
+    h.order.length = 0;
+    h.failConnect = 'close';
+    await voice.join('kanal', { silent: true });
+    await settle();
+    expect(h.rooms).toHaveLength(2);
+    expectGaveUp();
+  });
+
+  it('"koptu" sesi çaldıysa dönünce "geri geldi" çalar', async () => {
+    room.emit(RoomEvent.Reconnecting);
+    await vi.advanceTimersByTimeAsync(2500);
+    lose();
+    await settle();
+    expect(sounds()).toEqual(['disconnect', 'reconnected']);
+  });
+
+  it('dönüşte izin penceresi açılmaz, yalnızca bakılır', async () => {
+    h.requestMultiple.mockClear();
+    lose();
+    await settle();
+    expect(h.requestMultiple).not.toHaveBeenCalled();
+    expect(h.check).toHaveBeenCalledTimes(1);
+  });
+
+  it('susturma ve sağırlık korunur', async () => {
+    h.settings.selfMute = true;
+    h.settings.selfDeaf = true;
+    const p = participant('biri', [Track.Source.Microphone]);
+    h.onConnect = (r: FakeRoom) => void r.remoteParticipants.set('biri', p);
+    lose();
+    await settle();
+    expect(latest().localParticipant.setMicrophoneEnabled).not.toHaveBeenCalled();
+    expect(p.pubs.get(Track.Source.Microphone)?.setSubscribed).toHaveBeenCalledWith(false);
+    expect(h.send).toHaveBeenLastCalledWith({ t: 'VOICE_STATE_SET', d: { selfMute: true, selfDeaf: true } });
+  });
+
+  it('mikrofon açıksa açık döner', async () => {
+    lose();
+    await settle();
+    expect(latest()).not.toBe(room);
+    expect(latest().localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(true, expect.anything());
+  });
+
+  describe('izlenen yayın', () => {
+    const watchStreamer = (): FakeParticipant => {
+      const p = participant('yayinci', SCREEN);
+      room.remoteParticipants.set('yayinci', p);
+      for (const pub of p.pubs.values()) room.emit(RoomEvent.TrackPublished, pub, p);
+      voice.watch('yayinci');
+      return p;
+    };
+
+    it('yayın sürüyorsa dönüşte yeniden abone olunur', async () => {
+      watchStreamer();
+      unwind(room);
+      const again = participant('yayinci', SCREEN);
+      h.onConnect = (r: FakeRoom) => void r.remoteParticipants.set('yayinci', again);
+      lose();
+      await settle();
+      expect(useVoice.getState()).toMatchObject({ watching: 'yayinci', streamEnded: null, streams: { yayinci: true } });
+      expect(again.pubs.get(Track.Source.ScreenShare)?.setSubscribed).toHaveBeenCalledWith(true);
+      expect(h.setWatching).toHaveBeenLastCalledWith(['yayinci']);
+    });
+
+    it('yayın bu arada bittiyse "sona erdi" görünür', async () => {
+      watchStreamer();
+      unwind(room);
+      lose();
+      await settle();
+      expect(useVoice.getState()).toMatchObject({ watching: null, streamEnded: 'yayinci', status: 'connected' });
+    });
+  });
+
+  describe('ekran paylaşımı', () => {
+    const share = (): void => {
+      room.pubs.set(Track.Source.ScreenShare, { track: {} });
+      useVoice.setState({ sharing: true });
+    };
+
+    it('Android: dönüşte kendiliğinden geri gelmez', async () => {
+      share();
+      lose();
+      await settle();
+      expect(useVoice.getState()).toMatchObject({ status: 'connected', sharing: false });
+      expect((latest().localParticipant as unknown as { setScreenShareEnabled: ReturnType<typeof vi.fn> }).setScreenShareEnabled).not.toHaveBeenCalled();
+    });
+
+    it('iOS: yayın eklentisi de durur, görüntüsüz yayın kalmaz', async () => {
+      h.broadcast = { addListener: vi.fn(), stop: vi.fn(), isActive: vi.fn(async () => true) };
+      share();
+      lose();
+      await settle();
+      expect(h.broadcast.stop).toHaveBeenCalledTimes(1);
+      expect(useVoice.getState().sharing).toBe(false);
+    });
+
+    it('iOS: LiveKit sökümü durumu önce sıfırlasa da yayın eklentisi durur', async () => {
+      h.broadcast = { addListener: vi.fn(), stop: vi.fn(), isActive: vi.fn(async () => true) };
+      share();
+      useVoice.setState({ sharing: false }); // LocalTrackUnpublished, Disconnected'dan önce
+      lose();
+      await settle();
+      expect(h.broadcast.stop).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('başarısız dönüş soğuma bırakmaz: elle girişin sonraki kopuşu yine döner', async () => {
+    h.failConnect = 'throw';
+    lose();
+    await settle();
+    expect(useVoice.getState()).toMatchObject({ channelId: null, status: 'idle' });
+    h.failConnect = null;
+    await join();
+    lose();
+    await settle();
+    expect(useVoice.getState()).toMatchObject({ channelId: 'kanal', status: 'connected' });
+  });
+});
+
+describe('sağırken konuşma halkaları', () => {
+  const speaker = (identity: string, isLocal = false): never => ({ identity, isLocal }) as never;
+
+  it('başkalarının halkası söner, kendi halkan ve sağırlık kalkınca diğerleri geri gelir', async () => {
+    await join();
+    room.emit(RoomEvent.ActiveSpeakersChanged, [speaker('konusan'), speaker('ben', true)]);
+    expect(useVoice.getState().speaking).toEqual({ konusan: true, ben: true });
+    await voice.toggleDeafen();
+    expect(useVoice.getState().speaking).toEqual({ ben: true });
+    room.emit(RoomEvent.ActiveSpeakersChanged, [speaker('konusan')]);
+    expect(useVoice.getState().speaking).toEqual({});
+    await voice.toggleDeafen();
+    expect(useVoice.getState().speaking).toEqual({ konusan: true });
+  });
+
+  it('yalnız mikrofon kapalıyken halkalar yanmaya devam eder', async () => {
+    await join();
+    room.emit(RoomEvent.ActiveSpeakersChanged, [speaker('konusan')]);
+    await voice.toggleMute();
+    expect(useVoice.getState().speaking).toEqual({ konusan: true });
   });
 });

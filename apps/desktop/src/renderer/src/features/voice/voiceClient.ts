@@ -347,6 +347,7 @@ class VoiceClient {
       const before = prev.voiceStates[selfId];
       if (now?.serverDeaf !== before?.serverDeaf) {
         this.applyVolumes();
+        this.publishSpeaking();
         // Sunucuca sağırlaştırılınca çalan ses paneli sesleri hemen söner
         if (now?.serverDeaf) stopSoundboardForDeaf();
       }
@@ -1142,12 +1143,17 @@ class VoiceClient {
     else void this.mic.unmute();
   }
 
+  /** Kendi ya da sunucu sağırlaştırması */
+  private deafened(): boolean {
+    const selfId = useSession.getState().user?.id;
+    return getSettings().selfDeaf || (selfId !== undefined && useGuild.getState().voiceStates[selfId]?.serverDeaf === true);
+  }
+
   private applyVolumes(): void {
     const room = this.room;
     if (!room) return;
     const s = getSettings();
-    const selfId = useSession.getState().user?.id;
-    const deaf = s.selfDeaf || (selfId !== undefined && useGuild.getState().voiceStates[selfId]?.serverDeaf === true);
+    const deaf = this.deafened();
     // Çıkış ses seviyesi (mikrofon/kulaklık menüsü) herkesin kendi seviyesiyle çarpılır
     const master = s.outputVolume;
     for (const p of room.remoteParticipants.values()) {
@@ -1169,10 +1175,8 @@ class VoiceClient {
       this.applyMicMute();
       this.applyVolumes();
       this.syncVoiceState();
-      if (this.selfSpeaking && (next.selfMute || next.selfDeaf)) {
-        this.selfSpeaking = false;
-        this.publishSpeaking();
-      }
+      if (next.selfMute || next.selfDeaf) this.selfSpeaking = false;
+      this.publishSpeaking();
     }
     if (
       next.userVolumes !== prev.userVolumes ||
@@ -1525,14 +1529,16 @@ class VoiceClient {
 
   /**
    * Konuşma halkalarının tek çıkışı. Uzak katılımcılar: sesi yerelde ölçülüyorsa ölçüm (duyulanla eş zamanlı),
-   * ölçülemiyorsa (henüz abone olunmadı, ses bağlamı çalışmıyor) sunucunun bildirimi. Küme değişmediyse store'a
-   * yazılmaz.
+   * ölçülemiyorsa (henüz abone olunmadı, ses bağlamı çalışmıyor) sunucunun bildirimi. Sağırken kimsenin halkası
+   * yanmaz: duymadığın konuşmayı halkadan da izleyemezsin. Küme değişmediyse store'a yazılmaz.
    */
   private publishSpeaking(): void {
     const speaking: Record<string, true> = {};
-    for (const id of this.room?.remoteParticipants.keys() ?? []) {
-      if (this.remoteMeter.measures(id) ? this.remoteMeter.isSpeaking(id) : this.serverSpeaking.has(id)) {
-        speaking[id] = true;
+    if (!this.deafened()) {
+      for (const id of this.room?.remoteParticipants.keys() ?? []) {
+        if (this.remoteMeter.measures(id) ? this.remoteMeter.isSpeaking(id) : this.serverSpeaking.has(id)) {
+          speaking[id] = true;
+        }
       }
     }
     const selfId = useSession.getState().user?.id;
