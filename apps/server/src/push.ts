@@ -98,28 +98,42 @@ export class PushService {
     }
   }
 
+  /**
+   * Çağıranlar `notify*` sonucunu beklemez (yanıt ya da zamanlayıcı bildirimi beklemesin); yakalanmayan ret
+   * süreci düşürürdü. Hata, ör. jeton okunurken veritabanı hatası, burada loglanır, o bildirim gitmez.
+   */
+  private async quietly(work: () => Promise<void>): Promise<void> {
+    try {
+      await work();
+    } catch (err) {
+      this.log.warn({ err: String(err) }, 'telefon bildirimi gönderilemedi');
+    }
+  }
+
   /** Bahsedilen kullanıcıların telefonlarına bildirim gönderir. */
   async notifyMention(message: Message, mentionedUserIds: string[], channelName: string, guildId?: string): Promise<void> {
     if (!this.enabled || mentionedUserIds.length === 0) return;
-    const tokens = this.store.pushTokens(mentionedUserIds);
-    if (tokens.length === 0) return;
+    await this.quietly(async () => {
+      const tokens = this.store.pushTokens(mentionedUserIds);
+      if (tokens.length === 0) return;
 
-    const author = message.authorId ? this.store.getUser(message.authorId) : null;
-    const guild = guildId ? this.store.getGuild(guildId) : null;
-    // Yalnızca dosyalı bir yanıtın metni boş olabilir
-    const body = this.text(message, guildId) || (message.attachments.length ? '📎 Dosya gönderdi' : '');
-    await Promise.all(
-      tokens.map((t) =>
-        this.deliver(t, {
-          title: `${author?.displayName ?? 'Biri'} · #${channelName}${guild ? ` (${guild.name})` : ''}`,
-          body: body.length > BODY_MAX ? `${body.slice(0, BODY_MAX)}…` : body,
-          data: { type: 'mention', channelId: message.channelId, messageId: message.id, ...(guildId ? { guildId } : {}) },
-          channelId: PUSH_CHANNEL_MENTIONS,
-          thread: message.channelId,
-          tag: pushTag(message.channelId, message.id),
-        }),
-      ),
-    );
+      const author = message.authorId ? this.store.getUser(message.authorId) : null;
+      const guild = guildId ? this.store.getGuild(guildId) : null;
+      // Yalnızca dosyalı bir yanıtın metni boş olabilir
+      const body = this.text(message, guildId) || (message.attachments.length ? '📎 Dosya gönderdi' : '');
+      await Promise.all(
+        tokens.map((t) =>
+          this.deliver(t, {
+            title: `${author?.displayName ?? 'Biri'} · #${channelName}${guild ? ` (${guild.name})` : ''}`,
+            body: body.length > BODY_MAX ? `${body.slice(0, BODY_MAX)}…` : body,
+            data: { type: 'mention', channelId: message.channelId, messageId: message.id, ...(guildId ? { guildId } : {}) },
+            channelId: PUSH_CHANNEL_MENTIONS,
+            thread: message.channelId,
+            tag: pushTag(message.channelId, message.id),
+          }),
+        ),
+      );
+    });
   }
 
   /**
@@ -128,25 +142,27 @@ export class PushService {
    */
   async notifyDm(message: Message, recipientIds: string[], dm: DmChannel): Promise<void> {
     if (!this.enabled || recipientIds.length === 0) return;
-    const tokens = this.store.pushTokens(recipientIds);
-    if (tokens.length === 0) return;
+    await this.quietly(async () => {
+      const tokens = this.store.pushTokens(recipientIds);
+      if (tokens.length === 0) return;
 
-    const author = message.authorId ? this.store.getUser(message.authorId) : null;
-    const authorName = author?.displayName ?? 'Biri';
-    const text = this.text(message) || attachmentSummary(message.attachments.length);
-    const body = text.length > BODY_MAX ? `${text.slice(0, BODY_MAX)}…` : text;
-    await Promise.all(
-      tokens.map((t) =>
-        this.deliver(t, {
-          title: dm.group ? `${authorName} · ${this.groupTitle(dm, t.userId)}` : authorName,
-          body,
-          data: { type: 'dm', channelId: message.channelId, messageId: message.id },
-          channelId: PUSH_CHANNEL_DM,
-          thread: message.channelId,
-          tag: pushTag(message.channelId, message.id),
-        }),
-      ),
-    );
+      const author = message.authorId ? this.store.getUser(message.authorId) : null;
+      const authorName = author?.displayName ?? 'Biri';
+      const text = this.text(message) || attachmentSummary(message.attachments.length);
+      const body = text.length > BODY_MAX ? `${text.slice(0, BODY_MAX)}…` : text;
+      await Promise.all(
+        tokens.map((t) =>
+          this.deliver(t, {
+            title: dm.group ? `${authorName} · ${this.groupTitle(dm, t.userId)}` : authorName,
+            body,
+            data: { type: 'dm', channelId: message.channelId, messageId: message.id },
+            channelId: PUSH_CHANNEL_DM,
+            thread: message.channelId,
+            tag: pushTag(message.channelId, message.id),
+          }),
+        ),
+      );
+    });
   }
 
   /**
@@ -171,26 +187,28 @@ export class PushService {
     missed: boolean,
   ): Promise<void> {
     if (!this.enabled || recipientIds.length === 0) return;
-    const tokens = this.store.pushTokens(recipientIds);
-    if (tokens.length === 0) return;
-    const caller = this.store.getUser(callerId)?.displayName ?? 'Biri';
-    const tag = messageId ? pushTag(dm.id, messageId) : undefined;
-    await Promise.all(
-      tokens.map((t) =>
-        this.deliver(t, {
-          title: dm.group ? `${caller} · ${this.groupTitle(dm, t.userId)}` : caller,
-          body: missed ? '📞 Cevapsız arama' : dm.group ? '📞 Grup araması: seni çağırıyor' : '📞 Seni arıyor',
-          data: {
-            type: missed ? 'missed_call' : 'call',
-            channelId: dm.id,
-            ...(messageId ? { messageId } : {}),
-          },
-          channelId: PUSH_CHANNEL_CALL,
-          thread: dm.id,
-          ...(tag ? { tag, collapseId: tag } : {}),
-        }),
-      ),
-    );
+    await this.quietly(async () => {
+      const tokens = this.store.pushTokens(recipientIds);
+      if (tokens.length === 0) return;
+      const caller = this.store.getUser(callerId)?.displayName ?? 'Biri';
+      const tag = messageId ? pushTag(dm.id, messageId) : undefined;
+      await Promise.all(
+        tokens.map((t) =>
+          this.deliver(t, {
+            title: dm.group ? `${caller} · ${this.groupTitle(dm, t.userId)}` : caller,
+            body: missed ? '📞 Cevapsız arama' : dm.group ? '📞 Grup araması: seni çağırıyor' : '📞 Seni arıyor',
+            data: {
+              type: missed ? 'missed_call' : 'call',
+              channelId: dm.id,
+              ...(messageId ? { messageId } : {}),
+            },
+            channelId: PUSH_CHANNEL_CALL,
+            thread: dm.id,
+            ...(tag ? { tag, collapseId: tag } : {}),
+          }),
+        ),
+      );
+    });
   }
 
   /**
@@ -200,22 +218,24 @@ export class PushService {
    */
   async notifyFriendRequest(fromId: string, recipientIds: string[]): Promise<void> {
     if (!this.enabled || recipientIds.length === 0) return;
-    const tokens = this.store.pushTokens(recipientIds);
-    if (tokens.length === 0) return;
-    const name = this.store.getUser(fromId)?.displayName ?? 'Biri';
-    const tag = `friend-request:${fromId}`;
-    await Promise.all(
-      tokens.map((t) =>
-        this.deliver(t, {
-          title: 'Arkadaşlık isteği',
-          body: `${name} seni arkadaş olarak ekledi`,
-          data: { type: PUSH_TYPE_FRIEND_REQUEST, userId: fromId },
-          channelId: PUSH_CHANNEL_DM,
-          tag,
-          collapseId: tag,
-        }),
-      ),
-    );
+    await this.quietly(async () => {
+      const tokens = this.store.pushTokens(recipientIds);
+      if (tokens.length === 0) return;
+      const name = this.store.getUser(fromId)?.displayName ?? 'Biri';
+      const tag = `friend-request:${fromId}`;
+      await Promise.all(
+        tokens.map((t) =>
+          this.deliver(t, {
+            title: 'Arkadaşlık isteği',
+            body: `${name} seni arkadaş olarak ekledi`,
+            data: { type: PUSH_TYPE_FRIEND_REQUEST, userId: fromId },
+            channelId: PUSH_CHANNEL_DM,
+            tag,
+            collapseId: tag,
+          }),
+        ),
+      );
+    });
   }
 
   /** Grubun adı; yoksa alıcı dışındaki katılımcıların adları */
@@ -271,16 +291,21 @@ export class PushService {
   private async deliver(target: { token: string; platform: string }, o: Outgoing): Promise<void> {
     if (!this.canDeliver(target.platform)) return;
     if (target.platform === 'ios') {
-      const result = await this.apns!.send(target.token, {
-        title: o.title,
-        body: o.body,
-        data: o.data,
-        threadId: o.thread,
-        ...(o.collapseId ? { collapseId: o.collapseId } : {}),
-      });
-      // Uygulama silinmiş ya da jeton yenilenmiş: artık geçersiz jetonu unut
-      if (result === 'unregistered') this.store.removePushToken(target.token);
-      this.onDelivery?.('ios', result === 'ok' ? 'sent' : result);
+      try {
+        const result = await this.apns!.send(target.token, {
+          title: o.title,
+          body: o.body,
+          data: o.data,
+          threadId: o.thread,
+          ...(o.collapseId ? { collapseId: o.collapseId } : {}),
+        });
+        // Uygulama silinmiş ya da jeton yenilenmiş: artık geçersiz jetonu unut
+        if (result === 'unregistered') this.store.removePushToken(target.token);
+        this.onDelivery?.('ios', result === 'ok' ? 'sent' : result);
+      } catch (err) {
+        this.log.warn({ err: String(err) }, 'APNs bildirimi gönderilemedi');
+        this.onDelivery?.('ios', 'failed', String(err).slice(0, 200));
+      }
       return;
     }
     await this.send(target.token, {

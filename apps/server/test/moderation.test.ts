@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Permission as P } from '@diskort/shared';
 import { TrackSource } from '../src/livekit.js';
 import { connectGateway, joinGuild, startServer, type TestServer } from './helpers.js';
@@ -212,5 +212,51 @@ describe('seste yönetim', () => {
     expect(s.ctx.voice.get(member.user.id)).toBeUndefined();
     // Sahip etkilenmez
     expect(s.ctx.moderation.canConnect(s.owner.user.id, voice.id)).toBe(true);
+  });
+});
+
+describe('ses izinleri: veritabanı hatası süreci düşürmez', () => {
+  const dbLocked = (): never => {
+    throw new Error('database is locked');
+  };
+
+  it('katılan üyenin izni uygulanamazsa ret yok, loglanır; sonraki eşitleme uygular', async () => {
+    const ali = await s.member('ali');
+    const channel = s.channel('voice');
+    s.ctx.voice.join(ali.user.id, channel.id);
+    const can = vi.spyOn(s.ctx.permissions, 'can').mockImplementationOnce(dbLocked);
+    const warn = vi.spyOn(s.app.log, 'warn');
+
+    await expect(s.ctx.moderation.onJoined(ali.user.id, channel.id)).resolves.toBeUndefined();
+    expect(can).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'katılan üyenin izni uygulanamadı');
+    expect(s.livekit.of('setPublishSources')).toEqual([]);
+
+    await s.ctx.moderation.enforceAll();
+    expect(s.livekit.of('setPublishSources').map((args) => args.slice(0, 2))).toEqual([[channel.id, ali.user.id]]);
+  });
+
+  it('DM aramasındaki kişi denetlenemezse ret yok, loglanır', async () => {
+    const ali = await s.member('ali');
+    const veli = await s.member('veli');
+    const { dm } = s.ctx.store.openDirectDm(ali.user.id, veli.user.id);
+    s.ctx.voice.join(ali.user.id, dm.id);
+    const can = vi.spyOn(s.ctx.permissions, 'can').mockImplementationOnce(dbLocked);
+    const warn = vi.spyOn(s.app.log, 'warn');
+
+    await expect(s.ctx.moderation.enforceDmCalls()).resolves.toBeUndefined();
+    expect(can).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'DM aramaları denetlenemedi');
+  });
+
+  it('kanalın DM olduğu okunamazsa da ret yok, loglanır', async () => {
+    const ali = await s.member('ali');
+    s.ctx.voice.join(ali.user.id, s.channel('voice').id);
+    const isDm = vi.spyOn(s.ctx.permissions, 'isDm').mockImplementationOnce(dbLocked);
+    const warn = vi.spyOn(s.app.log, 'warn');
+
+    await expect(s.ctx.moderation.enforceDmCalls()).resolves.toBeUndefined();
+    expect(isDm).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'DM aramaları denetlenemedi');
   });
 });

@@ -57,11 +57,12 @@ export class VoiceModeration {
 
   /**
    * Katılma bildirimi (webhook): jeton alındıktan sonra yetkiler değişmiş ya da katılımcı eski bir jetonla
-   * yeniden bağlanmış olabilir; izin her katılışta güncel duruma getirilir.
+   * yeniden bağlanmış olabilir; izin her katılışta güncel duruma getirilir. Çağıran beklemez, hata burada
+   * loglanır: yakalanmayan ret süreci düşürürdü. İzin sonraki eşitlemede (enforceAll) yine denetlenir.
    */
   async onJoined(userId: string, channelId: string): Promise<void> {
     this.applied.delete(userId);
-    await this.enforce(userId, channelId);
+    await this.enforce(userId, channelId).catch((err: unknown) => this.log?.warn({ err: String(err) }, 'katılan üyenin izni uygulanamadı'));
   }
 
   /** Yetkiler değişince (rol, kanal izni, üyelik) seste olan herkesi yeni duruma getirir. */
@@ -71,15 +72,20 @@ export class VoiceModeration {
 
   /**
    * Yalnızca DM aramalarındakiler: bire bir konuşma salt okunur olduysa (ortak sunucu kalmadı) aramadan
-   * çıkarılır. Sunucu kanallarındaki susturma/izinler DM'ye uygulanmaz (flagsIn DM'de hep boştur).
+   * çıkarılır. Sunucu kanallarındaki susturma/izinler DM'ye uygulanmaz (flagsIn DM'de hep boştur). Çağıranlar
+   * beklemez, hata burada loglanır: yakalanmayan ret süreci düşürürdü. Sonraki eşitleme (enforceAll) yine denetler.
    */
   async enforceDmCalls(): Promise<void> {
-    await Promise.all(
-      this.voice
-        .list()
-        .filter((s) => this.permissions.isDm(s.channelId))
-        .map((s) => this.enforce(s.userId, s.channelId)),
-    );
+    try {
+      await Promise.all(
+        this.voice
+          .list()
+          .filter((s) => this.permissions.isDm(s.channelId))
+          .map((s) => this.enforce(s.userId, s.channelId)),
+      );
+    } catch (err) {
+      this.log?.warn({ err: String(err) }, 'DM aramaları denetlenemedi');
+    }
   }
 
   private async enforce(userId: string, channelId: string): Promise<void> {

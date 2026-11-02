@@ -2,14 +2,15 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { decodeJwt, decodeProtectedHeader } from 'jose';
 import { ApnsClient, type ApnsTransport } from '../src/apns.js';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import type { AppContext } from '../src/context.js';
-import { parsePushTag, pushTag } from '@diskort/shared';
+import type { Store } from '../src/db.js';
+import { parsePushTag, pushTag, type DmChannel, type Message } from '@diskort/shared';
 import { joinGuild } from './helpers.js';
 import { PushService } from '../src/push.js';
 
@@ -360,5 +361,71 @@ describe('iOS bildirimleri (APNs)', () => {
     ctx.store.savePushToken(member.user.id, 'ios-jetonu', 'ios');
     expect(await push.sendTest(member.user.id)).toBe(0);
     expect(google.requests).toHaveLength(0);
+  });
+});
+
+describe('bildirim hatası süreci düşürmez', () => {
+  const dbLocked = (): never => {
+    throw new Error('database is locked');
+  };
+  const message = {
+    id: '1',
+    channelId: 'c',
+    authorId: 'a',
+    content: 'selam',
+    createdAt: 0,
+    editedAt: null,
+    attachments: [],
+    reactions: [],
+    mentionEveryone: false,
+  } as unknown as Message;
+  const dm = { id: 'd', group: false, name: null, participantIds: ['a', 'b'] } as unknown as DmChannel;
+  const iosToken = { userId: 'b', token: 'ios-jetonu', platform: 'ios' };
+
+  function service(store: object, send: () => Promise<string> = async () => 'ok') {
+    const warn = vi.fn();
+    const push = new PushService(store as Store, null, { warn, info: () => undefined }, fetch, { send } as unknown as ApnsClient);
+    const deliveries: unknown[][] = [];
+    push.onDelivery = (...args) => deliveries.push(args);
+    return { push, warn, deliveries };
+  }
+
+  const notifications: [string, (p: PushService) => Promise<void>][] = [
+    ['notifyMention', (p) => p.notifyMention(message, ['b'], 'genel')],
+    ['notifyDm', (p) => p.notifyDm(message, ['b'], dm)],
+    ['notifyCall', (p) => p.notifyCall(dm, 'a', null, ['b'])],
+    ['notifyMissedCall', (p) => p.notifyMissedCall(dm, 'a', null, ['b'])],
+    ['notifyFriendRequest', (p) => p.notifyFriendRequest('a', ['b'])],
+  ];
+
+  it.each(notifications)('%s: jetonlar okunamazsa ret yok, loglanır', async (_name, send) => {
+    const { push, warn } = service({ pushTokens: dbLocked });
+    await expect(send(push)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'telefon bildirimi gönderilemedi');
+  });
+
+  it.each(notifications)('%s: gönderen okunamazsa ret yok, loglanır', async (_name, send) => {
+    const { push, warn } = service({ pushTokens: () => [iosToken], getUser: dbLocked });
+    await expect(send(push)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'telefon bildirimi gönderilemedi');
+  });
+
+  it('geçersiz iOS jetonu silinemezse FCM dalı gibi başarısız sayılır, ret yok', async () => {
+    const store = { pushTokens: () => [iosToken], getUser: () => null, removePushToken: dbLocked };
+    const { push, warn, deliveries } = service(store, async () => 'unregistered');
+    await expect(push.notifyMention(message, ['b'], 'genel')).resolves.toBeUndefined();
+    await expect(push.sendTest('b')).resolves.toBe(1);
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'APNs bildirimi gönderilemedi');
+    expect(deliveries).toEqual([
+      ['ios', 'failed', expect.stringContaining('database is locked')],
+      ['ios', 'failed', expect.stringContaining('database is locked')],
+    ]);
+  });
+
+  it('APNs anahtarı imzalanamazsa başarısız sayılır, ret yok', async () => {
+    const store = { pushTokens: () => [iosToken], getUser: () => null };
+    const { push, deliveries } = service(store, () => Promise.reject(new Error('anahtar okunamadı')));
+    await expect(push.sendTest('b')).resolves.toBe(1);
+    expect(deliveries).toEqual([['ios', 'failed', expect.stringContaining('anahtar okunamadı')]]);
   });
 });
