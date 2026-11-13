@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ActivityIndicator, Image, Linking, Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Image, Linking, Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { isImageAttachment, isVideoAttachment, type Attachment } from '@diskort/shared';
@@ -8,10 +8,14 @@ import { canSaveToGallery, openAttachment, saveToGallery } from '../attachments'
 import { colors, createStyles } from '../theme';
 import { Toast } from './Toast';
 import { VideoAttachment } from './VideoAttachment';
+import { useViewerGestures } from './viewerGestures';
+import type { Point, Size } from './viewerZoom';
 
 /** Mesaj satırında avatar sütunu ve sağ boşluk (MessageRow ile aynı) */
 const ROW_INSET = 64 + 14;
 const IMAGE_MAX_HEIGHT = 320;
+/** Tam ekran resimde çift dokunuşun yakınlaştırdığı ölçek */
+const DOUBLE_TAP_ZOOM = 2.5;
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -70,6 +74,8 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
 /**
  * Tam ekran resim: sığdırılmış, üstte ad, "Galeriye kaydet" (yeni APK'larda) ve "Aç" (telefonun galeri
  * uygulamasında). Bağlantı önizlemesindeki resimde `source` asıl sayfadır: "Aç" onu açar.
+ * İki parmakla yakınlaşır, yakınken kaydırılır; çift dokunuş yakınlaştırır/sıfırlar; 1×'te dokunmak ya da
+ * aşağı sürüklemek kapatır.
  */
 export function ImageViewer({ attachment, onClose, source }: { attachment: Attachment; onClose: () => void; source?: string }) {
   // Kaydetme düğmesi kaydederken döner, bitince tik olur (kaydedildiği anında görünsün)
@@ -78,6 +84,33 @@ export function ImageViewer({ attachment, onClose, source }: { attachment: Attac
     setSaving('busy');
     setSaving((await saveToGallery([attachment])) ? 'done' : 'idle');
   };
+
+  // Resim alanının boyutu ve sayfadaki yeri: yakınlaştırma parmakların altındaki noktaya göre hesaplanır
+  const area = useRef<View>(null);
+  const [size, setSize] = useState<Size>({ width: 0, height: 0 });
+  const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
+  const measure = (): void => {
+    area.current?.measure((_x, _y, width, height, pageX, pageY) => {
+      setSize({ width, height });
+      setOffset({ x: pageX, y: pageY });
+    });
+  };
+  const gestures = useViewerGestures({
+    zoomable: true,
+    size,
+    offset,
+    content: attachment.width && attachment.height ? { width: attachment.width, height: attachment.height } : null,
+    doubleTapZoom: DOUBLE_TAP_ZOOM,
+    onTap: (zoomed) => {
+      if (!zoomed) onClose();
+    },
+    onSwipeDown: onClose,
+  });
+  // Başka bir resim açılınca yakınlaştırma sıfırdan başlar
+  const { reset } = gestures;
+  useEffect(() => {
+    reset(false);
+  }, [attachment.id, reset]);
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <SafeAreaView style={styles.viewer}>
@@ -115,9 +148,13 @@ export function ImageViewer({ attachment, onClose, source }: { attachment: Attac
             <Ionicons name="close" size={28} color="#fff" />
           </Pressable>
         </View>
-        <Pressable style={styles.viewerImage} onPress={onClose}>
-          <Image source={{ uri: attachmentUrl(attachment) }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-        </Pressable>
+        {/* overflow: yakınlaştırılan resim üst çubuğun ve alt bilginin üstüne taşmaz */}
+        <View ref={area} style={styles.viewerImage} onLayout={measure}>
+          <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { transform: gestures.transform }]}>
+            <Image source={{ uri: attachmentUrl(attachment) }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+          </Animated.View>
+          <View style={StyleSheet.absoluteFill} {...gestures.panHandlers} />
+        </View>
         <Text style={styles.viewerInfo}>
           {attachment.width && attachment.height ? `${attachment.width}×${attachment.height}` : ''}
           {attachment.size > 0 ? `${attachment.width && attachment.height ? ' · ' : ''}${formatBytes(attachment.size)}` : ''}
@@ -193,6 +230,6 @@ const styles = createStyles(() => ({
   viewerBar: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingHorizontal: 16, paddingVertical: 12 },
   viewerName: { flex: 1, color: '#fff', fontSize: 15 },
   viewerButton: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  viewerImage: { flex: 1 },
+  viewerImage: { flex: 1, overflow: 'hidden' },
   viewerInfo: { color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', paddingVertical: 12 },
 }));

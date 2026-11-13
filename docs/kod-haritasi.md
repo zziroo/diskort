@@ -166,6 +166,7 @@ _Güncelleme: 2026-11-02 (Shift göstergesi, mobilde sese otomatik dönüş). Ba
 - Yeni yerel modül: `apps/mobile/modules/<ad>/` (`expo-module.config.json`, `index.ts`, src/*Module.ts içinde requireOptionalNativeModule, android/.../*Module.kt); örnek en küçük: `apps/mobile/modules/gallery/`.
 - Gürültü filtresi: JS karar/yedek `apps/mobile/src/voice/noiseFilter.ts`; yerel eşikler `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/DpdfnetBudget.kt` → `judgeWindow`, `retryDelayMs`; 12 sa yavaş kaydı `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/SlowMemory.kt`; DSP `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/DpdfnetDsp.kt`; model betikleri `apps/mobile/modules/noise-filter/scripts/optimize_model.py` (CI: `.github/workflows/dpdfnet-olcum.yml`).
 - Ses istemcisi davranışı: `apps/mobile/src/voice/voice.ts` → `join`/`leave`/`bind`/`teardown`; yeniden bağlanma `onStreamGone`, `restoreMic`, `restoreScreenShare` (test `apps/mobile/test/voiceReconnect.test.ts`); düğme tepkisi `apps/mobile/src/voice/actions.ts`.
+- Tam ekran görüntüleyici yakınlaştırması (yayın ve resim): kanca `apps/mobile/src/components/viewerGestures.ts` `useViewerGestures` (PanResponder: tek/çift dokunuş, iki parmakla yakınlaştırma, kaydırma, aşağı çekip kapatma; `offset`/`content`/`doubleTapZoom` seçenekleri resim için), saf hesap `apps/mobile/src/components/viewerZoom.ts` → `zoomAround`, `clampPan`, `panLimits`, `fitSize` (test `apps/mobile/test/viewerZoom.test.ts`); kullananlar `apps/mobile/src/components/StreamViewer.tsx` `StreamViewer` ve `apps/mobile/src/components/Attachments.tsx` `ImageViewer`.
 - OTA / APK / IPA sürümü: süreç `docs/surumler-ve-guncellemeler.md` ve `docs/ios.md`; sürüm `apps/mobile/package.json` (masaüstüyle aynı); uygulama içi akış `apps/mobile/src/update/updater.ts` → `resolveRequiredUpdate`, `setBeforeReload`.
 - Config plugin: `apps/mobile/plugins/` altına yeni with*.js (örnek `apps/mobile/plugins/withAbiSplits.js`, işaretle idempotent) → `apps/mobile/app.config.ts` `plugins` listesine ekle; iOS ayarı ise `apps/mobile/plugins/withIos.js` + `apps/mobile/scripts/check-ios-project.sh`.
 - Yeni arayüz sesi: tanım client-core'da → `node apps/mobile/scripts/generate-sounds.mjs` → `apps/mobile/src/sounds.ts` → `MOBILE_SOUND_NAMES`.
@@ -217,7 +218,7 @@ _Güncelleme: 2026-11-02 (Shift göstergesi, mobilde sese otomatik dönüş). Ba
 - `apps/mobile/src/components/settings/ProfileSettings.tsx` (~380): `ProfileSettings` → kancalar `useProfileLook`, `useProfileBanner`, `useProfilePhoto`.
 - `apps/mobile/src/components/Composer.tsx` (~655): taslak/düzenleme kaydı `hasDraftText`, `hasOpenEdit` → `Composer` (bahsetme `MENTION_QUERY`) → `SendButton`, `TrayItem`, `Suggestions`, `AttachTile`.
 - `apps/mobile/src/components/settings/AccountAdmin.tsx` (~605): `AccountAdmin` → `AdminsBlock` → `AccountInvitesBlock` → `AccountsBlock`, `ResetCodeCard` → ortak `UserLine`, `SearchBox`.
-- `apps/mobile/src/components/StreamViewer.tsx` (~545): `StreamViewer` (tam ekran, kontroller) → `RoundButton` → `useVideoInfo` → `useViewerGestures` (yakınlaştırma, aşağı çekip kapatma).
+- `apps/mobile/src/components/StreamViewer.tsx` (~350): `StreamViewer` (tam ekran, kontroller) → `RoundButton` → `useVideoInfo`; dokunma hareketleri paylaşılan `apps/mobile/src/components/viewerGestures.ts` `useViewerGestures`.
 - `apps/mobile/src/components/MemberSheet.tsx` (~525): `MemberSheet` sayfaları `Page` (main/move/roles): profil, seste moderasyon, kanala taşıma, roller.
 
 ## Akışlar
@@ -261,7 +262,7 @@ _Güncelleme: 2026-11-02 (Shift göstergesi, mobilde sese otomatik dönüş). Ba
 - Gürültü değerlendirme betiği: `apps/desktop/scripts/gurultu-degerlendir.mjs` `synthFan`.
 
 ### Mobil ve web
-- `apps/mobile/test/` (vitest, `apps/mobile/vitest.config.ts`): çökme `apps/mobile/test/crashReports.test.ts`, `apps/mobile/test/tombstone.test.ts` (yardımcı `apps/mobile/test/protobuf.ts`); diğer `apps/mobile/test/calls.test.ts`, `apps/mobile/test/thermal.test.ts`.
+- `apps/mobile/test/` (vitest, `apps/mobile/vitest.config.ts`): çökme `apps/mobile/test/crashReports.test.ts`, `apps/mobile/test/tombstone.test.ts` (yardımcı `apps/mobile/test/protobuf.ts`); diğer `apps/mobile/test/calls.test.ts`, `apps/mobile/test/thermal.test.ts`, `apps/mobile/test/viewerZoom.test.ts`.
 - Kotlin (JVM, telefonsuz): `apps/mobile/modules/noise-filter/android/src/test/java/expo/modules/noisefilter/DpdfnetDspTest.kt` (masaüstü `dsp.js` eşdeğerliği), `apps/mobile/modules/noise-filter/android/src/test/java/expo/modules/noisefilter/DpdfnetBudgetTest.kt`.
 - Ses istemcisi, ekranlar ve web için otomatik test yok (elle/cihazda).
 
