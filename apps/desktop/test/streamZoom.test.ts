@@ -4,8 +4,10 @@ import {
   containRect,
   NO_ZOOM,
   panBy,
+  panByRect,
   wheelFactor,
   zoomAt,
+  zoomAtRect,
 } from '../src/renderer/src/components/stage/zoom.js';
 
 const box = { w: 1000, h: 500 };
@@ -65,5 +67,31 @@ describe('yayın yakınlaştırma', () => {
     expect(wheelFactor(-100)).toBeGreaterThan(1);
     expect(wheelFactor(100)).toBeLessThan(1);
     expect(wheelFactor(0)).toBe(1);
+  });
+
+  // Resim görüntüleyici: içerik alana sığdırılmaz, yerleşimdeki dikdörtgeni verilir
+  it('verilen dikdörtgen: alana sığan küçük resim yakınlaşınca ortada kalır', () => {
+    const r = { x: 450, y: 200, w: 100, h: 100 };
+    const z = zoomAtRect(NO_ZOOM, 4, 460, 210, box, r);
+    expect(z.s).toBe(4);
+    // 400x400 resim 1000x500 alanın ortasında
+    expect(z.x + 4 * r.x).toBeCloseTo(300);
+    expect(z.y + 4 * r.y).toBeCloseTo(50);
+    // Sığdığı sürece sürüklemek yerinden oynatmaz
+    expect(panByRect(z, 500, -500, box, r)).toEqual(z);
+  });
+
+  it('verilen dikdörtgen: alandan taşan resim alanın kenarına kadar kayar, imleç altı sabit kalır', () => {
+    const r = { x: 100, y: 50, w: 800, h: 400 };
+    const z = zoomAtRect(NO_ZOOM, 2.5, 300, 200, box, r);
+    expect(z.x + z.s * 300).toBeCloseTo(300);
+    expect(z.y + z.s * 200).toBeCloseTo(200);
+    const far = panByRect(z, 5000, 5000, box, r);
+    // Resmin sol üst köşesi alanın sol üst köşesinde
+    expect(far.x + far.s * r.x).toBeCloseTo(0);
+    expect(far.y + far.s * r.y).toBeCloseTo(0);
+    const back = panByRect(z, -5000, -5000, box, r);
+    expect(back.x + back.s * (r.x + r.w)).toBeCloseTo(box.w);
+    expect(back.y + back.s * (r.y + r.h)).toBeCloseTo(box.h);
   });
 });
