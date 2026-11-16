@@ -295,7 +295,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   }
 
   return (
-    <div className="relative px-4">
+    // data-pip-avoid: yüzen yayın penceresi (StreamPip) bu kutunun üstünde durur
+    <div data-pip-avoid className="relative px-4">
       {suggestions.length > 0 && (
         <div
           className="anim-drop-in absolute right-4 bottom-full left-4 mb-2 origin-bottom overflow-hidden rounded-lg border border-edge bg-bg-side py-2 shadow-xl"

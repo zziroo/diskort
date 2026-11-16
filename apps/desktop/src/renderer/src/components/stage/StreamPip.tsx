@@ -61,11 +61,36 @@ function PipWindow({ userId, closing }: { userId: string; closing: boolean }) {
   useLayoutEffect(() => {
     const el = layerRef.current;
     if (!el) return;
-    const measure = (): void => setBox({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
+    // Alan: katmanın tamamı, ama metin kanalında ve DM'de mesaj kutusu (`data-pip-avoid`) altta kalır;
+    // pencere onun üstünde durur (alt köşeler yazma alanını ve düğmelerini kapatmasın)
+    let avoid: Element | null = null;
+    const measure = (): void => {
+      const layer = el.getBoundingClientRect();
+      const rect = avoid?.getBoundingClientRect();
+      // Gizli kutu (display: none) sayılmaz
+      const inset = rect && rect.height > 0 ? Math.max(0, layer.bottom - rect.top) : 0;
+      const next = { w: el.clientWidth, h: Math.max(0, el.clientHeight - inset) };
+      setBox((prev) => (prev && prev.w === next.w && prev.h === next.h ? prev : next));
+    };
+    const resize = new ResizeObserver(measure);
+    resize.observe(el);
+    // Görünüm değişince (kanal, DM, arkadaşlar) içerik alanının doğrudan çocuğu değişir; kutuyu yeniden bul
+    const track = (): void => {
+      const found = el.parentElement?.querySelector('[data-pip-avoid]') ?? null;
+      if (found !== avoid) {
+        if (avoid) resize.unobserve(avoid);
+        avoid = found;
+        if (avoid) resize.observe(avoid);
+      }
+      measure();
+    };
+    track();
+    const views = new MutationObserver(track);
+    if (el.parentElement) views.observe(el.parentElement, { childList: true });
+    return () => {
+      resize.disconnect();
+      views.disconnect();
+    };
   }, []);
 
   const corner = useSettings((s) => s.streamPipCorner);
