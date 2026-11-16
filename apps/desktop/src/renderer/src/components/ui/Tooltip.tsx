@@ -144,7 +144,10 @@ export function TooltipHost() {
     document.addEventListener('focusout', onBlur, true);
     document.addEventListener('keydown', onKey, true);
     window.addEventListener('blur', hide);
+    // Tam ekrana girip çıkınca ipucu yeni kökte (tam ekran öğesi ya da body) yeniden açılır
+    document.addEventListener('fullscreenchange', hide);
     return () => {
+      document.removeEventListener('fullscreenchange', hide);
       window.clearTimeout(timer);
       document.removeEventListener('pointerover', onOver, true);
       document.removeEventListener('pointerout', onOut, true);
@@ -174,7 +177,8 @@ export function TooltipHost() {
   }, [tip]);
 
   if (!shown) return null;
-  return createPortal(<Bubble tip={shown} closing={closing} />, document.body);
+  // Tam ekranda yalnız tam ekran öğesinin içi çizilir: ipucu da onun içine konur
+  return createPortal(<Bubble tip={shown} closing={closing} />, document.fullscreenElement ?? document.body);
 }
 
 interface Placement {

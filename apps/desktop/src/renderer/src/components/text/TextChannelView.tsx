@@ -120,7 +120,8 @@ export function TextChannelView({ channel, dm }: { channel: Pick<Channel, 'id' |
   // Herhangi bir yere yazmaya başlayınca yazma kutusuna odaklan
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+      // defaultPrevented: tuşu bir kısayol kullandı (ör. büyük yayında F tam ekran)
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.closest('input, textarea, select, [contenteditable="true"]') || useUi.getState().modal)) return;
       composer.current?.focus();

@@ -104,3 +104,90 @@ export function pipTarget(s: {
   if (s.focusedStream && live(s.focusedStream)) return s.focusedStream;
   return Object.keys(s.watching).find(live) ?? null;
 }
+
+// ---------- Savurma ve köşeye oturma (yay) ----------
+
+/** Taşıma sırasında kaydedilen imleç örneği (`t`: ms, `PointerEvent.timeStamp` saati) */
+export interface PipSample {
+  t: number;
+  x: number;
+  y: number;
+}
+
+/** Bırakma hızı son bu kadar ms'lik örneklerden hesaplanır */
+export const PIP_VELOCITY_WINDOW_MS = 100;
+/** Son örnek bırakmadan bu kadar eskiyse imleç durmuş sayılır (hız 0) */
+export const PIP_VELOCITY_STALE_MS = 60;
+/** Hız bu değere (px/ms) kırpılır: sert bir savuruş pencereyi uçurmasın */
+export const PIP_MAX_SPEED = 5;
+/** İzdüşüm yavaşlama oranı (ms başına; iOS'taki "normal" kaydırma oranı) */
+export const PIP_DECELERATION = 0.998;
+
+/** Son örneklerden bırakma hızı (px/ms); örnek azsa ya da imleç bırakmadan durmuşsa sıfır. */
+export function estimateVelocity(samples: readonly PipSample[], now: number): PipPoint {
+  const last = samples.at(-1);
+  if (!last || now - last.t > PIP_VELOCITY_STALE_MS) return { x: 0, y: 0 };
+  const first = samples.find((s) => last.t - s.t <= PIP_VELOCITY_WINDOW_MS) ?? last;
+  const dt = last.t - first.t;
+  if (dt < 8) return { x: 0, y: 0 };
+  let x = (last.x - first.x) / dt;
+  let y = (last.y - first.y) / dt;
+  const speed = Math.hypot(x, y);
+  if (speed > PIP_MAX_SPEED) {
+    x = (x / speed) * PIP_MAX_SPEED;
+    y = (y / speed) * PIP_MAX_SPEED;
+  }
+  return { x, y };
+}
+
+/**
+ * Bırakılan pencerenin bu hızla kendiliğinden yavaşlayarak varacağı nokta (sürtünmeli kayma). Köşe bu
+ * noktaya göre seçilir: hızlı bir savuruş pencereyi karşı köşeye gönderebilir.
+ */
+export function projectFling(pos: PipPoint, velocity: PipPoint, rate = PIP_DECELERATION): PipPoint {
+  const k = rate / (1 - rate);
+  return { x: pos.x + velocity.x * k, y: pos.y + velocity.y * k };
+}
+
+export interface PipSpring {
+  /** Bir salınımın süresi (ms); oturma süresini belirler */
+  response: number;
+  /** Sönüm oranı: 1 aşmasız, altı hafif aşmalı */
+  damping: number;
+}
+
+/** Köşeye oturma yayı: yol uzadıkça biraz yavaşlar (kısa yol ~260 ms, uzun yol en çok ~420 ms salınım). */
+export function snapSpring(distance: number): PipSpring {
+  const response = Math.min(420, Math.max(260, 260 + Math.abs(distance) * 0.2));
+  return { response, damping: 0.82 };
+}
+
+/**
+ * Sönümlü yayın `t` ms sonraki konumu ve hızı (tek eksen, kapalı çözüm): `from`'dan `to`'ya, başlangıç hızı
+ * `v0` (px/ms). Sönüm 1'in altındadır (hafif aşma).
+ */
+export function springAt(
+  t: number,
+  from: number,
+  to: number,
+  v0: number,
+  spring: PipSpring,
+): { value: number; velocity: number } {
+  const w0 = (2 * Math.PI) / spring.response;
+  const zeta = Math.min(0.999, Math.max(0.01, spring.damping));
+  const wd = w0 * Math.sqrt(1 - zeta * zeta);
+  const a = from - to;
+  const b = (v0 + zeta * w0 * a) / wd;
+  const decay = Math.exp(-zeta * w0 * t);
+  const cos = Math.cos(wd * t);
+  const sin = Math.sin(wd * t);
+  return {
+    value: to + decay * (a * cos + b * sin),
+    velocity: decay * ((b * wd - zeta * w0 * a) * cos - (a * wd + zeta * w0 * b) * sin),
+  };
+}
+
+/** Yay hedefe oturdu mu (yarım pikselden yakın ve neredeyse durmuş) */
+export function springSettled(state: { value: number; velocity: number }, to: number): boolean {
+  return Math.abs(state.value - to) < 0.5 && Math.abs(state.velocity) < 0.02;
+}

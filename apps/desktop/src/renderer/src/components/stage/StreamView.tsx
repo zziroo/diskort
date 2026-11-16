@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { EyeOff, Maximize, Minimize, MonitorPause, Volume2, VolumeX, X } from 'lucide-react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { EyeOff, Maximize, Minimize, MonitorPause, MonitorX, Volume2, VolumeX } from 'lucide-react';
 import { voice } from '../../features/voice/voiceClient';
+import { DURATION, prefersReducedMotion } from '../../lib/motion';
 import { cn } from '../../lib/utils';
+import { useUi } from '../../stores/ui';
 import { useGuild, useSession } from '@diskort/client-core';
 import { useSettings } from '../../stores/settings';
 import { setVoice, useVoice } from '../../stores/voice';
@@ -11,21 +13,29 @@ import { StreamViewers } from './StreamViewers';
 import { SwapIcon } from '../ui/SwapIcon';
 import { useEscapeLayer } from '../../lib/escape';
 import { NO_ZOOM, panBy, wheelFactor, zoomAt, type Size, type Zoom } from './zoom';
+import { StreamButton, StreamButtonDivider, StreamButtonGroup } from './StreamButton';
 
 /** Tek tık bu kadar bekler; içinde ikinci tık gelirse (çift tık: tam ekran) tek tık iptal edilir */
 const CLICK_DELAY = 250;
+/** Tek tıkla tam ekrandan çıktıktan sonra bu süre içinde gelen çift tık yok sayılır (sistem çift tık süresi) */
+const SLOW_DBLCLICK_MS = 600;
 /** Bundan fazla kayan basış tık değil sürüklemedir */
 const DRAG_SLOP = 4;
+/** Tam ekranda fare bu kadar durunca şeritler ve imleç gizlenir */
+const FULLSCREEN_IDLE_MS = 2500;
 
 interface Props {
   userId: string;
   /** Büyük (odaklanmış) görünüm mü, yoksa küçük önizleme mi */
   large?: boolean;
-  /** Tek tık (çift tıkla çakışmasın diye kısa gecikmeyle çağrılır; yakınlaşmışken çağrılmaz) */
+  /**
+   * Tek tık (çift tıkla çakışmasın diye kısa gecikmeyle çağrılır; yakınlaşmışken çağrılmaz). Tam ekranda
+   * tek tık bunun yerine tam ekrandan çıkar ("bir seviye geri").
+   */
   onClick?: () => void;
   /**
    * false: ad şeridi, izleyenler ve kontrol barı çizilmez (yüzen pencere StreamPip kendi başlık ve alt
-   * şeridini çizer; tam ekranda kontrol barı yine çıkar). Varsayılan true.
+   * şeridini çizer; tam ekranda şerit ve kontrol barı yine çıkar). Varsayılan true.
    */
   overlay?: boolean;
 }
@@ -65,9 +75,48 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
   }, []);
 
   const toggleFullscreen = (): void => {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void containerRef.current?.requestFullscreen();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else void containerRef.current?.requestFullscreen().catch(() => undefined);
   };
+
+  // Tam ekrana giriş/çıkışta görüntü sert sıçramasın: video kısa bir solma ve ölçekle yerine oturur
+  const prevFullscreen = useRef(fullscreen);
+  useEffect(() => {
+    if (prevFullscreen.current === fullscreen) return;
+    prevFullscreen.current = fullscreen;
+    if (prefersReducedMotion()) return;
+    videoRef.current?.animate(
+      [
+        { opacity: 0.4, transform: 'scale(0.985)' },
+        { opacity: 1, transform: 'none' },
+      ],
+      { duration: DURATION.slow + 60, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+    );
+  }, [fullscreen]);
+
+  // F: büyük görünümde ya da tam ekranda tam ekranı açar/kapatır (yazı yazarken değil)
+  const big = Boolean(large) || fullscreen;
+  useEffect(() => {
+    if (!big) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key.toLowerCase() !== 'f' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      if (isTypingTarget(e.target)) return;
+      const ui = useUi.getState();
+      if (ui.modal !== null || ui.contextMenu !== null) return;
+      const current = document.fullscreenElement;
+      // Başka bir öğe tam ekrandaysa (ör. şeritteki kutucuk) o kendi işini yapar
+      if (current ? current !== containerRef.current : !large) return;
+      e.preventDefault();
+      toggleFullscreen();
+    };
+    // Yakalama evresinde: DM aramasının altındaki "yazmaya başlayınca kutuya odaklan" dinleyicisinden önce
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [big, large]);
+
+  // Tam ekranda fare durunca şeritler ve imleç gizlenir (sahnenin kendi boşta durumu yüzen pencereden
+  // açılan tam ekranı kapsamaz)
+  const idle = useFullscreenIdle(containerRef, fullscreen);
 
   // Yakınlaştırma yalnız büyük görünümde ve tam ekranda; görünüm değişince (büyük↔tam ekran dahil,
   // kutu ölçüsü değiştiği için) ve yayın değişince sıfırlanır
@@ -112,7 +161,8 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
   const [dragging, setDragging] = useState(false);
   const suppressClick = useRef(false);
   const onPointerDown = (e: React.PointerEvent): void => {
-    suppressClick.current = false;
+    // İzleyici listesi açıkken dışına tıklamak yalnız listeyi kapatır (tam ekrandan çıkmaz, sahneye dönmez)
+    suppressClick.current = containerRef.current?.querySelector('[aria-haspopup][aria-expanded="true"]') != null;
     if (e.button !== 0) return;
     if (!containerRef.current?.contains(e.target as Node)) return;
     // Kontrol barı, düğmeler ve kaydırıcılar kendi işini yapar
@@ -153,16 +203,38 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
   // Tek tık gecikmeli; çift tıkın ikinci tıkı onu iptal eder
   const clickTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(clickTimer.current), []);
+  // Tek tıkla tam ekrandan çıkılan an: yavaş bir çift tıkın (250 ms'den uzun, sistemin çift tık süresi
+  // içinde) dblclick'i bundan sonra gelirse tam ekrana geri girmesin
+  const clickExitAt = useRef(0);
   const handleClick = (e: React.MouseEvent): void => {
     clearTimeout(clickTimer.current);
     if (suppressClick.current) {
       suppressClick.current = false;
       return;
     }
-    // Tam ekranda tek tık bir şey yapmaz (odak değişince öğe yeniden kurulur, tam ekran düşerdi)
-    if (!onClick || e.detail > 1 || zoomed || fullscreen) return;
+    if (e.detail > 1 || zoomed) return;
+    // Portal ile açılan izleyici listesinin tıkı (React ağacında içeride, DOM'da dışarıda) sayılmaz
+    if (!containerRef.current?.contains(e.target as Node)) return;
+    // Tam ekranda tek tık tam ekrandan çıkar; doğrudan, odak değiştirmeden (öğe yeniden kurulmasın)
+    if (fullscreen) {
+      clickTimer.current = setTimeout(() => {
+        if (document.fullscreenElement !== containerRef.current) return;
+        clickExitAt.current = performance.now();
+        void document.exitFullscreen().catch(() => undefined);
+      }, CLICK_DELAY);
+      return;
+    }
+    if (!onClick) return;
     clickTimer.current = setTimeout(onClick, CLICK_DELAY);
   };
+
+  // Şeritlerin görünürlüğü: tam ekranda boşta kalana dek açık; değilse fare üstündeyken (sahne boşta gizler)
+  const chromeVisibility = fullscreen
+    ? idle
+      ? 'pointer-events-none opacity-0'
+      : 'opacity-100'
+    : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 group-data-[idle]/stage:opacity-0!';
+  const pill = big ? 'h-10' : 'h-8';
 
   const setVolume = (v: number): void => {
     const streamVolumes = { ...useSettings.getState().streamVolumes, [userId]: v };
@@ -172,13 +244,17 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
   return (
     <div
       ref={containerRef}
+      data-stream-view
       className={cn(
-        'group @container relative flex h-full w-full items-center justify-center overflow-hidden rounded-lg bg-black',
-        zoomed ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : onClick && 'cursor-pointer',
+        'group @container relative flex h-full w-full items-center justify-center overflow-hidden bg-black',
+        fullscreen ? 'rounded-none' : 'rounded-lg',
+        zoomed ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : (onClick || fullscreen) && 'cursor-pointer',
+        idle && 'cursor-none [&_*]:cursor-none',
       )}
       onClick={handleClick}
       onDoubleClick={() => {
         clearTimeout(clickTimer.current);
+        if (performance.now() - clickExitAt.current < SLOW_DBLCLICK_MS) return;
         toggleFullscreen();
       }}
       onWheel={onWheel}
@@ -216,53 +292,66 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
         !hasVideo && <div className="absolute animate-pulse text-sm text-text-muted">Yayın yükleniyor…</div>
       )}
 
-      {overlay && (
+      {(overlay || fullscreen) && (
         <>
-          <div className="pointer-events-none absolute top-0 right-0 left-0 flex items-center gap-2 bg-gradient-to-b from-black/60 to-transparent p-3 pr-32 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 group-data-[idle]/stage:opacity-0!">
+          <div
+            className={cn(
+              'pointer-events-none absolute top-0 right-0 left-0 flex items-center gap-2 bg-gradient-to-b from-black/60 to-transparent pr-32 transition-opacity duration-300',
+              fullscreen ? 'p-4' : 'p-3',
+              chromeVisibility,
+            )}
+          >
             <LiveBadge />
-            <span className="truncate text-sm font-semibold text-white">
+            <span className={cn('truncate font-semibold text-white', fullscreen ? 'text-base' : 'text-sm')}>
               {isSelf ? 'Senin yayının' : user?.displayName}
             </span>
           </div>
 
           {/* İzleyenler her zaman görünür (yayıncı için asıl bilgi) */}
-          <StreamViewers userId={userId} className="absolute top-2.5 right-2.5" />
+          <StreamViewers
+            userId={userId}
+            className={cn(
+              'absolute',
+              fullscreen ? 'top-3.5 right-4 transition-opacity duration-300' : 'top-2.5 right-2.5',
+              fullscreen && idle && 'pointer-events-none opacity-0',
+            )}
+          />
         </>
       )}
 
-      {/* Ses sahnesinde fare durunca gizlenir (VoiceStage: useStageChrome) */}
+      {/* Ses sahnesinde fare durunca gizlenir (VoiceStage: useStageChrome), tam ekranda useFullscreenIdle */}
       <div
         data-stage-chrome
         className={cn(
-          'absolute right-0 bottom-0 left-0 flex items-center justify-end gap-1 bg-gradient-to-t from-black/70 to-transparent p-2 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 group-data-[idle]/stage:opacity-0!',
+          'absolute right-0 bottom-0 left-0 flex items-center justify-end gap-2 bg-gradient-to-t from-black/70 to-transparent transition-opacity duration-300',
+          big ? 'px-3 pt-10 pb-3' : 'p-2 pt-6',
+          chromeVisibility,
           !overlay && !fullscreen && 'hidden',
         )}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <div className="mr-auto flex items-center gap-2">
-          {zoomed && (
-            <button
-              type="button"
-              onClick={() => setZoom(NO_ZOOM)}
-              onDoubleClick={(e) => e.stopPropagation()}
-              data-tooltip="Yakınlaştırmayı sıfırla"
-              className="press flex h-8 items-center rounded-full bg-black/60 px-3 text-xs font-medium text-white/85 tabular-nums backdrop-blur-sm hover:text-white"
-            >
-              %{Math.round(zoom.s * 100)}
-            </button>
-          )}
+        <div className="mr-auto flex min-w-0 items-center gap-2">
           {!isSelf && hasAudio && (
             // Görüntünün üstünde okunaklı küçük hap: simge (sessize alır), kaydırıcı, yüzde; dar kutucukta yalnız simge
-            <div className="flex h-8 items-center gap-2 rounded-full bg-black/60 pr-1 pl-1 text-white backdrop-blur-sm @xs:pr-3">
+            <div
+              className={cn(
+                'flex items-center gap-2 rounded-full bg-black/55 pr-1 pl-1 text-white ring-1 ring-white/10 backdrop-blur-md @xs:pr-3',
+                pill,
+              )}
+            >
               <button
-                className="press-icon flex h-6 w-6 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
+                type="button"
+                className={cn(
+                  'press-icon flex items-center justify-center rounded-full text-white outline-none transition-colors hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white/80',
+                  big ? 'h-8 w-8' : 'h-6 w-6',
+                )}
                 onClick={() => setVolume(volume > 0 ? 0 : 1)}
                 data-tooltip={volume > 0 ? 'Yayın sesini kapat' : 'Yayın sesini aç'}
                 aria-label="Yayın sesi"
               >
                 <SwapIcon swapKey={volume > 0 ? 'on' : 'off'} motion="ico-pop">
-                  {volume > 0 ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                  {volume > 0 ? <Volume2 size={big ? 18 : 16} /> : <VolumeX size={big ? 18 : 16} />}
                 </SwapIcon>
               </button>
               <Slider
@@ -279,22 +368,53 @@ export function StreamView({ userId, large, onClick, overlay = true }: Props) {
               </span>
             </div>
           )}
+          {zoomed && (
+            <button
+              type="button"
+              onClick={() => setZoom(NO_ZOOM)}
+              onDoubleClick={(e) => e.stopPropagation()}
+              data-tooltip="Yakınlaştırmayı sıfırla (Esc)"
+              className={cn(
+                'press anim-pill-in flex items-center rounded-full bg-black/55 px-3 text-xs font-medium text-white/85 tabular-nums ring-1 ring-white/10 backdrop-blur-md outline-none hover:text-white focus-visible:ring-2 focus-visible:ring-white/80',
+                pill,
+              )}
+            >
+              %{Math.round(zoom.s * 100)}
+            </button>
+          )}
         </div>
-        {isSelf && !paused && (
-          <IconButton title="Önizlemeyi duraklat" onClick={() => setVoice({ selfPreview: false })}>
-            <EyeOff size={18} className="ico-blink" />
-          </IconButton>
-        )}
-        <IconButton title={fullscreen ? 'Tam ekrandan çık' : 'Tam ekran'} onClick={toggleFullscreen}>
-          <SwapIcon swapKey={fullscreen ? 'on' : 'off'} motion={fullscreen ? 'ico-shrink' : 'ico-grow'}>
-            {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
-          </SwapIcon>
-        </IconButton>
-        {!isSelf && (
-          <IconButton title="İzlemeyi bırak" onClick={() => voice.stopWatching(userId)}>
-            <X size={18} />
-          </IconButton>
-        )}
+        <StreamButtonGroup>
+          {isSelf && !paused && (
+            <StreamButton size={big ? 'md' : 'sm'} label="Önizlemeyi duraklat" onClick={() => setVoice({ selfPreview: false })}>
+              <EyeOff size={big ? 18 : 16} className="ico-blink" />
+            </StreamButton>
+          )}
+          <StreamButton
+            size={big ? 'md' : 'sm'}
+            label={fullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
+            shortcut={big ? 'F' : undefined}
+            onClick={toggleFullscreen}
+          >
+            <SwapIcon swapKey={fullscreen ? 'on' : 'off'} motion={fullscreen ? 'ico-shrink' : 'ico-grow'}>
+              {fullscreen ? <Minimize size={big ? 18 : 16} /> : <Maximize size={big ? 18 : 16} />}
+            </SwapIcon>
+          </StreamButton>
+          {!isSelf && (
+            <>
+              {big && <StreamButtonDivider />}
+              <StreamButton
+                size={big ? 'md' : 'sm'}
+                tone="danger"
+                label="İzlemeyi bırak"
+                // Yazı kutu yeterince genişse görünür (dar DM araması panelinde yalnız simge)
+                text={big ? 'İzlemeyi bırak' : undefined}
+                onClick={() => voice.stopWatching(userId)}
+              >
+                <MonitorX size={big ? 18 : 16} />
+              </StreamButton>
+            </>
+          )}
+        </StreamButtonGroup>
       </div>
     </div>
   );
@@ -347,15 +467,50 @@ function SelfPreviewPaused({ compact }: { compact: boolean }) {
   );
 }
 
-function IconButton({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      data-tooltip={title}
-      aria-label={title}
-      onClick={onClick}
-      className="press-icon flex h-8 w-8 items-center justify-center rounded bg-black/50 text-white hover:bg-black/80"
-    >
-      {children}
-    </button>
-  );
+/** Yazı alanında (metin kutusu, Slate editörü) basılan tuş kısayol sayılmaz */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]') !== null;
+}
+
+/**
+ * Tam ekrandaki yayının "boşta" durumu: fare hareket edince ya da tuşa basılınca şeritler belirir, fare
+ * FULLSCREEN_IDLE_MS durunca kaybolur. Fare bir kontrolün üstündeyken, kontrolde klavye odağı varken ya da
+ * izleyici listesi açıkken gizlenmez.
+ */
+function useFullscreenIdle(ref: RefObject<HTMLDivElement | null>, enabled: boolean): boolean {
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    const root = ref.current;
+    if (!enabled || !root) return;
+    let timer = 0;
+    const held = (): boolean =>
+      root.querySelector(
+        '[data-stage-chrome]:hover, [data-stage-chrome] :hover, [data-stage-chrome] :focus-visible, [aria-haspopup][aria-expanded="true"]',
+      ) !== null;
+    const hideLater = (): void => {
+      window.clearTimeout(timer);
+      const check = (): void => {
+        if (held()) timer = window.setTimeout(check, 500);
+        else setIdle(true);
+      };
+      timer = window.setTimeout(check, FULLSCREEN_IDLE_MS);
+    };
+    const wake = (): void => {
+      setIdle(false);
+      hideLater();
+    };
+    root.addEventListener('pointermove', wake);
+    root.addEventListener('pointerdown', wake);
+    document.addEventListener('keydown', wake);
+    hideLater();
+    return () => {
+      window.clearTimeout(timer);
+      root.removeEventListener('pointermove', wake);
+      root.removeEventListener('pointerdown', wake);
+      document.removeEventListener('keydown', wake);
+      setIdle(false);
+    };
+  }, [enabled, ref]);
+  return enabled && idle;
 }

@@ -3,13 +3,19 @@ import {
   clampPipWidth,
   clampPosition,
   cornerPosition,
+  estimateVelocity,
   isPipCorner,
+  PIP_MAX_SPEED,
   nearestCorner,
   PIP_DEFAULT_WIDTH,
   PIP_MIN_WIDTH,
   pipSize,
   pipTarget,
+  projectFling,
   resizeWidth,
+  snapSpring,
+  springAt,
+  springSettled,
 } from '../src/renderer/src/components/stage/pip.js';
 
 const box = { w: 1200, h: 800 };
@@ -75,5 +81,63 @@ describe('yüzen yayın penceresi', () => {
   it('köşe adı doğrulanır', () => {
     expect(isPipCorner('top-left')).toBe(true);
     expect(isPipCorner('middle')).toBe(false);
+  });
+});
+
+describe('yüzen pencereyi savurma ve köşeye oturma', () => {
+  const at = (t: number, x: number, y = 0) => ({ t, x, y });
+
+  it('bırakma hızı son ~100 ms örneklerinden hesaplanır', () => {
+    // 500 ms önceki örnek pencerenin dışında kalır; son 100 ms'de 150 px sağa
+    const v = estimateVelocity([at(0, -400), at(400, 0), at(450, 75), at(500, 150)], 505);
+    expect(v.x).toBeCloseTo(1.5);
+    expect(v.y).toBe(0);
+  });
+
+  it('imleç bırakmadan önce durduysa ya da tek örnek varsa hız sıfırdır', () => {
+    expect(estimateVelocity([at(0, 0), at(50, 100)], 300)).toEqual({ x: 0, y: 0 });
+    expect(estimateVelocity([at(0, 0)], 0)).toEqual({ x: 0, y: 0 });
+    expect(estimateVelocity([], 0)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('sert savuruşun hızı kırpılır', () => {
+    const v = estimateVelocity([at(0, 0), at(20, 1000)], 20);
+    expect(Math.hypot(v.x, v.y)).toBeCloseTo(PIP_MAX_SPEED);
+  });
+
+  it('savuruş izdüşümüyle karşı köşe seçilebilir, hızsız bırakış yerinde kalır', () => {
+    const pos = { x: 300, y: 500 }; // sol yarıda, alt yarıda
+    expect(nearestCorner(projectFling(pos, { x: 0, y: 0 }), box, pip)).toBe('bottom-left');
+    // Sağa hızlı savuruş (1,5 px/ms) sağ alt köşeye gönderir
+    expect(nearestCorner(projectFling(pos, { x: 1.5, y: 0 }), box, pip)).toBe('bottom-right');
+    // Yavaş kayma (0,1 px/ms ≈ 50 px) köşeyi değiştirmez
+    expect(nearestCorner(projectFling(pos, { x: 0.1, y: 0 }), box, pip)).toBe('bottom-left');
+  });
+
+  it('yay başlangıçta yerinde ve verilen hızda, sonunda hedefte durur', () => {
+    const spring = snapSpring(400);
+    const start = springAt(0, 0, 400, 0.8, spring);
+    expect(start.value).toBeCloseTo(0);
+    expect(start.velocity).toBeCloseTo(0.8);
+    const end = springAt(2000, 0, 400, 0.8, spring);
+    expect(springSettled(end, 400)).toBe(true);
+  });
+
+  it('yay çok az aşar (kenar boşluğundan az) ve hızsız bırakışta aşma ihmal edilebilir', () => {
+    for (const [distance, v0] of [
+      [900, 0],
+      [900, PIP_MAX_SPEED],
+      [200, 2],
+    ] as const) {
+      const spring = snapSpring(distance);
+      let max = 0;
+      for (let t = 0; t <= 1500; t += 4) max = Math.max(max, springAt(t, 0, distance, v0, spring).value);
+      expect(max - distance).toBeLessThan(v0 === 0 ? distance * 0.02 : 16 + distance * 0.02);
+    }
+  });
+
+  it('uzun yol daha uzun sürer ama süre sınırlıdır', () => {
+    expect(snapSpring(50).response).toBeLessThan(snapSpring(800).response);
+    expect(snapSpring(5000).response).toBeLessThanOrEqual(420);
   });
 });
