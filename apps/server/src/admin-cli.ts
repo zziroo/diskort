@@ -31,6 +31,8 @@ const MIN_SCHEMA = 17;
 const INTRO_SOUND_SCHEMA = 27;
 /** guild_sounds tablosunun geldiği şema (göç 29) */
 const SOUNDBOARD_SCHEMA = 29;
+/** users.is_account_helper'ın geldiği şema (göç 30): yönetici yapılan hesabın yardımcılığı temizlenir */
+const HELPER_SCHEMA = 30;
 
 const USAGE = `Kullanım: node dist/admin-cli.js <komut> [seçenekler]
 
@@ -126,7 +128,13 @@ function main(argv: string[]): void {
           console.log(`@${user.username} zaten hesap yöneticisi.`);
           return;
         }
-        db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
+        db.prepare(
+          version >= HELPER_SCHEMA
+            ? 'UPDATE users SET is_admin = 1, is_account_helper = 0 WHERE id = ?'
+            : 'UPDATE users SET is_admin = 1 WHERE id = ?',
+        ).run(user.id);
+        // Sıradanken üretilmiş bekleyen sıfırlama kodu yönetici hesabını ele geçirmeye yaramasın (Store.setAdmin gibi)
+        db.prepare('DELETE FROM reset_codes WHERE user_id = ?').run(user.id);
         console.log(`@${user.username} artık hesap yöneticisi.`);
         return;
       }

@@ -38,7 +38,8 @@ export default function SettingsScreen() {
   const [query, setQuery] = useState('');
   // Hesap yöneticiliği hiçbir sunucuya bağlı değildir: yönetim buradan
   const isAdmin = user?.isAdmin === true;
-  const groups = useMemo(() => settingsGroupsFor('mobile', { isAdmin }), [isAdmin]);
+  const isAccountHelper = user?.isAccountHelper === true;
+  const groups = useMemo(() => settingsGroupsFor('mobile', { isAdmin, isAccountHelper }), [isAdmin, isAccountHelper]);
   const shown = useMemo(() => searchSettings(groups, query), [groups, query]);
   const values = useRowValues();
   const serverUrl = useSettings((s) => s.serverUrl);

@@ -35,7 +35,7 @@ _Güncelleme: 2026-11-02 (Shift göstergesi, mobilde sese otomatik dönüş). Ba
 - Ortak bağlam: `apps/server/src/context.ts` `AppContext`, `sendError`, `parseBody` (zod), `forbidden`, `afterPermissionChange`.
 - Ayarlar: `apps/server/src/config.ts` `loadConfig` (ortam değişkenleri; geliştirmede `DEV_JWT_SECRET` gibi varsayılanlar, üretimde `required`).
 - Veritabanı: `apps/server/src/db.ts` `Store` (tüm SQL burada), `MIGRATIONS`; ayrı göç metinleri `apps/server/src/feedbackStore.ts` `FEEDBACK_MIGRATION`, `apps/server/src/voiceHistory.ts` `ADMIN_HISTORY_MIGRATION`.
-- Kimlik: `apps/server/src/auth.ts` `AuthService` (argon2, HS256 JWT 30 gün; bir günden yaşlı jetonu `apps/server/src/gateway.ts` `renewToken` ile `SESSION_TOKEN` olarak yeniler, `tokenIssuedAt`; `requireUser`, `requireMember`, `requireGuildPermission`, `requireInstanceAdmin`).
+- Kimlik: `apps/server/src/auth.ts` `AuthService` (argon2, HS256 JWT 30 gün; bir günden yaşlı jetonu `apps/server/src/gateway.ts` `renewToken` ile `SESSION_TOKEN` olarak yeniler, `tokenIssuedAt`; `requireUser`, `requireMember`, `requireGuildPermission`, `requireInstanceAdmin`, `requireAccountHelper` (yönetici ya da hesap yardımcısı)).
 - Yetki: `apps/server/src/permissions.ts` `PermissionService` (`inChannel`, `canView`, `viewersOf`, `isDm`); hesap `packages/shared/src/permissions.ts` `hasPermission`, `Permission`. Belge: `docs/roller-ve-yetkiler.md`.
 - Gateway (WebSocket `/gateway`): `apps/server/src/gateway.ts` `Gateway`, `Coalescer`; durum/etkinlik birleştirme `apps/server/src/presence.ts` `StatusStore`, `mergeActivities`.
 - REST: `apps/server/src/routes/` her dosya bir `register…Routes(app, ctx)`; ör. `apps/server/src/routes/messages.ts` `registerMessageRoutes`, `createRateLimiter`.
@@ -177,7 +177,7 @@ _Güncelleme: 2026-11-02 (Shift göstergesi, mobilde sese otomatik dönüş). Ba
 
 ### Sunucu ve ortak
 - `apps/server/src/db.ts` (3138): başta `SEARCH_MIGRATION` (FTS5, ı→i katlama) ve `MIGRATIONS`; satır dönüştürücüler (`toMessage`, `toChannel`, `toInvite`); `Store` yapıcı + `migrate`, `tx`, `run` (her yazma `permissionCache` siler).
-  - `Store` bölümleri (`// ---------- Ad ----------`): Kullanıcılar, Hesap yöneticileri, Üyelikler, Roller ve yetkiler (`permissionData`), Davetler (`ensureBootstrapInvite`), Sunucular ve kanallar (`ensureGuild`), Direkt mesajlar, Engellemeler, Arkadaşlar, Kullanıcı durumu, Bildirim jetonları, Mesajlar (`searchMessages`, `createMessage`), Sabitlenmiş mesajlar (`listPins`, `addReaction`), Arama kayıtları, Bağlantı önizleme önbelleği, Dosya ekleri (`lastMessageIds`, `readStates`).
+  - `Store` bölümleri (`// ---------- Ad ----------`): Kullanıcılar, Hesap yöneticileri, Hesap yardımcıları (`setAccountHelper`), Üyelikler, Roller ve yetkiler (`permissionData`), Davetler (`ensureBootstrapInvite`), Sunucular ve kanallar (`ensureGuild`), Direkt mesajlar, Engellemeler, Arkadaşlar, Kullanıcı durumu, Bildirim jetonları, Mesajlar (`searchMessages`, `createMessage`), Sabitlenmiş mesajlar (`listPins`, `addReaction`), Arama kayıtları, Bağlantı önizleme önbelleği, Dosya ekleri (`lastMessageIds`, `readStates`).
 - `apps/server/src/gateway.ts` (878): sel sabitleri + `Coalescer`; `Session` arayüzü (özellik bayrakları `dm`, `trace`); `Gateway`: gönderim (`broadcast`, `dispatchChannel`, `sendToGuild`, `sendDm`), görünürlük (`visibility`, `syncVisibility`), sunucu üyeliği (`announceJoin`, `announceLeave`), bağlantı (`accept`, `drop`, `handle`, `identifyMessage`, `identify` → READY, `pingAll`), sayılan çıkış `out`.
 - `apps/server/src/freezeDiagnosis.ts` (1132): teşhis kuralları `diagnose`, `serverResourceProblems`, `summarizeLiveKit`; "Olay toplayıcı" bölümü `buildUsers`, `FreezeCorrelator` (`observe`, `sweep`, `detailOf`).
 - `apps/server/src/netSeconds.ts` (1003): /proc ayrıştırıcılar `parseSoftnetStat`, `readRaw`, `rowBetween`; Özetler `findBurst`, `summarizeRows`; Dakikalık özet `minuteOf`; Halka + kalıcı kayıt `isAbnormalRow`, `SilenceScanner`, `SecondSampler` (`tick`, `flush`, `seconds`, `minutes`).
@@ -217,7 +217,7 @@ _Güncelleme: 2026-11-02 (Shift göstergesi, mobilde sese otomatik dönüş). Ba
 - `apps/mobile/modules/noise-filter/android/src/main/java/expo/modules/noisefilter/DpdfnetProcessor.kt` (~765): `Bypass`/`Stats`/`WarmUp` → kurulum `install`, `unload`, `setEnabled`, `bypassThermal`, `noteSlow` → ses iş parçacığı `processAudio`, `dry`, `crossfade`, `measure` → model iş parçacığı `ensureWorker`, `workLoop`, `idle` → `warmUp`.
 - `apps/mobile/src/components/settings/ProfileSettings.tsx` (~380): `ProfileSettings` → kancalar `useProfileLook`, `useProfileBanner`, `useProfilePhoto`.
 - `apps/mobile/src/components/Composer.tsx` (~655): taslak/düzenleme kaydı `hasDraftText`, `hasOpenEdit` → `Composer` (bahsetme `MENTION_QUERY`) → `SendButton`, `TrayItem`, `Suggestions`, `AttachTile`.
-- `apps/mobile/src/components/settings/AccountAdmin.tsx` (~605): `AccountAdmin` → `AdminsBlock` → `AccountInvitesBlock` → `AccountsBlock`, `ResetCodeCard` → ortak `UserLine`, `SearchBox`.
+- `apps/mobile/src/components/settings/AccountAdmin.tsx` (~740): `AccountAdmin` (yönetici tam, hesap yardımcısı indirgenmiş) → `AdminsBlock` → `HelpersBlock` → `AccountInvitesBlock` → `AccountsBlock`, `ResetCodeCard` → ortak `UserLine`, `SearchBox`.
 - `apps/mobile/src/components/StreamViewer.tsx` (~350): `StreamViewer` (tam ekran, kontroller) → `RoundButton` → `useVideoInfo`; dokunma hareketleri paylaşılan `apps/mobile/src/components/viewerGestures.ts` `useViewerGestures`.
 - `apps/mobile/src/components/MemberSheet.tsx` (~525): `MemberSheet` sayfaları `Page` (main/move/roles): profil, seste moderasyon, kanala taşıma, roller.
 
@@ -251,7 +251,7 @@ _Güncelleme: 2026-11-02 (Shift göstergesi, mobilde sese otomatik dönüş). Ba
 ## Testler
 
 ### Sunucu ve ortak
-- `apps/server/test/` (58 dosya, vitest): gerçek `buildApp` + `:memory:` SQLite; `apps/server/test/helpers.ts` `startServer`, `FakeLiveKit`, `connectGateway`, `joinGuild`. Dosya adları alanı söyler (`apps/server/test/messages.test.ts`, `apps/server/test/dmCalls.test.ts`, `apps/server/test/roles.test.ts`).
+- `apps/server/test/` (59 dosya, vitest): gerçek `buildApp` + `:memory:` SQLite; `apps/server/test/helpers.ts` `startServer`, `FakeLiveKit`, `connectGateway`, `joinGuild`. Dosya adları alanı söyler (`apps/server/test/messages.test.ts`, `apps/server/test/dmCalls.test.ts`, `apps/server/test/roles.test.ts`).
 - Tek dosya: `pnpm --filter @diskort/server exec vitest run test/roles.test.ts`.
 - Göçler: `apps/server/test/migration.test.ts` (`MIGRATIONS` dilimleriyle eski şema kurar). Hat testi + araç uyumu: `apps/server/test/lineTest.test.ts` (`tools/udp-probe/probe.mjs`'i gerçek sunucuya karşı koşar).
 

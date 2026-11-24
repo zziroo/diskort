@@ -113,6 +113,14 @@ export class PermissionService {
     return this.store.isAdmin(userId);
   }
 
+  /**
+   * Hesap yardımcısı: hesap yöneticisinin atadığı dar yetkili rol (users.is_account_helper). Hesap daveti
+   * oluşturur, sıradan hesaplara şifre sıfırlama kodu üretir; başka hiçbir yetki vermez. Yönetici yardımcı sayılmaz.
+   */
+  isAccountHelper(userId: string): boolean {
+    return this.store.isAccountHelper(userId);
+  }
+
   /** Ana sunucu (ilk kurulan; silinemez) */
   get primaryGuildId(): string | null {
     return this.data.primaryGuildId;

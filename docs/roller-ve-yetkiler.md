@@ -75,6 +75,23 @@ ya da Yönetici rolü bunu vermez. Hesap yöneticileri:
 
 İlk hesap yöneticidir. Son yönetici çıkarılamaz. Ayrıntılar ve komut satırı araçları: [Yönetim](yonetim.md).
 
+### Hesap yardımcıları
+
+Hesap yardımcısı (`users.is_account_helper`, şema 30) hesap yöneticisinin güvendiği kişilere verdiği dar
+yetkili roldür; yalnızca hesap yöneticisi verir ve alır. Hesap yardımcıları:
+
+- hesap açtıran davet oluşturur, davetleri görür, yalnızca kendi oluşturduğu daveti siler,
+- sıradan hesaplar ve kendisi için şifre sıfırlama kodu üretir. Sıradan hesap: hesap yöneticisi, hesap
+  yardımcısı, bir sunucunun sahibi ya da bir sunucuda Yönetici yetkisi taşıyan olmayan hesap (kodu alan hesabı,
+  dolayısıyla sunucusunu da ele geçirebileceğinden bunları yalnızca hesap yöneticisi sıfırlar).
+
+Hesap silemez, yönetici ya da yardımcı ekleyip çıkaramaz, korunan hesapların şifresini sıfırlayamaz, geri
+bildirimlere ve yönetim paneline giremez; sunucularda hiçbir yetki kazanmaz. Yardımcılığı alamadığı için korunan
+bir hesabı sıradan hâle getiremez. Yönetici yapılan hesabın yardımcılığı silinir; yöneticiliği sonra alınırsa
+sıradan hesap olur. Bir hesap yönetici ya da yardımcı yapılınca bekleyen sıfırlama kodu silinir. Yardımcılığı
+alınınca başkalarına ürettiği bekleyen kodlar ve oluşturduğu hesap davetleri silinir; hesap silinince de
+başkalarına ürettiği bekleyen kodlar silinir.
+
 ## Eski sürümlerden geçiş
 
 - **Şema 8 (rollerin gelişi):** eski yöneticiler "Yönetici" rolüne geçti, en eski yönetici sahip oldu; herkesin

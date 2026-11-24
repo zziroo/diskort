@@ -133,6 +133,19 @@ export class AuthService {
       await reply.code(403).send({ error: 'forbidden', message: 'Bu işlem için yetkin yok.' });
     }
   };
+
+  /**
+   * Fastify preHandler: hesap yöneticisi ya da hesap yardımcısı (hesap daveti, sıfırlama kodu, hesap listesi).
+   * Uç, yardımcının sınırlarını (korunan hedefler, yalnızca kendi daveti) ayrıca denetler.
+   */
+  requireAccountHelper = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    await this.requireUser(req, reply);
+    if (reply.sent) return;
+    const id = req.user.id;
+    if (!this.permissions.isInstanceAdmin(id) && !this.permissions.isAccountHelper(id)) {
+      await reply.code(403).send({ error: 'forbidden', message: 'Bu işlem için yetkin yok.' });
+    }
+  };
 }
 
 declare module 'fastify' {

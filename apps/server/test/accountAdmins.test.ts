@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Permission as P, type User } from '@diskort/shared';
 import { buildApp } from '../src/app.js';
@@ -142,8 +143,27 @@ describe('komut satırı aracı (admin-cli)', () => {
       const listed = () => (JSON.parse(cli('list', '--json').stdout) as { username: string }[]).map((u) => u.username);
 
       expect(listed()).toEqual(['ziroo']);
+      // Yardımcıyken bekleyen kodu olan hesap yönetici yapılınca yardımcılığı ve kodu temizlenir
+      const db = new DatabaseSync(path.join(dataDir, 'diskort.db'));
+      const veliId = (db.prepare(`SELECT id FROM users WHERE username = 'veli'`).get() as { id: string }).id;
+      db.prepare('UPDATE users SET is_account_helper = 1 WHERE id = ?').run(veliId);
+      db.prepare('INSERT INTO reset_codes (code, user_id, created_by, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(
+        'KODKODKO',
+        veliId,
+        null,
+        Date.now() + 3_600_000,
+        Date.now(),
+      );
+      db.close();
       expect(cli('grant', 'VELI').status).toBe(0);
       expect(listed()).toEqual(['ziroo', 'veli']);
+      const after = new DatabaseSync(path.join(dataDir, 'diskort.db'));
+      expect(after.prepare('SELECT is_admin, is_account_helper FROM users WHERE id = ?').get(veliId)).toEqual({
+        is_admin: 1,
+        is_account_helper: 0,
+      });
+      expect(after.prepare('SELECT COUNT(*) AS n FROM reset_codes WHERE user_id = ?').get(veliId)).toEqual({ n: 0 });
+      after.close();
       expect(cli('grant', 'yok').status).toBe(1);
       expect(cli('revoke', 'ziroo').status).toBe(0);
       const last = cli('revoke', 'veli');

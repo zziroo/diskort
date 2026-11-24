@@ -100,9 +100,10 @@ export function SettingsModal({ initial }: { initial?: SettingsSection }) {
   const isAdmin = useSession((s) => s.user?.isAdmin === true);
   const serverUrl = useSettings((s) => s.serverUrl);
   const newFeedback = useFeedback((s) => (isAdmin ? s.newCount : 0));
-  const groups = useMemo(() => settingsGroupsFor('desktop', { isAdmin }), [isAdmin]);
+  const isAccountHelper = useSession((s) => s.user?.isAccountHelper === true);
+  const groups = useMemo(() => settingsGroupsFor('desktop', { isAdmin, isAccountHelper }), [isAdmin, isAccountHelper]);
   const shown = useMemo(() => searchSettings(groups, query), [groups, query]);
-  // Yöneticilik alınırsa yönetim bölümünden Hesabım'a dönülür
+  // Yöneticilik ya da yardımcılık alınırsa yönetim bölümünden Hesabım'a dönülür
   const available = groups.some((g) => g.sections.some((s) => s.id === chosen));
   const section: SettingsSection = available ? chosen : 'account';
   const closing = usePresenceClosing();

@@ -27,6 +27,14 @@ describe('ayarların yapısı', () => {
     expect(ids(settingsGroupsFor('mobile', { isAdmin: true }))).toContain('webAdmin');
   });
 
+  it('hesap yardımcısına yönetimden yalnızca Hesaplar ve davetler görünür', () => {
+    for (const platform of ['desktop', 'mobile'] as const) {
+      const helper = settingsGroupsFor(platform, { isAdmin: false, isAccountHelper: true });
+      expect(helper.find((g) => g.id === 'admin')?.sections.map((s) => s.id)).toEqual(['accountAdmin']);
+    }
+    expect(ids(settingsGroupsFor('desktop', { isAdmin: false, isAccountHelper: false }))).not.toContain('accountAdmin');
+  });
+
   it('bölüm kimlikle bulunur', () => {
     expect(settingsSection('appearance')?.label).toBe('Görünüm');
   });

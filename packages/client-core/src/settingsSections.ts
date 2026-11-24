@@ -35,6 +35,8 @@ export interface SettingsSectionInfo {
   platforms: readonly SettingsPlatform[];
   /** Yalnızca hesap yöneticilerine */
   adminOnly?: boolean;
+  /** adminOnly bölüm hesap yardımcılarına da görünür (içeriği yardımcıya indirgenmiş çizilir) */
+  helperVisible?: boolean;
   /**
    * 'page': kendi sayfası/bölümü var; 'link': dışarıda açılan adres (sunucu adresine göre `path`);
    * 'action': bir pencere/ekran açar (ör. geri bildirim gönder)
@@ -188,11 +190,12 @@ export const SETTINGS_GROUPS: readonly SettingsGroupInfo[] = [
       {
         id: 'accountAdmin',
         label: 'Hesaplar ve davetler',
-        keywords: ['hesap yöneticileri', 'hesap davetleri', 'şifre sıfırlama', 'hesap sil'],
+        keywords: ['hesap yöneticileri', 'hesap yardımcıları', 'hesap davetleri', 'şifre sıfırlama', 'hesap sil'],
         icon: { mobile: 'people', desktop: 'UsersRound' },
         color: '#ed4245',
         platforms: both,
         adminOnly: true,
+        helperVisible: true,
         kind: 'page',
       },
       {
@@ -250,11 +253,19 @@ export function settingsSection(id: SettingsSectionId): SettingsSectionInfo | un
   return undefined;
 }
 
-/** Platformda görünen gruplar ve bölümler (yönetici olmayana yönetim yok); boş gruplar atılır */
-export function settingsGroupsFor(platform: SettingsPlatform, options: { isAdmin: boolean }): SettingsGroupInfo[] {
+/**
+ * Platformda görünen gruplar ve bölümler (yönetici olmayana yönetim yok; hesap yardımcısına yalnızca
+ * `helperVisible` bölümler); boş gruplar atılır
+ */
+export function settingsGroupsFor(
+  platform: SettingsPlatform,
+  options: { isAdmin: boolean; isAccountHelper?: boolean },
+): SettingsGroupInfo[] {
+  const visible = (s: SettingsSectionInfo): boolean =>
+    !s.adminOnly || options.isAdmin || (s.helperVisible === true && options.isAccountHelper === true);
   return SETTINGS_GROUPS.map((g) => ({
     ...g,
-    sections: g.sections.filter((s) => s.platforms.includes(platform) && (!s.adminOnly || options.isAdmin)),
+    sections: g.sections.filter((s) => s.platforms.includes(platform) && visible(s)),
   })).filter((g) => g.sections.length > 0);
 }
 

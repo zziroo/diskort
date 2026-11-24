@@ -7,6 +7,7 @@ import {
   TEXT_CHANNEL_PERMISSIONS,
   VOICE_CHANNEL_PERMISSIONS,
   type PermissionOverwrite,
+  type User,
 } from '@diskort/shared';
 import { removeAccount } from '../accounts.js';
 import { afterPermissionChange, forbidden, parseBody, sendError, type AppContext } from '../context.js';
@@ -40,20 +41,44 @@ const updateChannelSchema = z.object({
 });
 
 /**
- * Hesap yönetimi (hesap yöneticilerine: users.is_admin) ve kanallar. Hesaplar ve hesap yöneticiliği tüm
- * sunuculardan bağımsızdır: hesap daveti yalnızca hesap açtırır, şifre sıfırlama ve hesap silme hesabın
- * kendisine dokunur. Bir hesap yöneticisi başka bir hesap yöneticisinin şifresini sıfırlayamaz, hesabını
- * silemez (önce yöneticiliği alınmalı).
+ * Hesap yönetimi (hesap yöneticilerine: users.is_admin; kısmen hesap yardımcılarına: users.is_account_helper)
+ * ve kanallar. Hesaplar ve hesap yöneticiliği tüm sunuculardan bağımsızdır: hesap daveti yalnızca hesap
+ * açtırır, şifre sıfırlama ve hesap silme hesabın kendisine dokunur. Bir hesap yöneticisi başka bir hesap
+ * yöneticisinin şifresini sıfırlayamaz, hesabını silemez (önce yöneticiliği alınmalı).
+ *
+ * Hesap yardımcısı yalnızca: hesap daveti oluşturur ve listeler, kendi oluşturduğu daveti siler, sıradan
+ * hesaplara (yönetici, yardımcı, sunucu sahibi ya da sunucu yöneticisi olmayan) ve kendine sıfırlama kodu üretir. Hesap silemez, rol atayamaz; yardımcılığı
+ * yalnızca hesap yöneticisi verip alır, böylece korunan bir hedefi sıradan hâle getiremez.
  */
 export function registerAdminRoutes(app: FastifyInstance, ctx: AppContext): void {
   const { store, auth, gateway, attachments, permissions } = ctx;
   const canManageAccount = (targetId: string): boolean => !permissions.isInstanceAdmin(targetId);
+  /** Hesap bir sunucunun sahibi ya da bir sunucuda Yönetici (ADMINISTRATOR) yetkisi taşıyor mu */
+  const holdsGuildPower = (userId: string): boolean =>
+    store.ownedGuildIds(userId).length > 0 ||
+    [...permissions.guildsOf(userId)].some((guildId) => permissions.canInGuild(guildId, userId, Permission.ADMINISTRATOR));
+  /**
+   * Sıfırlama kodunu engelleyen neden (null: üretilebilir). Kendine her zaman; yönetici yönetici olmayana;
+   * yardımcı yalnızca sıradan hesaplara: yönetici, yardımcı, sunucu sahibi ya da sunucu yöneticisi olmayan
+   * (kodu alan hesabı, dolayısıyla onun sunucusunu ele geçirebilir).
+   */
+  const resetBlockedReason = (actorId: string, targetId: string): string | null => {
+    if (targetId === actorId) return null;
+    if (!canManageAccount(targetId)) return 'Başka bir hesap yöneticisinin şifresini sıfırlayamazsın.';
+    if (permissions.isInstanceAdmin(actorId)) return null;
+    if (permissions.isAccountHelper(targetId)) return 'Başka bir hesap yardımcısının şifresini sıfırlayamazsın.';
+    if (holdsGuildPower(targetId)) {
+      return 'Sunucu sahibi ya da sunucu yöneticisi olan hesabı yalnızca hesap yöneticisi sıfırlayabilir.';
+    }
+    return null;
+  };
 
   // ---------- Hesap davetleri (sunucuya katılmadan yalnızca hesap açtırır) ----------
 
-  app.get('/api/invites', { preHandler: auth.requireInstanceAdmin }, async () => store.listAccountInvites());
+  app.get('/api/invites', { preHandler: auth.requireAccountHelper }, async () => store.listAccountInvites());
 
-  app.post('/api/invites', { preHandler: auth.requireInstanceAdmin }, async (req, reply) => {
+  // Davet oluşturan created_by olarak kaydedilir (yardımcınınki de; davet listesinde görünür)
+  app.post('/api/invites', { preHandler: auth.requireAccountHelper }, async (req, reply) => {
     const body = parseBody(createInviteSchema, req.body, reply);
     if (!body) return reply;
     const invite = store.createInvite({
@@ -65,9 +90,13 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: AppContext): void
     return reply.code(201).send(invite);
   });
 
-  app.delete<{ Params: { code: string } }>('/api/invites/:code', { preHandler: auth.requireInstanceAdmin }, async (req, reply) => {
+  // Yönetici her hesap davetini, yardımcı yalnızca kendi oluşturduğunu siler
+  app.delete<{ Params: { code: string } }>('/api/invites/:code', { preHandler: auth.requireAccountHelper }, async (req, reply) => {
     const invite = store.getInvite(req.params.code);
     if (!invite || invite.guildId !== null) return sendError(reply, 404, 'not_found', 'Davet bulunamadı.');
+    if (!permissions.isInstanceAdmin(req.user.id) && invite.createdBy !== req.user.id) {
+      return forbidden(reply, 'Yalnızca kendi oluşturduğun daveti silebilirsin.');
+    }
     store.deleteInvite(invite.code);
     return reply.code(204).send();
   });
@@ -75,16 +104,16 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: AppContext): void
   // ---------- Hesaplar ----------
 
   // Şifresini unutan kişi için tek kullanımlık, 24 saat geçerli sıfırlama kodu. Kodu alan hesabı ele
-  // geçirebileceğinden yalnızca hesap yöneticileri, kendilerinden aşağıdakiler için üretebilir.
+  // geçirebileceğinden yalnızca hesap yöneticileri (kendilerinden aşağıdakiler için) ve hesap yardımcıları
+  // (sıradan hesaplar için) üretebilir. Üreten reset_codes.created_by olarak kaydedilir.
   app.post<{ Params: { id: string } }>(
     '/api/users/:id/reset-code',
-    { preHandler: auth.requireInstanceAdmin },
+    { preHandler: auth.requireAccountHelper },
     async (req, reply) => {
       const target = store.getUser(req.params.id);
       if (!target) return sendError(reply, 404, 'not_found', 'Kullanıcı bulunamadı.');
-      if (target.id !== req.user.id && !canManageAccount(target.id)) {
-        return forbidden(reply, 'Başka bir hesap yöneticisinin şifresini sıfırlayamazsın.');
-      }
+      const blocked = resetBlockedReason(req.user.id, target.id);
+      if (blocked) return forbidden(reply, blocked);
       return store.createResetCode(target.id, req.user.id, RESET_CODE_TTL_MS);
     },
   );
@@ -103,8 +132,25 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: AppContext): void
     return reply.code(204).send();
   });
 
-  /** Tüm hesaplar (sıfırlama kodu, hesap silme ve yönetici ekleme için) */
-  app.get('/api/users', { preHandler: auth.requireInstanceAdmin }, async () => store.listUsers());
+  /**
+   * Tüm hesaplar (sıfırlama kodu, hesap silme, yönetici ve yardımcı ekleme için). Yardımcıya yalnızca
+   * listede gereken alanlar gider (kimlik, ad, avatar, rol bayrakları); afiş, giriş sesi, tema gitmez.
+   */
+  app.get('/api/users', { preHandler: auth.requireAccountHelper }, async (req) => {
+    const users = store.listUsers();
+    if (permissions.isInstanceAdmin(req.user.id)) return users;
+    return users.map(
+      (u): User => ({
+        id: u.id,
+        username: u.username,
+        displayName: u.displayName,
+        avatarColor: u.avatarColor,
+        avatarUrl: u.avatarUrl ?? null,
+        isAdmin: u.isAdmin,
+        isAccountHelper: u.isAccountHelper === true,
+      }),
+    );
+  });
 
   // ---------- Hesap yöneticileri ----------
 
@@ -124,6 +170,26 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: AppContext): void
     if (result === 'last_admin') {
       return sendError(reply, 400, 'last_admin', 'Son hesap yöneticisinin yöneticiliği alınamaz.');
     }
+    if (result === 'ok') gateway.sendUserUpdate(store.getUser(req.params.id)!);
+    return reply.code(204).send();
+  });
+
+  // ---------- Hesap yardımcıları (yalnızca hesap yöneticisi atar ve alır) ----------
+
+  app.put<{ Params: { id: string } }>('/api/helpers/:id', { preHandler: auth.requireInstanceAdmin }, async (req, reply) => {
+    const result = store.setAccountHelper(req.params.id, true);
+    if (result === 'not_found') return sendError(reply, 404, 'not_found', 'Kullanıcı bulunamadı.');
+    if (result === 'admin') {
+      return sendError(reply, 400, 'is_admin', 'Hesap yöneticisi zaten bu işleri yapabilir; yardımcı yapılamaz.');
+    }
+    const user = store.getUser(req.params.id)!;
+    if (result === 'ok') gateway.sendUserUpdate(user);
+    return user;
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/helpers/:id', { preHandler: auth.requireInstanceAdmin }, async (req, reply) => {
+    const result = store.setAccountHelper(req.params.id, false);
+    if (result === 'not_found') return sendError(reply, 404, 'not_found', 'Kullanıcı bulunamadı.');
     if (result === 'ok') gateway.sendUserUpdate(store.getUser(req.params.id)!);
     return reply.code(204).send();
   });

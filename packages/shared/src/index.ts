@@ -51,6 +51,12 @@ export interface User {
    * Sunuculardaki yetkiler rollerden gelir (bkz. GuildMember).
    */
   isAdmin: boolean;
+  /**
+   * Hesap yardımcısı: hesap yöneticisinin atadığı dar yetkili rol (users.is_account_helper). Hesap daveti
+   * oluşturur, sıradan hesaplara (ne yönetici ne yardımcı) şifre sıfırlama kodu üretir; hesap silemez, rol
+   * atayamaz, geri bildirim ve yönetim paneline giremez. Yöneticide hep false. Eski sunucularda yok.
+   */
+  isAccountHelper?: boolean;
 }
 
 export interface Guild {

@@ -139,13 +139,17 @@ export const api = {
   unregisterPushToken: (token: string) => request<void>('DELETE', '/api/me/push-tokens', { token }),
   sendTestPush: () => request<{ devices: number }>('POST', '/api/me/push-test'),
 
-  // Hesaplar (hesap yöneticileri: hesabın kendi bayrağı, sunuculardan bağımsız)
-  /** Tüm hesaplar */
+  // Hesaplar (hesap yöneticileri: hesabın kendi bayrağı, sunuculardan bağımsız; hesap yardımcıları davet,
+  // sıfırlama kodu ve hesap listesine erişir)
+  /** Tüm hesaplar (yardımcıya yalnızca listede gereken alanlar) */
   listUsers: () => request<User[]>('GET', '/api/users'),
   listAdmins: () => request<User[]>('GET', '/api/admins'),
   grantAdmin: (userId: string) => request<User>('PUT', `/api/admins/${userId}`),
   /** Son yönetici alınamaz (400 last_admin) */
   revokeAdmin: (userId: string) => request<void>('DELETE', `/api/admins/${userId}`),
+  /** Hesap yardımcısı (yalnızca hesap yöneticisi atar; yöneticiye verilemez: 400 is_admin) */
+  grantHelper: (userId: string) => request<User>('PUT', `/api/helpers/${userId}`),
+  revokeHelper: (userId: string) => request<void>('DELETE', `/api/helpers/${userId}`),
   createResetCode: (userId: string) => request<ResetCodeResponse>('POST', `/api/users/${userId}/reset-code`),
   deleteUser: (userId: string) => request<void>('DELETE', `/api/users/${userId}`),
   /** Yalnızca hesap açtıran davetler (sunucuya katılmaz) */

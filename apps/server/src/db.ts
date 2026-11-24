@@ -519,6 +519,12 @@ export const MIGRATIONS: string[] = [
   UPDATE roles SET permissions = permissions | ${Permission.MANAGE_SOUNDBOARD}
     WHERE (permissions & ${Permission.MANAGE_GUILD}) != 0 AND id != guild_id;
   `,
+  // 30: hesap yardımcısı (users.is_account_helper; bkz. docs/roller-ve-yetkiler.md). Hesap yöneticisinin
+  // atadığı dar yetkili rol: hesap daveti oluşturur, sıradan hesaplara şifre sıfırlama kodu üretir. Boş başlar;
+  // yalnızca ekleme yapar, eski sürüme dönülürse sütun yok sayılır (yardımcılar o sürede yetkisiz kalır).
+  `
+  ALTER TABLE users ADD COLUMN is_account_helper INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 type Param = string | number | null;
@@ -556,6 +562,7 @@ interface UserRow {
   password_hash: string;
   avatar_color: string;
   is_admin: number;
+  is_account_helper: number;
   sessions_valid_after: number;
   avatar_hash: string | null;
   banner_hash: string | null;
@@ -916,6 +923,8 @@ export class Store {
       // profileFrame, nameplate) gönderilmez: sahadaki eski istemciler bunları isteğe bağlı tanımlar ve
       // gelmeyen alanı "yok" sayar.
       isAdmin: r.is_admin === 1,
+      // Yöneticide bayrak anlamsızdır (yönetici yapılınca temizlenir; yine de kalmışsa sayılmaz)
+      isAccountHelper: r.is_account_helper === 1 && r.is_admin !== 1,
     };
   }
 
@@ -1015,6 +1024,8 @@ export class Store {
 
   deleteUser(userId: string): boolean {
     return this.tx(() => {
+      // Hesabın başkalarına ürettiği bekleyen sıfırlama kodları da gider (created_by yabancı anahtar değil)
+      this.run('DELETE FROM reset_codes WHERE created_by = ?', userId);
       const deleted = this.run('DELETE FROM users WHERE id = ?', userId) > 0;
       return deleted;
     });
@@ -1044,7 +1055,52 @@ export class Store {
       if (!admin && this.one<{ n: number }>('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1')!.n <= 1) {
         return 'last_admin';
       }
-      this.run('UPDATE users SET is_admin = ? WHERE id = ?', admin ? 1 : 0, userId);
+      // Yönetici yapılan hesabın yardımcılığı temizlenir: yöneticilik sonra alınırsa sıradan hesap olur.
+      // Bekleyen sıfırlama kodu da silinir: hesap sıradanken (ör. bir yardımcının) üretilmiş kod yönetici
+      // hesabını ele geçirmeye yaramasın.
+      if (admin) {
+        this.run('UPDATE users SET is_admin = 1, is_account_helper = 0 WHERE id = ?', userId);
+        this.run('DELETE FROM reset_codes WHERE user_id = ?', userId);
+      } else this.run('UPDATE users SET is_admin = 0 WHERE id = ?', userId);
+      return 'ok';
+    });
+  }
+
+  // ---------- Hesap yardımcıları (users.is_account_helper; yalnızca hesap yöneticisi atar) ----------
+
+  /**
+   * Hesap yardımcısı mı (her çağrıda veritabanından, isAdmin gibi). Hesap yöneticisi yardımcı sayılmaz:
+   * yöneticinin yetkileri zaten bunları kapsar.
+   */
+  isAccountHelper(userId: string): boolean {
+    return (
+      this.one<{ h: number }>('SELECT is_account_helper AS h FROM users WHERE id = ? AND is_admin = 0', userId)?.h === 1
+    );
+  }
+
+  /**
+   * Hesap yardımcılığını verir ya da alır. Hesap yöneticisine verilemez ('admin'); yöneticiden almak
+   * 'unchanged' döner (bayrağı zaten yoktur). Hesap yoksa 'not_found'. Verilince hesabın bekleyen sıfırlama
+   * kodu, alınınca yardımcının başkalarına ürettiği bekleyen kodlar ve oluşturduğu hesap davetleri silinir.
+   */
+  setAccountHelper(userId: string, helper: boolean): 'ok' | 'unchanged' | 'not_found' | 'admin' {
+    return this.tx(() => {
+      const row = this.one<{ a: number; h: number }>(
+        'SELECT is_admin AS a, is_account_helper AS h FROM users WHERE id = ?',
+        userId,
+      );
+      if (!row) return 'not_found';
+      if (row.a === 1) return helper ? 'admin' : 'unchanged';
+      if ((row.h === 1) === helper) return 'unchanged';
+      this.run('UPDATE users SET is_account_helper = ? WHERE id = ?', helper ? 1 : 0, userId);
+      // Yardımcı yapılan hesabın bekleyen kodu silinir (sıradanken başka bir yardımcının ürettiği kod korunan
+      // hesabı ele geçirmeye yaramasın); yardımcılığı alınanın başkaları için ürettiği kodlar da geçersiz olur.
+      if (helper) this.run('DELETE FROM reset_codes WHERE user_id = ?', userId);
+      else {
+        this.run('DELETE FROM reset_codes WHERE created_by = ? AND user_id != ?', userId, userId);
+        // Oluşturduğu hesap davetleri de gider (sunucu davetleri sunucu yetkisine bağlıdır, kalır)
+        this.run('DELETE FROM invites WHERE guild_id IS NULL AND created_by = ?', userId);
+      }
       return 'ok';
     });
   }

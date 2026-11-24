@@ -16,13 +16,17 @@ import { ErrorState } from '../States';
 import { Button, Card, Choices, SectionTitle } from '../ui';
 
 /**
- * Ayarlar > Hesaplar ve davetler (yalnızca hesap yöneticilerine; masaüstündeki Yönetim bölümünün
- * karşılığı). Hesap yöneticiliği hiçbir sunucuya bağlı değildir: hesap yöneticileri, yalnızca hesap
- * açtıran davetler, şifre sıfırlama kodu ve hesap silme. Sunucuya ait işler Sunucu Ayarları'nda kalır.
+ * Ayarlar > Hesaplar ve davetler (hesap yöneticilerine; indirgenmiş hâli hesap yardımcılarına;
+ * masaüstündeki Yönetim bölümünün karşılığı). Hesap yöneticiliği hiçbir sunucuya bağlı değildir: hesap
+ * yöneticileri, hesap yardımcıları, yalnızca hesap açtıran davetler, şifre sıfırlama kodu ve hesap silme.
+ * Hesap yardımcısı yalnızca davetleri ve sıradan hesapların sıfırlama kodunu görür (sunucu da aynı sınırı
+ * uygular). Sunucuya ait işler Sunucu Ayarları'nda kalır.
  */
 export function AccountAdmin() {
   const selfId = useSession((s) => s.user?.id);
   const isAdmin = useSession((s) => s.user?.isAdmin === true);
+  const isHelper = useSession((s) => s.user?.isAccountHelper === true);
+  const allowed = isAdmin || isHelper;
   const [users, setUsers] = useState<User[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,16 +41,19 @@ export function AccountAdmin() {
       .catch((err: unknown) => setError(errorMessage(err)));
   }, []);
   useEffect(() => {
-    if (isAdmin) reload();
-  }, [isAdmin, reload]);
+    if (allowed) reload();
+  }, [allowed, reload]);
 
-  if (!isAdmin) return <Text style={styles.intro}>Bu bölümü yalnızca hesap yöneticileri görebilir.</Text>;
+  if (!allowed) {
+    return <Text style={styles.intro}>Bu bölümü yalnızca hesap yöneticileri ve hesap yardımcıları görebilir.</Text>;
+  }
 
   return (
     <View>
       <Text style={styles.intro}>
-        Hesap yöneticileri tüm hesaplardan sorumludur; hiçbir sunucunun rolü ya da sahipliği bu yetkiyi vermez.
-        Geri bildirimleri de hesap yöneticileri yönetir.
+        {isAdmin
+          ? 'Hesap yöneticileri tüm hesaplardan sorumludur; hiçbir sunucunun rolü ya da sahipliği bu yetkiyi vermez. Geri bildirimleri de hesap yöneticileri yönetir.'
+          : 'Hesap yardımcısısın: hesap daveti oluşturabilir, sıradan hesaplar için şifre sıfırlama kodu üretebilirsin. Hesap silme ve yönetici işleri hesap yöneticilerindedir.'}
       </Text>
       {error ? (
         <ErrorState text={error} onRetry={reload} />
@@ -54,9 +61,10 @@ export function AccountAdmin() {
         <ListSkeleton rows={4} avatar={36} />
       ) : (
         <>
-          <AdminsBlock users={users} selfId={selfId} onChange={reload} />
-          <AccountInvitesBlock users={users} />
-          <AccountsBlock users={users} selfId={selfId} onChange={reload} />
+          {isAdmin && <AdminsBlock users={users} selfId={selfId} onChange={reload} />}
+          {isAdmin && <HelpersBlock users={users} selfId={selfId} onChange={reload} />}
+          <AccountInvitesBlock users={users} selfId={selfId} isAdmin={isAdmin} />
+          <AccountsBlock users={users} selfId={selfId} isAdmin={isAdmin} onChange={reload} />
         </>
       )}
     </View>
@@ -164,6 +172,95 @@ function AdminsBlock({ users, selfId, onChange }: { users: User[]; selfId?: stri
   );
 }
 
+// ---------- Hesap yardımcıları (yalnızca yönetici atar) ----------
+
+function HelpersBlock({ users, selfId, onChange }: { users: User[]; selfId?: string; onChange: () => void }) {
+  const [query, setQuery] = useState('');
+  const helpers = useMemo(() => users.filter((u) => u.isAccountHelper).sort(byName), [users]);
+  const candidates = useMemo(
+    () =>
+      query.trim()
+        ? users.filter((u) => !u.isAdmin && !u.isAccountHelper && matches(u, query)).sort(byName).slice(0, 8)
+        : [],
+    [users, query],
+  );
+
+  const grant = async (user: User): Promise<void> => {
+    const ok = await confirmDialog({
+      title: 'Hesap yardımcısı yapılsın mı?',
+      message: `${user.displayName} (@${user.username}) hesap daveti oluşturabilir ve sıradan hesaplar için şifre sıfırlama kodu üretebilir. Hesap silemez, yönetici ya da yardımcı ekleyemez; yöneticilerin ve diğer yardımcıların şifresini sıfırlayamaz.`,
+      icon: 'person-add-outline',
+      confirmLabel: 'Yardımcı yap',
+    });
+    if (!ok) return;
+    try {
+      await api.grantHelper(user.id);
+      toast(`${user.displayName} artık hesap yardımcısı.`);
+      setQuery('');
+      onChange();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  const revoke = async (user: User): Promise<void> => {
+    const ok = await confirmDialog({
+      title: 'Yardımcılık alınsın mı?',
+      message: `${user.displayName} (@${user.username}) artık hesap daveti oluşturamaz ve şifre sıfırlama kodu üretemez.`,
+      icon: 'person-remove-outline',
+      confirmLabel: 'Yardımcılığı al',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.revokeHelper(user.id);
+      toast(`${user.displayName} artık hesap yardımcısı değil.`);
+      onChange();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  return (
+    <>
+      <SectionTitle>Hesap yardımcıları</SectionTitle>
+      <Text style={styles.intro}>
+        Hesap yardımcısı hesap daveti oluşturur ve sıradan hesaplar için şifre sıfırlama kodu üretir; başka bir
+        yetkisi yoktur.
+      </Text>
+      <Card>
+        {helpers.length === 0 && <Text style={styles.cardEmpty}>Hesap yardımcısı yok.</Text>}
+        {helpers.map((u, i) => (
+          <UserLine key={u.id} user={u} selfId={selfId} first={i === 0}>
+            <IconButton icon="person-remove-outline" label="Yardımcılığı al" danger onPress={() => void revoke(u)} />
+          </UserLine>
+        ))}
+      </Card>
+      <SearchBox value={query} onChange={setQuery} placeholder="Yardımcı eklemek için hesap ara" style={styles.searchAfter} />
+      {candidates.length > 0 ? (
+        <Card>
+          {candidates.map((u, i) => (
+            <UserLine key={u.id} user={u} selfId={selfId} first={i === 0}>
+              <Pressable
+                onPress={() => void grant(u)}
+                android_ripple={{ color: tint(0.14), foreground: true }}
+                accessibilityRole="button"
+                accessibilityLabel={`${u.displayName} kişisini hesap yardımcısı yap`}
+                style={styles.pill}
+              >
+                <Ionicons name="person-add-outline" size={15} color={colors.onControl} />
+                <Text style={styles.pillText}>Yardımcı yap</Text>
+              </Pressable>
+            </UserLine>
+          ))}
+        </Card>
+      ) : query.trim() ? (
+        <Text style={styles.empty}>Eşleşen hesap yok.</Text>
+      ) : null}
+    </>
+  );
+}
+
 // ---------- Hesap davetleri ----------
 
 const USES = [
@@ -185,7 +282,7 @@ async function copyCode(code: string, text = 'Davet kodu kopyalandı.'): Promise
   toast(text);
 }
 
-function AccountInvitesBlock({ users }: { users: User[] }) {
+function AccountInvitesBlock({ users, selfId, isAdmin }: { users: User[]; selfId?: string; isAdmin: boolean }) {
   const [invites, setInvites] = useState<Invite[] | null>(null);
   const [maxUses, setMaxUses] = useState<number>(1);
   const [expires, setExpires] = useState<number>(168);
@@ -284,7 +381,15 @@ function AccountInvitesBlock({ users }: { users: User[] }) {
                   </View>
                   <IconButton icon="share-social-outline" label="Paylaş" onPress={() => share(inv.code)} />
                   <IconButton icon="copy-outline" label="Kodu kopyala" onPress={() => void copyCode(inv.code)} />
-                  <IconButton icon="trash-outline" label="Daveti sil" danger onPress={() => void remove(inv)} />
+                  <IconButton
+                    icon="trash-outline"
+                    label="Daveti sil"
+                    danger
+                    disabledReason={
+                      isAdmin || inv.createdBy === selfId ? undefined : 'Yalnızca kendi oluşturduğun daveti silebilirsin.'
+                    }
+                    onPress={() => void remove(inv)}
+                  />
                 </View>
               </View>
             );
@@ -303,7 +408,17 @@ interface ResetCode {
   expiresAt: number;
 }
 
-function AccountsBlock({ users, selfId, onChange }: { users: User[]; selfId?: string; onChange: () => void }) {
+function AccountsBlock({
+  users,
+  selfId,
+  isAdmin,
+  onChange,
+}: {
+  users: User[];
+  selfId?: string;
+  isAdmin: boolean;
+  onChange: () => void;
+}) {
   const [query, setQuery] = useState('');
   const [resetCode, setResetCode] = useState<ResetCode | null>(null);
   const list = useMemo(() => users.filter((u) => matches(u, query)).sort(byName), [users, query]);
@@ -342,8 +457,9 @@ function AccountsBlock({ users, selfId, onChange }: { users: User[]; selfId?: st
     <>
       <SectionTitle>Hesaplar ({users.length})</SectionTitle>
       <Text style={styles.intro}>
-        Şifresini unutan için tek kullanımlık sıfırlama kodu üret. Başka bir hesap yöneticisinin şifresini
-        sıfırlayamaz, hesabını silemezsin; önce yöneticiliğini al.
+        {isAdmin
+          ? 'Şifresini unutan için tek kullanımlık sıfırlama kodu üret. Başka bir hesap yöneticisinin şifresini sıfırlayamaz, hesabını silemezsin; önce yöneticiliğini al.'
+          : 'Şifresini unutan için tek kullanımlık sıfırlama kodu üret. Hesap yöneticilerinin, diğer hesap yardımcılarının ve bir sunucunun sahibi ya da yöneticisi olan hesapların şifresini sıfırlayamazsın.'}
       </Text>
       {resetCode ? <ResetCodeCard {...resetCode} onClose={() => setResetCode(null)} /> : null}
       <SearchBox value={query} onChange={setQuery} placeholder="Hesap ara" />
@@ -352,27 +468,44 @@ function AccountsBlock({ users, selfId, onChange }: { users: User[]; selfId?: st
         {list.map((u, i) => {
           const self = u.id === selfId;
           const protectedAdmin = u.isAdmin && !self;
+          // Yardımcı başka bir yardımcının da şifresini sıfırlayamaz
+          const protectedHelper = !isAdmin && u.isAccountHelper === true && !self;
           return (
-            <UserLine key={u.id} user={u} selfId={selfId} first={i === 0} admin={u.isAdmin}>
+            <UserLine
+              key={u.id}
+              user={u}
+              selfId={selfId}
+              first={i === 0}
+              admin={u.isAdmin}
+              helper={u.isAccountHelper === true}
+            >
               <IconButton
                 icon="key-outline"
                 label="Şifre sıfırlama kodu üret"
-                disabledReason={protectedAdmin ? 'Başka bir yöneticinin şifresi sıfırlanamaz.' : undefined}
-                onPress={() => createCode(u)}
-              />
-              <IconButton
-                icon="person-remove-outline"
-                label="Hesabı kalıcı olarak sil"
-                danger
                 disabledReason={
-                  self
-                    ? 'Kendi hesabını Ayarlar > Hesabım bölümünden silebilirsin.'
-                    : protectedAdmin
-                      ? 'Önce yöneticiliğini al.'
+                  protectedAdmin
+                    ? 'Başka bir yöneticinin şifresi sıfırlanamaz.'
+                    : protectedHelper
+                      ? 'Başka bir yardımcının şifresi sıfırlanamaz.'
                       : undefined
                 }
-                onPress={() => void remove(u)}
+                onPress={() => createCode(u)}
               />
+              {isAdmin && (
+                <IconButton
+                  icon="person-remove-outline"
+                  label="Hesabı kalıcı olarak sil"
+                  danger
+                  disabledReason={
+                    self
+                      ? 'Kendi hesabını Ayarlar > Hesabım bölümünden silebilirsin.'
+                      : protectedAdmin
+                        ? 'Önce yöneticiliğini al.'
+                        : undefined
+                  }
+                  onPress={() => void remove(u)}
+                />
+              )}
             </UserLine>
           );
         })}
@@ -422,6 +555,7 @@ function UserLine({
   selfId,
   first,
   admin = false,
+  helper = false,
   children,
 }: {
   user: User;
@@ -429,6 +563,8 @@ function UserLine({
   first: boolean;
   /** "Yönetici" etiketi */
   admin?: boolean;
+  /** "Yardımcı" etiketi */
+  helper?: boolean;
   children?: ReactNode;
 }) {
   return (
@@ -448,6 +584,7 @@ function UserLine({
               @{user.username}
             </Text>
             {admin && <Text style={styles.badge}>Yönetici</Text>}
+            {helper && <Text style={[styles.badge, styles.helperBadge]}>Yardımcı</Text>}
           </View>
         </View>
         {children}
@@ -553,6 +690,7 @@ const styles = createStyles(() => ({
     paddingVertical: 1,
     overflow: 'hidden',
   },
+  helperBadge: { color: colors.muted, backgroundColor: tint(0.1) },
   pill: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -8,8 +8,14 @@ Hesap yöneticisinin ne olduğu için bkz. [Roller ve yetkiler → Hesap yöneti
 **Kullanıcı Ayarları → Yönetim** (yalnızca hesap yöneticilerine; masaüstünde ve telefonda aynı):
 
 - **Geri bildirimler** — bkz. [Geri bildirim](geri-bildirim.md)
-- **Hesaplar ve davetler** — hesap yöneticisi ekle/çıkar, hesap davetleri, şifre sıfırlama kodu, hesap silme
+- **Hesaplar ve davetler** — hesap yöneticisi ve hesap yardımcısı ekle/çıkar, hesap davetleri, şifre sıfırlama
+  kodu, hesap silme
 - **Web yönetim paneli** bağlantısı
+
+Hesap yardımcıları ([Roller ve yetkiler → Hesap yardımcıları](roller-ve-yetkiler.md#hesap-yardımcıları)) yalnızca
+**Hesaplar ve davetler**'i indirgenmiş görür: hesap davetleri (yalnızca kendi davetini silebilir) ve hesaplar
+(yalnızca şifre sıfırlama kodu; yöneticilerde ve diğer yardımcılarda düğme kapalıdır, sunucu sahibi ya da
+sunucu yöneticisi olan hesapta sunucu nedenini söyleyerek reddeder).
 
 ## Komut satırı
 
@@ -25,7 +31,10 @@ docker compose exec api node dist/admin-cli.js sound-remove <sunucu kimliği> <s
 ```
 
 İlgili API uçları: `GET /api/users`, `GET /api/admins`, `PUT /api/admins/:id`, `DELETE /api/admins/:id`
-(son yönetici: `400 last_admin`). Hepsi hesap yöneticisi ister.
+(son yönetici: `400 last_admin`), `PUT /api/helpers/:id` (yöneticiye: `400 is_admin`), `DELETE /api/helpers/:id`.
+Hepsi hesap yöneticisi ister; `GET /api/users` (indirgenmiş alanlarla), `GET/POST /api/invites`,
+`DELETE /api/invites/:code` (kendi daveti) ve `POST /api/users/:id/reset-code` (sıradan hesaplar) hesap
+yardımcısına da açıktır. Hesap yardımcısı uygulamadan atanır; komut satırında karşılığı yoktur.
 
 ## Web yönetim paneli (`/admin`)
 

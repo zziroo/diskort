@@ -448,6 +448,8 @@ describe('göç 14: çoklu sunucu', () => {
           theme_accent: null,
           // göç 27: giriş sesi boş başlar
           intro_sound_hash: null,
+          // göç 30: kimse hesap yardımcısı değil
+          is_account_helper: 0,
         })),
       );
 
@@ -695,7 +697,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(29);
+      expect(MIGRATIONS.length).toBe(30);
       // Var olan mesajlar olduğu gibi; türleri yok (sıradan mesaj biçimi değişmez)
       expect(store.db.prepare('SELECT id, channel_id, author_id, content, created_at FROM messages ORDER BY id').all()).toEqual(before);
       const old = store.getMessage(Number((before[0] as { id: number }).id))!;
@@ -727,7 +729,7 @@ describe('göç 25: engellemeler ve arama kayıtları', () => {
       // Göç tekrar çalıştırılamaz (sütun ekler) ama açılışta tekrar çalışmaz
       store.close();
       const again = new Store(file);
-      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 29 });
+      expect(again.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
       again.close();
     } finally {
       try {
@@ -751,7 +753,7 @@ describe('göç 26: arkadaşlar', () => {
 
     const store = new Store(file);
     try {
-      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 29 });
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
       const [a, b] = userIds as [string, string];
       const permissions = new PermissionService(store);
       expect(store.listFriends(a)).toEqual({ friends: [], incoming: [], outgoing: [] });
@@ -801,7 +803,7 @@ describe('göç 28: profil kozmetikleri kaldırıldı', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(29);
+      expect(MIGRATIONS.length).toBe(30);
       const columns = (store.db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((c) => c.name);
       for (const gone of ['profile_effect', 'avatar_decoration', 'profile_frame', 'nameplate']) expect(columns).not.toContain(gone);
       expect(store.db.prepare(kept).all()).toEqual(others);
@@ -839,7 +841,7 @@ describe('göç 29: ses paneli', () => {
     const store = new Store(file);
     try {
       expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
-      expect(MIGRATIONS.length).toBe(29);
+      expect(MIGRATIONS.length).toBe(30);
       const tables = (store.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'guild_sounds'`).all() as { name: string }[]).map((t) => t.name);
       expect(tables).toEqual(['guild_sounds']);
       const perms = (id: string) => (store.db.prepare('SELECT permissions FROM roles WHERE id = ?').get(id) as { permissions: number }).permissions;
@@ -850,6 +852,41 @@ describe('göç 29: ses paneli', () => {
       // Yönetici rolü ADMINISTRATOR biti taşır; MANAGE_GUILD biti yoksa ses paneli biti de eklenmez (zaten her yetkiye sahip)
       expect(store.listSounds(guildId)).toEqual([]);
       expect(store.countSounds(guildId)).toBe(0);
+      expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe('göç 30: hesap yardımcısı', () => {
+  it('şema 29 veritabanına sütun eklenir; herkes yardımcısız başlar, yöneticilik ve diğer alanlar korunur', () => {
+    const file = schema19Database();
+    const db = new DatabaseSync(file);
+    for (let v = 19; v < 29; v++) db.exec(MIGRATIONS[v]!);
+    db.exec('PRAGMA user_version = 29');
+    const kept = 'SELECT id, username, display_name, password_hash, avatar_color, is_admin, sessions_valid_after FROM users ORDER BY id';
+    const before = db.prepare(kept).all() as { id: string; is_admin: number }[];
+    expect(before.length).toBeGreaterThanOrEqual(2);
+    expect(before.some((u) => u.is_admin === 1)).toBe(true);
+    db.close();
+
+    const store = new Store(file);
+    try {
+      expect(store.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length });
+      expect(MIGRATIONS.length).toBe(30);
+      expect(store.db.prepare(kept).all()).toEqual(before);
+      expect(store.db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_account_helper != 0').get()).toEqual({ n: 0 });
+      for (const u of before) {
+        expect(store.getUser(u.id)!.isAccountHelper).toBe(false);
+        expect(store.isAccountHelper(u.id)).toBe(false);
+      }
+      // Yönetici yardımcı yapılamaz; sıradan hesap yapılır
+      const admin = before.find((u) => u.is_admin === 1)!;
+      const plain = before.find((u) => u.is_admin === 0)!;
+      expect(store.setAccountHelper(admin.id, true)).toBe('admin');
+      expect(store.setAccountHelper(plain.id, true)).toBe('ok');
+      expect(store.getUser(plain.id)!.isAccountHelper).toBe(true);
       expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally {
       store.close();
