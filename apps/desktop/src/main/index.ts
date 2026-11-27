@@ -33,6 +33,7 @@ import { HotkeyManager } from './hotkeys';
 import { IdleMonitor } from './idle';
 import { Splash } from './splash';
 import { consumeLaunchMode, rememberLaunchMode, runStartupGate, type LaunchMode } from './startup';
+import { closeAction, launchModeFor, savedShowTrayIcon, saveShowTrayIcon } from './trayIcon';
 import { UpdateManager } from './updater';
 import { isAppTheme, savedWindowTheme, saveWindowTheme, WINDOW_COLORS } from './windowTheme';
 
@@ -161,7 +162,7 @@ let splash: Splash | null = null;
 /** Açılış güncelleme kapısı geçildi mi (öncesinde ana pencere açılmaz) */
 let started = false;
 let quitting = false;
-let preferences: AppPreferences = { minimizeToTray: true, openAtLogin: false };
+let preferences: AppPreferences = { minimizeToTray: true, openAtLogin: false, showTrayIcon: savedShowTrayIcon() };
 let trayState: TrayState = { connected: false, muted: false, deafened: false };
 
 const hotkeys = new HotkeyManager((event) => mainWindow?.webContents.send('hotkey', event));
@@ -260,10 +261,17 @@ function createWindow(launch: LaunchMode = 'normal'): void {
   });
 
   mainWindow.on('close', (event) => {
-    if (!quitting && preferences.minimizeToTray && tray) {
-      event.preventDefault();
-      mainWindow?.hide();
-    }
+    const action = closeAction({
+      quitting,
+      minimizeToTray: preferences.minimizeToTray,
+      hasTray: tray !== null,
+      isMac,
+      isMinimized: mainWindow?.isMinimized() ?? false,
+    });
+    if (action === 'close') return;
+    event.preventDefault();
+    if (action === 'hide') mainWindow?.hide();
+    else mainWindow?.minimize();
   });
   watchWindowForHangs(mainWindow);
   // Windows oturum kapatma / yeniden başlatma: sistem süreçleri öldürmeden önce haber verir; o andan sonra
@@ -382,12 +390,24 @@ function updateTrayMenu(): void {
 }
 
 function createTray(): void {
+  if (tray) return;
   // macOS: menü çubuğu için siyah/şeffaf şablon ikon (adındaki "Template" ile sistem açık/koyu temaya boyar)
   const file = isMac ? 'trayTemplate.png' : 'tray.png';
   const icon = nativeImage.createFromPath(join(__dirname, '../../resources', file));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.on('click', showWindow);
   updateTrayMenu();
+}
+
+function destroyTray(): void {
+  tray?.destroy();
+  tray = null;
+}
+
+/** Simgeyi tercihe göre oluşturur ya da kaldırır (yeniden başlatma gerekmez). */
+function applyTrayIcon(): void {
+  if (preferences.showTrayIcon) createTray();
+  else destroyTray();
 }
 
 // ---------- Okunmamış rozeti ----------
@@ -421,14 +441,24 @@ function registerIpc(): void {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
   });
   ipcMain.handle('app:set-preferences', (_e, prefs: AppPreferences) => {
+    const trayChanged = prefs.showTrayIcon !== preferences.showTrayIcon;
     preferences = prefs;
     if (!isLinux) app.setLoginItemSettings({ openAtLogin: prefs.openAtLogin });
+    if (trayChanged) {
+      saveShowTrayIcon(prefs.showTrayIcon);
+      if (started) applyTrayIcon();
+    }
   });
   ipcMain.on('app:tray-state', (_e, state: TrayState) => {
     trayState = state;
     updateTrayMenu();
   });
   ipcMain.on('app:show-window', showWindow);
+  // Tepsi menüsündeki "Diskort'tan Çık" ile aynı; simge gizliyken çıkışın yolu Ayarlar'daki düğmedir
+  ipcMain.on('app:quit', () => {
+    quitting = true;
+    app.quit();
+  });
   // Arayüz hazır: bekleyen davet kodunu alır, sonrakiler 'invite:open' ile gelir
   ipcMain.handle('invite:take', () => {
     inviteListenerReady = true;
@@ -577,7 +607,7 @@ void app.whenReady().then(async () => {
   registerCrashReporting({ getWindow: () => mainWindow, isQuitting: () => quitting });
 
   // Açılış: güncelleme varsa uygulama açılmadan kurulur (Discord'daki gibi)
-  const launch = consumeLaunchMode();
+  const launch = launchModeFor(consumeLaunchMode(), { hasTray: preferences.showTrayIcon, isMac });
   splash = launch === 'normal' ? new Splash() : null;
   const gate = await runStartupGate(updates, splash);
   if (gate !== 'continue') {
@@ -594,7 +624,7 @@ void app.whenReady().then(async () => {
   setupDisplayMedia();
   await hotkeys.init();
   createWindow(launch);
-  createTray();
+  applyTrayIcon();
   updates.startBackgroundChecks();
   startIdleInstaller();
   idleMonitor.start();

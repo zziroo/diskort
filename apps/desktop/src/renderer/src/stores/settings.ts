@@ -56,6 +56,8 @@ export interface Settings {
   hotkeys: HotkeyConfig;
   minimizeToTray: boolean;
   openAtLogin: boolean;
+  /** Tepsi (macOS'ta menü çubuğu) simgesi; gizliyken Windows/Linux'ta kapatınca pencere görev çubuğuna küçülür */
+  showTrayIcon: boolean;
   /** Arayüz sesleri: katıl/ayrıl, sustur, sağırlaştır, yayın, biri girdi/çıktı (bkz. lib/sfx.ts) */
   sounds: boolean;
   /** Bahsedilince ve direkt mesaj gelince ses (Rahatsız Etmeyin durumunda çalmaz) */
@@ -112,6 +114,7 @@ const defaults: Settings = {
   hotkeys: { pushToTalk: null, toggleMute: null, toggleDeafen: null },
   minimizeToTray: true,
   openAtLogin: false,
+  showTrayIcon: true,
   sounds: true,
   notificationSound: true,
   pttSounds: false,

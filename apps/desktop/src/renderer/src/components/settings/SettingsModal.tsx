@@ -540,9 +540,10 @@ function KeybindsSection() {
   );
 }
 
-/** Gelişmiş: sistem tepsisi, açılışta başlatma, sunucu adresi ve sürüm */
+/** Gelişmiş: tepsi simgesi ve kapatınca küçültme, açılışta başlatma, sunucu adresi ve sürüm */
 function AdvancedSection() {
   const s = useSettings();
+  const isMac = bridge?.platform === 'darwin';
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -553,7 +554,26 @@ function AdvancedSection() {
     <div>
       <h2 className="mb-5 text-xl font-bold text-text-head">Gelişmiş</h2>
       <Toggle
-        label="Kapatınca sistem tepsisine küçült"
+        label={isMac ? 'Menü çubuğunda simgeyi göster' : 'Sistem tepsisinde simgeyi göster'}
+        description={
+          isMac
+            ? 'Kapalıyken Diskort’a Dock’taki simgesinden dönülür.'
+            : s.minimizeToTray
+              ? 'Kapalıyken arka plandaki Diskort görev çubuğunda bekler; tamamen çıkmak için aşağıdaki Çık düğmesini ya da görev çubuğunda “Pencereyi kapat”ı kullan.'
+              : 'Kapalıyken pencereyi kapatınca Diskort kapanır.'
+        }
+        checked={s.showTrayIcon}
+        disabled={!bridge}
+        onChange={(showTrayIcon) => s.set({ showTrayIcon })}
+      />
+      <Toggle
+        label={
+          isMac
+            ? 'Kapatınca arka planda çalışmaya devam et'
+            : s.showTrayIcon
+              ? 'Kapatınca sistem tepsisine küçült'
+              : 'Kapatınca görev çubuğuna küçült'
+        }
         description="Pencereyi kapatınca Diskort arka planda çalışmaya ve sesi iletmeye devam eder."
         checked={s.minimizeToTray}
         disabled={!bridge}
@@ -565,6 +585,17 @@ function AdvancedSection() {
         disabled={!bridge || bridge.platform === 'linux'}
         onChange={(openAtLogin) => s.set({ openAtLogin })}
       />
+      {bridge && (
+        <div className="flex items-start justify-between gap-4 py-2">
+          <div>
+            <div className="font-medium text-text-head">Diskort’tan çık</div>
+            <div className="mt-0.5 text-sm text-text-muted">Uygulamayı arka planda bırakmadan tamamen kapatır.</div>
+          </div>
+          <Button variant="secondary" className="shrink-0" onClick={() => bridge?.quit()}>
+            Çık
+          </Button>
+        </div>
+      )}
       <Divider />
       <div className="text-sm text-text-muted">
         <div>

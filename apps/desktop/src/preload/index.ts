@@ -30,6 +30,7 @@ const bridge: DiskortBridge = {
   setTrayState: (state) => ipcRenderer.send('app:tray-state', state),
   onTrayAction: (cb) => listen<TrayAction>('tray-action', cb),
   showWindow: () => ipcRenderer.send('app:show-window'),
+  quit: () => ipcRenderer.send('app:quit'),
   requestAttention: () => ipcRenderer.send('app:request-attention'),
   setBadgeCount: (count) => ipcRenderer.send('app:badge-count', count),
   download: (url) => ipcRenderer.invoke('app:download', url),

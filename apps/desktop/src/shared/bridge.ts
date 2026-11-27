@@ -35,6 +35,8 @@ export interface ScreenSelection {
 export interface AppPreferences {
   minimizeToTray: boolean;
   openAtLogin: boolean;
+  /** Tepsi (macOS'ta menü çubuğu) simgesi */
+  showTrayIcon: boolean;
 }
 
 /** Arayüz teması (pencerenin zemin ve başlık çubuğu renkleri buna uyar) */
@@ -181,6 +183,8 @@ export interface DiskortBridge {
   onTrayAction(cb: (action: TrayAction) => void): () => void;
   /** Pencereyi (tepsiden/küçültülmüşse) öne getirir. */
   showWindow(): void;
+  /** Uygulamadan tamamen çıkar (tepsi menüsündeki "Diskort'tan Çık" ile aynı; simge gizliyken de çalışır). */
+  quit(): void;
   /** Pencere odakta değilse görev çubuğu simgesini yakıp söndürerek dikkat çeker. */
   requestAttention(): void;
   /** Uygulama simgesindeki okunmamış rozeti (macOS dock / Linux sayı, Windows görev çubuğu kırmızı noktası); 0 kaldırır. */

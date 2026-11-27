@@ -84,9 +84,10 @@ export function useDesktopIntegration(): void {
   // Uygulama tercihleri
   const minimizeToTray = useSettings((s) => s.minimizeToTray);
   const openAtLogin = useSettings((s) => s.openAtLogin);
+  const showTrayIcon = useSettings((s) => s.showTrayIcon);
   useEffect(() => {
-    void bridge?.setPreferences({ minimizeToTray, openAtLogin });
-  }, [minimizeToTray, openAtLogin]);
+    void bridge?.setPreferences({ minimizeToTray, openAtLogin, showTrayIcon });
+  }, [minimizeToTray, openAtLogin, showTrayIcon]);
 
   // Tepsi menüsü durumu ve eylemleri
   const selfMute = useSettings((s) => s.selfMute);
